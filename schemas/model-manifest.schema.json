@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Starroom AI Model Manifest",
+  "type": "object",
+  "required": ["modelId", "version", "sha256", "format", "task", "licenseId"],
+  "properties": {
+    "modelId": {"type": "string"},
+    "version": {"type": "string"},
+    "sha256": {"type": "string"},
+    "format": {"enum": ["onnx"]},
+    "task": {"type": "string"},
+    "licenseId": {"type": "string"},
+    "precisionModes": {"type": "array", "items": {"type": "string"}},
+    "tile": {"type": ["object", "null"]}
+  }
+}
