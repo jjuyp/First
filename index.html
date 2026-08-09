@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111214" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Starroom</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      if (window.location.protocol === 'file:') {
+        document.documentElement.lang = 'zh-Hant'
+        document.body.style.cssText = 'margin:0;background:#111214;color:#f4f4f5;font-family:Segoe UI,system-ui,sans-serif;min-height:100vh;display:grid;place-items:center'
+        document.getElementById('root').innerHTML = `
+          <main style="width:min(520px,calc(100vw - 48px));padding:32px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#202126;box-shadow:0 18px 60px rgba(0,0,0,.35)">
+            <div style="width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,#d3a8ff,#adbaff,#8ad2ff);display:grid;place-items:center;color:#17181b;font-size:24px">✦</div>
+            <h1 style="margin:18px 0 8px;font-size:24px">Starroom 需要由本機服務啟動</h1>
+            <p style="margin:0 0 22px;color:#b8bbc2;line-height:1.7">你開啟的是開發原始檔，不能直接用 <code style="color:#adbaff">file://</code> 執行。請回到這個資料夾，雙擊 <strong style="color:#fff">開啟 Starroom.cmd</strong>。</p>
+            <a href="http://127.0.0.1:4173" style="display:inline-block;padding:10px 16px;border-radius:9px;background:linear-gradient(105deg,#d3a8ff,#adbaff,#8ad2ff);color:#17181b;text-decoration:none;font-weight:700">服務已啟動？開啟 Starroom</a>
+          </main>`
+      }
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

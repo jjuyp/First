@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "starroom-demo-landscape",
+      "path": "../public/starroom-demo.svg",
+      "kind": "rendered-image",
+      "license": "Starroom project fixture; independently authored",
+      "purpose": ["application shell preview", "layout regression"],
+      "private": false
+    }
+  ]
+}

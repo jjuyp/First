@@ -1,0 +1,12 @@
+[package]
+name = "starroom-project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+starroom-core = { path = "../starroom-core" }
+thiserror.workspace = true

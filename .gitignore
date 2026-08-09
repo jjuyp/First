@@ -2,7 +2,11 @@ node_modules/
 dist/
 target/
 *.log
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
 .starroom-cache/
 models/weights/
 fixtures/private/
 .env
+output/playwright/
