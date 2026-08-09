@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Starroom Project",
+  "type": "object",
+  "required": ["schemaVersion", "source", "globalAdjustments", "masks"],
+  "properties": {
+    "schemaVersion": {"type": "integer", "minimum": 1},
+    "engineVersion": {"type": "string"},
+    "source": {
+      "type": "object",
+      "required": ["path", "contentHash"],
+      "properties": {
+        "path": {"type": "string"},
+        "contentHash": {"type": "string"}
+      }
+    },
+    "globalAdjustments": {"type": "object"},
+    "masks": {"type": "array"},
+    "ai": {"type": "object"}
+  },
+  "additionalProperties": true
+}
