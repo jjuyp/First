@@ -1,0 +1,13 @@
+name: Blueprint Check
+on: [push, pull_request]
+jobs:
+  validate-json:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python - <<'PY'
+          import json, pathlib
+          for p in pathlib.Path('schemas').glob('*.json'):
+              json.loads(p.read_text()); print('OK', p)
+          PY
