@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Starroom Look",
+  "type": "object",
+  "required": ["schemaVersion", "name", "engineCompatibility", "parameters"],
+  "properties": {
+    "schemaVersion": {"type": "integer", "minimum": 1},
+    "name": {"type": "string"},
+    "author": {"type": "string"},
+    "engineCompatibility": {"type": "string"},
+    "defaultAmount": {"type": "number", "minimum": 0, "maximum": 1},
+    "protectedCategories": {"type": "array", "items": {"type": "string"}},
+    "parameters": {"type": "object"}
+  }
+}
