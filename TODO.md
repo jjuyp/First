@@ -1,9 +1,22 @@
 # Complete Internal Build Plan
 
+## Browser vertical slice — completed 2026-08-09
+- [x] Direct numeric entry for every slider control
+- [x] Kelvin white-balance input (2,000–12,000 K)
+- [x] Direct curve editor: add, drag, numeric edit and right-click delete points
+- [x] Detail controls use -100…100; sharpen/soften and NR have pixel regression tests
+- [x] On-image radial mask placement, move, width/height resize and rotation handles
+- [x] Arbitrary -180…180° rotation plus 90° shortcuts and flips
+- [x] Wheel zoom (25–600%), drag-to-pan and Fit reset
+- [x] Removed duplicate Simple/Pro switch; one complete inspector remains
+- [x] Playwright interaction pass and zero browser console errors/warnings
+
+> This is the rendered-file CPU browser slice. It does not complete the production RAW/ICC/wgpu, multi-mask, camera-profile or perspective requirements below.
+
 ## M0 Workspace / CI
-- [ ] Rust workspace + Tauri 2 + React/TS
-- [ ] crate boundaries, lint/format/test, Windows CI
-- [ ] fixture manifest and source immutability hash test
+- [x] Rust workspace + Tauri 2 + React/TS
+- [x] crate boundaries, lint/format/test, Windows CI
+- [x] fixture manifest and source immutability hash test
 
 ## M1 Render Spine
 - [ ] JPEG/PNG/TIFF decoder abstraction
@@ -69,7 +82,7 @@
 - [ ] history/snapshot/compare/survey/metadata/presets
 
 ## M13 Beginner / Pro
-- [ ] one shared state, Simple and Pro views, Photo Intent, Adjustment Inspector
+- [ ] one shared state and Adjustment Inspector (Simple/Pro split removed after user validation)
 
 ## M14 Release Candidate
 - [ ] camera/GPU/AI matrices, multi-monitor color tests

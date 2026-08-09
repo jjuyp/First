@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1067">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#536b83"/><stop offset=".58" stop-color="#d7a894"/><stop offset="1" stop-color="#eac6a0"/></linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#34556d"/><stop offset="1" stop-color="#101b27"/></linearGradient>
+    <radialGradient id="sun"><stop stop-color="#fff9d6"/><stop offset="1" stop-color="#f6b578" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1600" height="1067" fill="url(#sky)"/>
+  <circle cx="1160" cy="385" r="200" fill="url(#sun)"/>
+  <path d="M0 610 250 390 430 565 700 300 960 580 1220 350 1600 600V780H0Z" fill="#293a46"/>
+  <path d="M0 690 310 520 530 665 790 445 1040 650 1320 510 1600 680V850H0Z" fill="#172630"/>
+  <path d="M0 735c260-45 390 30 610 3s410-20 570 20 270 4 420-16v325H0Z" fill="url(#water)"/>
+  <path d="M0 800c280-26 430 45 720 0s520 38 880-14" fill="none" stroke="#d5bba8" stroke-opacity=".35" stroke-width="8"/>
+  <path d="M112 1067 390 746l125 321Zm1245 0-138-345 267 345Z" fill="#0b141b"/>
+  <g fill="#0a1116"><path d="m315 850 22-142 22 142Z"/><path d="m250 915 32-220 32 220Z"/><path d="m1392 865 25-180 25 180Z"/></g>
+</svg>
