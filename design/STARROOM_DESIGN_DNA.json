@@ -1,0 +1,71 @@
+{
+  "meta": {
+    "name": "Starroom Studio UI DNA v1",
+    "description": "Modern professional photo workstation with restrained futuristic glass accents. Modern Studio 75% + Future Glass 25%, optimized so UI effects do not compete with RAW/GPU/AI workloads.",
+    "source_references": ["User-approved Starroom UI decisions", "zanwei/design-dna schema and generation methodology"],
+    "created_at": "2026-08-09"
+  },
+  "design_system": {
+    "color": {
+      "palette_type": "analogous cool spectrum with pink-lavender accent entry and neutral charcoal foundation",
+      "primary": {"hex": "#ADBaff", "role": "primary interactive accent, active controls, focus states"},
+      "secondary": {"hex": "#8AD2FF", "role": "secondary accent for AI, masks, selected highlights and information"},
+      "accent": {"hex": "#D3A8FF", "role": "brand emphasis, Look Engine, Reference Match and premium/future-facing interactions"},
+      "neutral": {
+        "scale": {"950":"#111214","900":"#17181B","850":"#202126","800":"#292B30","700":"#34363B","600":"#494B50","500":"#71747B","400":"#8D9098","300":"#B8BBC2","200":"#D8D9DC","100":"#ECEDEF","50":"#F5F5F6","0":"#FFFFFF"},
+        "usage": "Neutral surfaces dominate the editor. Accent colors never become the background of the image canvas."
+      },
+      "semantic": {"success":"#63C695","warning":"#E5B85C","error":"#E2747C","info":"#8AC8F0"},
+      "surface": {
+        "background": "Theme-aware: dark #17181B, gray #34363A, light #ECEDEF",
+        "card": "Theme-aware opaque/semi-translucent surface one level above background",
+        "elevated": "Theme-aware surface with 1px highlight border; blur only when performance policy permits"
+      },
+      "contrast_strategy": "Photo-first neutral surroundings, strong text readability, restrained chromatic accents; body text must meet WCAG AA."
+    },
+    "typography": {
+      "type_scale": {
+        "display":{"size":"28px","weight":"600","line_height":"1.2","tracking":"-0.02em"},
+        "heading_1":{"size":"20px","weight":"600","line_height":"1.25","tracking":"-0.01em"},
+        "heading_2":{"size":"16px","weight":"600","line_height":"1.3","tracking":"0"},
+        "heading_3":{"size":"14px","weight":"600","line_height":"1.35","tracking":"0"},
+        "body":{"size":"13px","weight":"400","line_height":"1.45","tracking":"0"},
+        "body_small":{"size":"12px","weight":"400","line_height":"1.4","tracking":"0"},
+        "caption":{"size":"11px","weight":"400","line_height":"1.35","tracking":"0.01em"},
+        "overline":{"size":"10px","weight":"600","line_height":"1.2","tracking":"0.08em"}
+      },
+      "font_families": {"heading":"Segoe UI Variable, Segoe UI, system-ui, sans-serif","body":"Segoe UI Variable, Segoe UI, system-ui, sans-serif","mono":"JetBrains Mono, Cascadia Mono, monospace"},
+      "font_style_notes": "Windows-native modern humanist UI typography. Numeric controls use tabular/monospaced numerals for stable alignment."
+    },
+    "spacing": {"base_unit":"4px","scale":["4px","8px","12px","16px","20px","24px","32px","40px","48px"],"content_density":"comfortable-compact; professional workstation density without cramped Lightroom-like stacking","section_rhythm":"8px inner control rhythm, 12-16px component group rhythm, 20-24px panel section rhythm"},
+    "layout": {"grid_system":"desktop application shell: collapsible left library + central canvas + hybrid right inspector + collapsible bottom filmstrip","max_content_width":"window-bound; central canvas receives all surplus width","columns":"3 primary desktop regions with central flexible column","gutter":"0px shell gutters; 8-12px internal panel padding","breakpoints":{"compact":"<1280px: auto-collapse left library first, reduce right-panel width","standard":"1280-1919px","wide":">=1920px: allow wider inspector and persistent filmstrip"},"alignment_tendency":"strict grid for tools, visually isolated photo canvas, selective floating controls over canvas"},
+    "shape": {"border_radius":{"small":"6px","medium":"8px","large":"10px","pill":"999px"},"border_usage":"subtle 1px neutral/highlight borders; active/focus border may use accent gradient edge","divider_style":"1px low-contrast neutral divider, never bright white"},
+    "elevation": {"shadow_style":"soft restrained depth; avoid large diffuse shadows over persistent panels","levels":{"low":"0 1px 2px rgba(0,0,0,.16)","medium":"0 6px 18px rgba(0,0,0,.20)","high":"0 14px 40px rgba(0,0,0,.28)"},"depth_cues":"surface luminance, thin highlight border, limited blur, restrained shadow, overlap"},
+    "iconography": {"style":"line icons at rest, filled or line+filled hybrid when selected","stroke_weight":"1.5-1.75px default","size_scale":["14px","16px","18px","20px"],"preferred_set":"Lucide-compatible coherent icon family or custom SVGs derived from one geometry system"},
+    "motion": {"easing":"cubic-bezier(0.2, 0, 0, 1)","duration_scale":{"micro":"100-140ms","normal":"160-220ms","macro":"220-280ms"},"entrance_pattern":"opacity + 2-6px translate or subtle scale 0.98->1 for floating surfaces","exit_pattern":"faster opacity + translate; no bounce","philosophy":"functional, restrained, cancellation-friendly. Editing responsiveness always outranks decorative motion."},
+    "components": {"button_style":"8px radius, neutral by default, gradient reserved for primary Export/AI/Look actions; icon buttons use hover surface rather than full chrome","input_style":"compact 32-36px height; numeric inputs use tabular numerals; strong keyboard focus ring","card_style":"mostly flat sections; floating cards may use translucent glass surface with thin border","navigation_pattern":"top application navigation + collapsible left library + right icon category rail and accordion content","modal_style":"centered or anchored glass dialog; backdrop blur kept low and disabled in Performance mode","list_style":"dense thumbnail/list hybrid with 36-44px row targets and selected accent edge","component_notes":"Slider uses accent-filled left track (B). On hover/drag, knob shows compact floating numeric value (C). Simple/Pro toggle remembers prior mode, first launch defaults Simple."}
+  },
+  "design_style": {
+    "aesthetic": {"mood":["precise","calm","modern","premium","creative"],"visual_metaphor":"professional darkroom fused with a restrained future imaging workstation","era_influence":"late-2020s productivity software with softened glass accents","genre":"professional creative desktop workstation","personality_traits":["meticulous","quietly futuristic","confident","non-intimidating","efficient"],"adjectives":["photo-first","polished","restrained","cool","layered","responsive"]},
+    "visual_language": {"complexity":"moderate-rich functionality with progressive disclosure","ornamentation":"subtle accents; glass and gradients used as hierarchy signals rather than decoration everywhere","whitespace_usage":"moderate; dense enough for pro tools, spacious around major section boundaries","visual_weight_distribution":"central image dominates; left/right UI deliberately lower contrast","focal_strategy":"single hero element: the photograph; accent gradient used for selected/AI/creative actions","contrast_level":"medium-high for controls, low-to-medium for persistent chrome","texture_usage":"clean surfaces; no noise texture on the image canvas"},
+    "composition": {"hierarchy_method":"spatial isolation + typography + selective accent color","balance_type":"asymmetric workstation layout balanced by central canvas","flow_direction":"library/selection left -> image center -> tools right -> filmstrip bottom","grouping_strategy":"icon category -> accordion group -> individual control","negative_space_role":"protects image focus and separates editing concepts"},
+    "imagery": {"photo_treatment":"editor must never tint/decorate the actual canvas output; UI surrounds but does not cosmetically modify preview","illustration_style":"minimal line/filled iconography, no cartoon illustration in pro editing surfaces","graphic_elements":"brand gradient, restrained soft glows, mask overlays, histograms and curves","pattern_usage":"none on editing canvas; minimal grid/checkerboard only where semantically required","image_shape":"photo uses true aspect ratio; thumbnails use mild 6-8px rounding where not color-critical"},
+    "interaction_feel": {"feedback_style":"immediate and precise with subtle accent illumination","hover_behavior":"surface lift/brightness + icon/slider accent; slider shows floating numeric bubble","transition_personality":"smooth glide, never elastic","loading_style":"inline progress, skeleton only for library metadata; image tasks display cancellable progress","microinteraction_density":"moderate-low during editing, moderate in AI/Look/Reference flows"},
+    "brand_voice_in_ui": {"tone":"concise, technical when needed, supportive without being chatty","formality":"professional modern","cta_style":"direct imperative: Export, Match Look, Create Mask, Denoise","empty_state_approach":"clear next action with one short explanation","error_tone":"specific, actionable, preserves user confidence by naming what failed and what remains safe"}
+  },
+  "visual_effects": {
+    "overview": {"effect_intensity":"moderate visual presence, low computational cost","performance_tier":"lightweight-to-medium","fallback_strategy":"Auto quality mode reduces real backdrop blur, shadows, animation density and preview refresh before compromising image quality","primary_technology":"CSS compositor-friendly opacity/transform effects; limited backdrop-filter; no decorative WebGL/Canvas effects"},
+    "background_effects": {"type":"static-subtle-gradient only on brand/AI surfaces; neutral on editing canvas","description":"Brand gradient may appear in compact decorative bands or selected surfaces, never as an animated full-window background.","technology":"CSS linear-gradient","params":{"color_palette":["#f891ef","#d3a8ff","#adbaff","#92c8ff","#8ad2ff","#8ac8f0","#89bde2","#87b3d3","#7e95b0","#717a8c","#5f6069","#494949"],"speed":"none","density":"low","opacity":"0.15-1.0 depending on component","blend_mode":"normal"}},
+    "particle_systems":{"enabled":false,"type":"none","description":"No decorative particles in the editor.","technology":"none","params":{"count":"0","shape":"none","size_range":"none","movement_pattern":"none","color_behavior":"none","interaction":"none","spawn_area":"none"}},
+    "3d_elements":{"enabled":false,"type":"none","description":"No 3D decorative scene.","technology":"none","params":{"renderer":"none","lighting":"none","camera":"none","materials":"none","geometry":"none","post_processing":[],"interaction_model":"none"}},
+    "shader_effects":{"enabled":false,"type":"none","description":"GPU budget is reserved for image rendering, not decorative UI shaders.","technology":"none","params":{"uniforms":"none","vertex_manipulation":"none","fragment_output":"none","noise_type":"none","distortion":"none"}},
+    "scroll_effects":{"parallax":{"enabled":false,"layers":"0","depth_range":"none","speed_curve":"none"},"scroll_triggered_animations":{"enabled":false,"trigger_points":"none","animation_type":"none","scrub_behavior":"none"},"scroll_morphing":{"enabled":false,"description":"Desktop panels use direct transitions, not scroll storytelling."}},
+    "text_effects":{"type":"subtle-gradient-brand-text","description":"Optional brand/logo gradient only; tool labels remain flat.","technology":"CSS background-clip","params":{"split_strategy":"none","animation_per_unit":"none","stagger":"none","effect_style":"static gradient"}},
+    "cursor_effects":{"enabled":false,"type":"none","description":"Use native pointer semantics for precision.","params":{"shape":"native","size":"native","blend_mode":"normal","trail":"none","interaction_zone":"none"}},
+    "image_effects":{"type":"none","description":"No cosmetic UI effect is applied to the actual photo preview.","technology":"image renderer only","params":{"filter_pipeline":"Starroom render graph","hover_transform":"none","reveal_animation":"simple opacity when replacing preview quality level","distortion_type":"none"}},
+    "glassmorphism_neumorphism":{"enabled":true,"style":"frosted-layers","params":{"blur_radius":"0px persistent panels; 8-16px floating surfaces in High; 4-8px Balanced; 0px Performance","transparency":"0.82-0.94","border_treatment":"1px rgba highlight plus optional accent edge on selected creative/AI surfaces","shadow_type":"soft compact","light_source_angle":"top-left"}},
+    "canvas_drawings":{"enabled":false,"type":"none","description":"No decorative canvas loops.","technology":"none","params":{"draw_method":"none","animation_loop":"none","color_scheme":"none","responsiveness":"none","interaction":"none"}},
+    "svg_animations":{"enabled":true,"type":"micro state morph","description":"Selected icons may morph/fill subtly; no continuous decorative SVG loops.","params":{"animation_method":"CSS transform/opacity or short path state change","path_morphing":"limited","stroke_animation":"limited","filter_effects":"none"}},
+    "composite_notes":"The editor should visually read as 75% Modern Studio and 25% Future Glass. Actual expensive blur is restricted to transient floating surfaces. Auto/Balanced/Performance modes may reduce UI effects without changing image-render correctness."
+  }
+}
