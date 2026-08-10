@@ -84,14 +84,15 @@ Tauri IPC / commands
 - [x] Native Rust deterministic rule engine skeleton.
 - [x] Suggestions contain control, bounded value, confidence and explanation.
 - [x] No API/network dependency.
-- [ ] Feed histogram/clipping/median/color-cast statistics from render analysis.
+- [x] Add native linear-RGB analysis for shadow/highlight concentration, clipping, median luminance and broad warmth bias.
+- [ ] Connect render-analysis samples to the advisor background job.
 - [ ] Add UI enable/disable switch and Apply/Ignore actions.
 - [ ] Validate numerical helpers against colour-science reference calculations where applicable.
 
 ## Layer / Mask Manager V1
 - [x] Layer data model supports independent order, enable, opacity, blend mode, mask and adjustments.
 - [x] Mask definition supports none/radial/linear/brush/provider forms.
-- [ ] Add Add/Subtract/Intersect mask tree nodes.
+- [x] Add composable Add/Subtract/Intersect mask tree nodes while preserving legacy leaf-mask JSON.
 - [ ] Cache runtime raster masks independently from layer adjustments.
 - [ ] Add drag reorder and per-layer recomputation/invalidation.
 
