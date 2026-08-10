@@ -1,5 +1,6 @@
 //! Starroom v0.2 CPU reference color engine.
-//! The implementation is clean-room and based on published color science, not copied GPL code.
+//! Published color science and independent Starroom code are used here. The module is the
+//! authoritative CPU reference for future wgpu shaders.
 
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +37,94 @@ pub struct ToneParameters {
 
 impl Default for ToneParameters {
     fn default() -> Self {
-        Self { exposure_ev: 0.0, contrast: 0.0, highlights: 0.0, shadows: 0.0, whites: 0.0, blacks: 0.0 }
+        Self {
+            exposure_ev: 0.0,
+            contrast: 0.0,
+            highlights: 0.0,
+            shadows: 0.0,
+            whites: 0.0,
+            blacks: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CurvePoint {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ColorBand {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Aqua,
+    Blue,
+    Purple,
+    Magenta,
+}
+
+impl ColorBand {
+    pub const ALL: [Self; 8] = [
+        Self::Red,
+        Self::Orange,
+        Self::Yellow,
+        Self::Green,
+        Self::Aqua,
+        Self::Blue,
+        Self::Purple,
+        Self::Magenta,
+    ];
+
+    fn center_degrees(self) -> f32 {
+        match self {
+            Self::Red => 25.0,
+            Self::Orange => 55.0,
+            Self::Yellow => 95.0,
+            Self::Green => 145.0,
+            Self::Aqua => 195.0,
+            Self::Blue => 250.0,
+            Self::Purple => 300.0,
+            Self::Magenta => 335.0,
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Red => 0,
+            Self::Orange => 1,
+            Self::Yellow => 2,
+            Self::Green => 3,
+            Self::Aqua => 4,
+            Self::Blue => 5,
+            Self::Purple => 6,
+            Self::Magenta => 7,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct BandAdjustment {
+    /// Relative hue rotation in degrees. UI target range: -30..30.
+    pub hue_degrees: f32,
+    /// Relative chroma adjustment. UI target range: -1..1.
+    pub chroma: f32,
+    /// Relative perceptual lightness adjustment. UI target range: -1..1.
+    pub lightness: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct ColorMixer {
+    pub bands: [BandAdjustment; 8],
+}
+
+impl ColorMixer {
+    pub fn with_band(mut self, band: ColorBand, adjustment: BandAdjustment) -> Self {
+        self.bands[band.index()] = adjustment;
+        self
     }
 }
 
@@ -59,79 +147,98 @@ pub fn luminance(rgb: LinearRgb) -> f32 {
 
 fn zone_weights(y: f32) -> (f32, f32, f32, f32) {
     let safe_y = y.max(0.0);
-    // Preserve a true black anchor: shadow lift fades to zero below ~1% linear.
-    let shadow = smoothstep(0.008, 0.035, safe_y) * (1.0 - smoothstep(0.32, 0.58, safe_y));
+    // Preserve true black and fade shadow influence before the midtones. This avoids the
+    // v0.1 failure where Shadows behaved like a broad white veil.
+    let shadow =
+        smoothstep(0.004, 0.012, safe_y) * (1.0 - smoothstep(0.06, 0.18, safe_y));
     let black = 1.0 - smoothstep(0.0, 0.11, safe_y);
-    let highlight = smoothstep(0.34, 0.62, safe_y) * (1.0 - smoothstep(1.10, 1.55, safe_y));
+    let highlight =
+        smoothstep(0.34, 0.62, safe_y) * (1.0 - smoothstep(1.10, 1.55, safe_y));
     let white = smoothstep(0.72, 1.02, safe_y);
     (shadow, black, highlight, white)
 }
 
-fn tone_luminance(y: f32, p: ToneParameters) -> f32 {
+fn tone_luminance(y: f32, parameters: ToneParameters) -> f32 {
     if !y.is_finite() {
         return 0.0;
     }
-    let mut out = (y.max(0.0)) * 2.0_f32.powf(p.exposure_ev.clamp(-5.0, 5.0));
-    let (shadow_w, black_w, highlight_w, white_w) = zone_weights(out);
 
-    let shadows = clamp_unit_control(p.shadows);
+    let mut output = y.max(0.0) * 2.0_f32.powf(parameters.exposure_ev.clamp(-5.0, 5.0));
+    let (shadow_weight, black_weight, highlight_weight, white_weight) = zone_weights(output);
+
+    let shadows = clamp_unit_control(parameters.shadows);
     if shadows >= 0.0 {
-        out += shadows * shadow_w * (0.24 + 0.18 * out.sqrt()) * (1.0 - out.min(1.0));
+        output += shadows
+            * shadow_weight
+            * (0.24 + 0.18 * output.sqrt())
+            * (1.0 - output.min(1.0));
     } else {
-        out *= 1.0 + shadows * shadow_w * 0.72;
+        output *= 1.0 + shadows * shadow_weight * 0.72;
     }
 
-    let highlights = clamp_unit_control(p.highlights);
+    let highlights = clamp_unit_control(parameters.highlights);
     if highlights < 0.0 {
-        // Compress high luminance without subtracting uniform gray from the image.
-        let compression = 1.0 + (-highlights) * highlight_w * 1.35;
-        out = out / compression + out.min(0.22) * (1.0 - 1.0 / compression);
+        let compression = 1.0 + (-highlights) * highlight_weight * 1.35;
+        output = output / compression + output.min(0.22) * (1.0 - 1.0 / compression);
     } else {
-        out += highlights * highlight_w * (1.0 - out.min(1.0)) * 0.22;
+        output += highlights * highlight_weight * (1.0 - output.min(1.0)) * 0.22;
     }
 
-    let blacks = clamp_unit_control(p.blacks);
+    let blacks = clamp_unit_control(parameters.blacks);
     if blacks >= 0.0 {
-        out += blacks * black_w * 0.055;
+        output += blacks * black_weight * 0.055;
     } else {
-        out *= 1.0 + blacks * black_w * 0.82;
+        output *= 1.0 + blacks * black_weight * 0.82;
     }
 
-    let whites = clamp_unit_control(p.whites);
+    let whites = clamp_unit_control(parameters.whites);
     if whites >= 0.0 {
-        out += whites * white_w * (0.10 + 0.10 * out.min(1.0));
+        output += whites * white_weight * (0.10 + 0.10 * output.min(1.0));
     } else {
-        out *= 1.0 + whites * white_w * 0.48;
+        output *= 1.0 + whites * white_weight * 0.48;
     }
 
-    let contrast = clamp_unit_control(p.contrast);
+    let contrast = clamp_unit_control(parameters.contrast);
     if contrast.abs() > f32::EPSILON {
         let pivot = 0.18_f32;
-        let safe = out.max(1.0e-6);
+        let safe = output.max(1.0e-6);
         let stops = (safe / pivot).log2();
-        out = pivot * 2.0_f32.powf(stops * (1.0 + contrast * 0.62));
+        output = pivot * 2.0_f32.powf(stops * (1.0 + contrast * 0.62));
     }
 
-    if out.is_finite() { out.max(0.0) } else { 0.0 }
+    if output.is_finite() {
+        output.max(0.0)
+    } else {
+        0.0
+    }
 }
 
-/// Applies tone by remapping luminance and scaling RGB together. This preserves hue/chroma
-/// far better than moving each RGB channel independently toward white/black.
-pub fn apply_tone(rgb: LinearRgb, params: ToneParameters) -> LinearRgb {
-    let y = luminance(rgb).max(0.0);
-    let target = tone_luminance(y, params);
-    if y <= 1.0e-7 {
-        return LinearRgb { r: target, g: target, b: target };
+/// Applies tone by remapping luminance and scaling RGB together. This keeps hue/chroma much
+/// more stable than moving each RGB channel independently toward white or black.
+pub fn apply_tone(rgb: LinearRgb, parameters: ToneParameters) -> LinearRgb {
+    let source_luminance = luminance(rgb).max(0.0);
+    let target_luminance = tone_luminance(source_luminance, parameters);
+    if source_luminance <= 1.0e-7 {
+        return LinearRgb {
+            r: target_luminance,
+            g: target_luminance,
+            b: target_luminance,
+        };
     }
-    let scale = target / y;
-    LinearRgb { r: rgb.r * scale, g: rgb.g * scale, b: rgb.b * scale }
+
+    let scale = target_luminance / source_luminance;
+    LinearRgb {
+        r: rgb.r * scale,
+        g: rgb.g * scale,
+        b: rgb.b * scale,
+    }
 }
 
 fn rec2020_to_xyz(rgb: LinearRgb) -> (f32, f32, f32) {
     (
         0.636_958_06 * rgb.r + 0.144_616_9 * rgb.g + 0.168_880_98 * rgb.b,
         0.262_700_2 * rgb.r + 0.677_998_07 * rgb.g + 0.059_301_72 * rgb.b,
-        0.000_000_0 * rgb.r + 0.028_072_693 * rgb.g + 1.060_985_1 * rgb.b,
+        0.028_072_693 * rgb.g + 1.060_985_1 * rgb.b,
     )
 }
 
@@ -156,12 +263,12 @@ pub fn rec2020_to_oklab(rgb: LinearRgb) -> Oklab {
 }
 
 pub fn oklab_to_rec2020(lab: Oklab) -> LinearRgb {
-    let l_ = lab.l + 0.396_337_78 * lab.a + 0.215_803_76 * lab.b;
-    let m_ = lab.l - 0.105_561_346 * lab.a - 0.063_854_17 * lab.b;
-    let s_ = lab.l - 0.089_484_18 * lab.a - 1.291_485_5 * lab.b;
-    let l = l_ * l_ * l_;
-    let m = m_ * m_ * m_;
-    let s = s_ * s_ * s_;
+    let l_prime = lab.l + 0.396_337_78 * lab.a + 0.215_803_76 * lab.b;
+    let m_prime = lab.l - 0.105_561_346 * lab.a - 0.063_854_17 * lab.b;
+    let s_prime = lab.l - 0.089_484_18 * lab.a - 1.291_485_5 * lab.b;
+    let l = l_prime * l_prime * l_prime;
+    let m = m_prime * m_prime * m_prime;
+    let s = s_prime * s_prime * s_prime;
     let x = 1.227_014 * l - 0.557_8 * m - 0.281_256_14 * s;
     let y = -0.040_580_18 * l + 1.112_256_9 * m - 0.071_676_68 * s;
     let z = -0.076_381_29 * l - 0.421_481_97 * m + 1.586_163_2 * s;
@@ -169,15 +276,25 @@ pub fn oklab_to_rec2020(lab: Oklab) -> LinearRgb {
 }
 
 pub fn oklab_to_oklch(lab: Oklab) -> Oklch {
-    let c = (lab.a * lab.a + lab.b * lab.b).sqrt();
-    let mut h = lab.b.atan2(lab.a).to_degrees();
-    if h < 0.0 { h += 360.0; }
-    Oklch { l: lab.l, c, h_deg: h }
+    let chroma = (lab.a * lab.a + lab.b * lab.b).sqrt();
+    let mut hue = lab.b.atan2(lab.a).to_degrees();
+    if hue < 0.0 {
+        hue += 360.0;
+    }
+    Oklch {
+        l: lab.l,
+        c: chroma,
+        h_deg: hue,
+    }
 }
 
 pub fn oklch_to_oklab(lch: Oklch) -> Oklab {
     let angle = lch.h_deg.to_radians();
-    Oklab { l: lch.l, a: lch.c * angle.cos(), b: lch.c * angle.sin() }
+    Oklab {
+        l: lch.l,
+        a: lch.c * angle.cos(),
+        b: lch.c * angle.sin(),
+    }
 }
 
 pub fn rotate_hue(rgb: LinearRgb, degrees: f32) -> LinearRgb {
@@ -186,46 +303,264 @@ pub fn rotate_hue(rgb: LinearRgb, degrees: f32) -> LinearRgb {
     oklab_to_rec2020(oklch_to_oklab(lch))
 }
 
+fn circular_distance_degrees(a: f32, b: f32) -> f32 {
+    let difference = (a - b).rem_euclid(360.0).abs();
+    difference.min(360.0 - difference)
+}
+
+fn color_band_weight(hue: f32, band: ColorBand) -> f32 {
+    let distance = circular_distance_degrees(hue, band.center_degrees());
+    1.0 - smoothstep(20.0, 55.0, distance)
+}
+
+/// Eight-band selective color editing in OKLCh. Hue adjustment keeps L and C fixed before
+/// gamut mapping; chroma and lightness are explicit independent controls.
+pub fn apply_color_mixer(rgb: LinearRgb, mixer: ColorMixer) -> LinearRgb {
+    let mut lch = oklab_to_oklch(rec2020_to_oklab(rgb));
+    if lch.c < 1.0e-7 {
+        return rgb;
+    }
+
+    let original_hue = lch.h_deg;
+    let mut weight_total = 0.0;
+    let mut hue_delta = 0.0;
+    let mut chroma_delta = 0.0;
+    let mut lightness_delta = 0.0;
+
+    for band in ColorBand::ALL {
+        let weight = color_band_weight(original_hue, band);
+        if weight <= 0.0 {
+            continue;
+        }
+        let adjustment = mixer.bands[band.index()];
+        weight_total += weight;
+        hue_delta += adjustment.hue_degrees.clamp(-30.0, 30.0) * weight;
+        chroma_delta += clamp_unit_control(adjustment.chroma) * weight;
+        lightness_delta += clamp_unit_control(adjustment.lightness) * weight;
+    }
+
+    if weight_total > 1.0e-7 {
+        let inverse = 1.0 / weight_total;
+        lch.h_deg = (lch.h_deg + hue_delta * inverse).rem_euclid(360.0);
+        lch.c *= 1.0 + chroma_delta * inverse * 0.75;
+        lch.c = lch.c.max(0.0);
+        lch.l += lightness_delta * inverse * 0.16;
+    }
+
+    oklab_to_rec2020(oklch_to_oklab(lch))
+}
+
+/// Smoothly reduces OKLCh chroma until RGB fits a normalized display/output gamut. Starroom's
+/// internal creative pipeline remains unbounded; call this only at a bounded output boundary.
+pub fn compress_to_unit_gamut(rgb: LinearRgb) -> LinearRgb {
+    if [rgb.r, rgb.g, rgb.b]
+        .into_iter()
+        .all(|channel| (0.0..=1.0).contains(&channel))
+    {
+        return rgb;
+    }
+
+    let mut lch = oklab_to_oklch(rec2020_to_oklab(rgb));
+    let original_chroma = lch.c;
+    let mut low = 0.0;
+    let mut high = original_chroma;
+    let mut best = LinearRgb {
+        r: lch.l,
+        g: lch.l,
+        b: lch.l,
+    };
+
+    for _ in 0..14 {
+        lch.c = (low + high) * 0.5;
+        let candidate = oklab_to_rec2020(oklch_to_oklab(lch));
+        let in_gamut = [candidate.r, candidate.g, candidate.b]
+            .into_iter()
+            .all(|channel| (0.0..=1.0).contains(&channel));
+        if in_gamut {
+            best = candidate;
+            low = lch.c;
+        } else {
+            high = lch.c;
+        }
+    }
+
+    best
+}
+
+/// Monotone cubic Hermite curve mapping. For monotone control points this avoids spline
+/// overshoot and the harsh piecewise-linear bends from the v0.1 browser prototype.
+pub fn map_monotone_curve(value: f32, points: &[CurvePoint]) -> f32 {
+    let mut points: Vec<CurvePoint> = points
+        .iter()
+        .copied()
+        .filter(|point| point.x.is_finite() && point.y.is_finite())
+        .collect();
+    points.sort_by(|left, right| left.x.total_cmp(&right.x));
+    points.dedup_by(|left, right| (left.x - right.x).abs() < 1.0e-6);
+
+    if points.len() < 2 {
+        return value;
+    }
+    if value <= points[0].x {
+        return points[0].y;
+    }
+    if value >= points[points.len() - 1].x {
+        return points[points.len() - 1].y;
+    }
+
+    let segment_count = points.len() - 1;
+    let mut slopes = vec![0.0_f32; segment_count];
+    for index in 0..segment_count {
+        let dx = (points[index + 1].x - points[index].x).max(1.0e-6);
+        slopes[index] = (points[index + 1].y - points[index].y) / dx;
+    }
+
+    let mut tangents = vec![0.0_f32; points.len()];
+    tangents[0] = slopes[0];
+    tangents[points.len() - 1] = slopes[segment_count - 1];
+    for index in 1..points.len() - 1 {
+        let left = slopes[index - 1];
+        let right = slopes[index];
+        tangents[index] = if left * right <= 0.0 {
+            0.0
+        } else {
+            2.0 * left * right / (left + right)
+        };
+    }
+
+    for index in 0..segment_count {
+        let left = points[index];
+        let right = points[index + 1];
+        if value > right.x {
+            continue;
+        }
+
+        let width = (right.x - left.x).max(1.0e-6);
+        let t = ((value - left.x) / width).clamp(0.0, 1.0);
+        let t2 = t * t;
+        let t3 = t2 * t;
+        let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        let h10 = t3 - 2.0 * t2 + t;
+        let h01 = -2.0 * t3 + 3.0 * t2;
+        let h11 = t3 - t2;
+        return h00 * left.y
+            + h10 * width * tangents[index]
+            + h01 * right.y
+            + h11 * width * tangents[index + 1];
+    }
+
+    value
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn delta(a: f32, b: f32) -> f32 { (a - b).abs() }
+    fn delta(a: f32, b: f32) -> f32 {
+        (a - b).abs()
+    }
 
     #[test]
     fn neutral_tone_is_identity() {
-        let rgb = LinearRgb { r: 0.21, g: 0.13, b: 0.07 };
-        let out = apply_tone(rgb, ToneParameters::default());
-        assert!(delta(out.r, rgb.r) < 1e-6);
-        assert!(delta(out.g, rgb.g) < 1e-6);
-        assert!(delta(out.b, rgb.b) < 1e-6);
+        let rgb = LinearRgb {
+            r: 0.21,
+            g: 0.13,
+            b: 0.07,
+        };
+        let output = apply_tone(rgb, ToneParameters::default());
+        assert!(delta(output.r, rgb.r) < 1e-6);
+        assert!(delta(output.g, rgb.g) < 1e-6);
+        assert!(delta(output.b, rgb.b) < 1e-6);
     }
 
     #[test]
     fn positive_shadows_lift_dark_region_without_washing_midtones() {
-        let p = ToneParameters { shadows: 0.5, ..Default::default() };
-        let dark = LinearRgb { r: 0.08, g: 0.06, b: 0.04 };
-        let mid = LinearRgb { r: 0.50, g: 0.40, b: 0.30 };
-        let dark_gain = luminance(apply_tone(dark, p)) - luminance(dark);
-        let mid_gain = luminance(apply_tone(mid, p)) - luminance(mid);
+        let parameters = ToneParameters {
+            shadows: 0.5,
+            ..Default::default()
+        };
+        let dark = LinearRgb {
+            r: 0.018,
+            g: 0.014,
+            b: 0.010,
+        };
+        let mid = LinearRgb {
+            r: 0.23,
+            g: 0.19,
+            b: 0.16,
+        };
+        let dark_gain = luminance(apply_tone(dark, parameters)) - luminance(dark);
+        let mid_gain = luminance(apply_tone(mid, parameters)) - luminance(mid);
         assert!(dark_gain > 0.0);
         assert!(dark_gain > mid_gain * 2.0);
     }
 
     #[test]
     fn shadow_lift_keeps_black_anchor() {
-        let p = ToneParameters { shadows: 1.0, ..Default::default() };
-        let black = LinearRgb { r: 0.0, g: 0.0, b: 0.0 };
-        let out = apply_tone(black, p);
-        assert!(out.r.abs() < 1e-6 && out.g.abs() < 1e-6 && out.b.abs() < 1e-6);
+        let parameters = ToneParameters {
+            shadows: 1.0,
+            ..Default::default()
+        };
+        let black = LinearRgb {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        };
+        let output = apply_tone(black, parameters);
+        assert!(output.r.abs() < 1e-6 && output.g.abs() < 1e-6 && output.b.abs() < 1e-6);
     }
 
     #[test]
     fn hue_rotation_preserves_oklch_lightness_and_chroma_before_gamut_mapping() {
-        let rgb = LinearRgb { r: 0.30, g: 0.16, b: 0.08 };
+        let rgb = LinearRgb {
+            r: 0.30,
+            g: 0.16,
+            b: 0.08,
+        };
         let before = oklab_to_oklch(rec2020_to_oklab(rgb));
         let after = oklab_to_oklch(rec2020_to_oklab(rotate_hue(rgb, 42.0)));
         assert!(delta(before.l, after.l) < 2e-4);
         assert!(delta(before.c, after.c) < 2e-4);
+    }
+
+    #[test]
+    fn monotone_curve_is_smooth_and_bounded_for_monotone_points() {
+        let points = [
+            CurvePoint { x: 0.0, y: 0.0 },
+            CurvePoint { x: 0.25, y: 0.18 },
+            CurvePoint { x: 0.50, y: 0.58 },
+            CurvePoint { x: 1.0, y: 1.0 },
+        ];
+        let mut previous = map_monotone_curve(0.0, &points);
+        for sample in 1..=100 {
+            let value = sample as f32 / 100.0;
+            let output = map_monotone_curve(value, &points);
+            assert!(output >= previous - 1.0e-5);
+            assert!((0.0..=1.0).contains(&output));
+            previous = output;
+        }
+    }
+
+    #[test]
+    fn color_mixer_changes_selected_hue_without_nan() {
+        let mixer = ColorMixer::default().with_band(
+            ColorBand::Red,
+            BandAdjustment {
+                hue_degrees: 15.0,
+                chroma: 0.20,
+                lightness: 0.05,
+            },
+        );
+        let source = LinearRgb {
+            r: 0.35,
+            g: 0.08,
+            b: 0.05,
+        };
+        let output = apply_color_mixer(source, mixer);
+        assert!(output.r.is_finite() && output.g.is_finite() && output.b.is_finite());
+        assert!(
+            delta(source.r, output.r) + delta(source.g, output.g) + delta(source.b, output.b)
+                > 1.0e-4
+        );
     }
 }
