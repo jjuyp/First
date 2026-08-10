@@ -7,6 +7,7 @@ members = [
   "crates/starroom-portrait",
   "crates/starroom-project",
   "crates/starroom-render",
+  "crates/starroom-detail",
   "src-tauri",
 ]
 default-members = [
@@ -16,6 +17,7 @@ default-members = [
   "crates/starroom-portrait",
   "crates/starroom-project",
   "crates/starroom-render",
+  "crates/starroom-detail",
 ]
 
 [workspace.package]
