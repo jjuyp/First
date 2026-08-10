@@ -1,4 +1,3 @@
-export type EditorMode = 'simple' | 'pro'
 export type Theme = 'dark' | 'gray' | 'light'
 export type Tool = 'light' | 'color' | 'curve' | 'detail' | 'masks' | 'optics' | 'geometry'
 
@@ -33,7 +32,9 @@ export const defaultAdjustments: Adjustments = {
   shadows: 0,
   whites: 0,
   blacks: 0,
-  temperature: 6500,
+  // Encoded JPEG/PNG/TIFF files do not expose a physical RAW Kelvin state here.
+  // Temperature/Tint are therefore relative creative corrections in the -100..100 UI domain.
+  temperature: 0,
   tint: 0,
   vibrance: 0,
   saturation: 0,
