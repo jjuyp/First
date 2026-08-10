@@ -12,6 +12,7 @@ members = [
   "crates/starroom-optics",
   "crates/starroom-grading",
   "crates/starroom-color-management",
+  "crates/starroom-heal",
   "src-tauri",
 ]
 default-members = [
@@ -26,6 +27,7 @@ default-members = [
   "crates/starroom-optics",
   "crates/starroom-grading",
   "crates/starroom-color-management",
+  "crates/starroom-heal",
 ]
 
 [workspace.package]
