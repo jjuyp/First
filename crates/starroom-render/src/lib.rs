@@ -59,7 +59,6 @@ impl Default for RenderGraph {
             DisplayTransform,
             Export,
         ];
-
         let mut stages = Vec::with_capacity(linear.len());
         for (index, id) in linear.into_iter().enumerate() {
             let dependencies = if index == 0 { Vec::new() } else { vec![linear[index - 1]] };
@@ -101,7 +100,6 @@ impl RenderGraph {
                 }
             }
         }
-
         let mut indegree: BTreeMap<StageId, usize> = ids.iter().map(|id| (*id, 0)).collect();
         let mut downstream: BTreeMap<StageId, Vec<StageId>> = BTreeMap::new();
         for stage in &self.stages {
@@ -131,7 +129,6 @@ impl RenderGraph {
         Ok(())
     }
 
-    /// Returns the changed stage plus every transitively dependent downstream stage.
     pub fn invalidate_from(&self, changed: StageId) -> BTreeSet<StageId> {
         let mut downstream: BTreeMap<StageId, Vec<StageId>> = BTreeMap::new();
         for stage in &self.stages {
@@ -163,7 +160,61 @@ pub enum GraphError {
     Cycle,
 }
 
-/// Stable cache key derived from immutable source identity, stage parameters and upstream keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PixelRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderTile {
+    /// Final region written to the output image.
+    pub output: PixelRect,
+    /// Expanded source region requested from upstream to satisfy neighborhood filters.
+    pub input_with_halo: PixelRect,
+}
+
+/// Plans non-overlapping output tiles with clipped halo regions. A renderer computes the larger
+/// input region, then crops back to `output` when assembling the final image.
+pub fn plan_tiles(
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    halo: u32,
+) -> Vec<RenderTile> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let tile_size = tile_size.max(64);
+    let mut tiles = Vec::new();
+    let mut y = 0;
+    while y < height {
+        let output_height = tile_size.min(height - y);
+        let mut x = 0;
+        while x < width {
+            let output_width = tile_size.min(width - x);
+            let input_x = x.saturating_sub(halo);
+            let input_y = y.saturating_sub(halo);
+            let input_right = (x + output_width).saturating_add(halo).min(width);
+            let input_bottom = (y + output_height).saturating_add(halo).min(height);
+            tiles.push(RenderTile {
+                output: PixelRect { x, y, width: output_width, height: output_height },
+                input_with_halo: PixelRect {
+                    x: input_x,
+                    y: input_y,
+                    width: input_right - input_x,
+                    height: input_bottom - input_y,
+                },
+            });
+            x = x.saturating_add(tile_size);
+        }
+        y = y.saturating_add(tile_size);
+    }
+    tiles
+}
+
 pub fn stage_cache_key(
     stage: StageId,
     source_hash: &str,
@@ -219,5 +270,28 @@ mod tests {
         let c = stage_cache_key(StageId::Tone, "source", "{\"shadows\":0.3}", &["upstream".into()]);
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn tile_plan_covers_entire_frame_without_output_overlap_gaps() {
+        let tiles = plan_tiles(1000, 700, 256, 32);
+        let area: u64 = tiles
+            .iter()
+            .map(|tile| u64::from(tile.output.width) * u64::from(tile.output.height))
+            .sum();
+        assert_eq!(area, 700_000);
+        assert!(tiles.iter().all(|tile| tile.input_with_halo.width >= tile.output.width));
+        assert!(tiles.iter().all(|tile| tile.input_with_halo.height >= tile.output.height));
+    }
+
+    #[test]
+    fn edge_tiles_clip_halo_to_image_bounds() {
+        let tiles = plan_tiles(300, 300, 256, 64);
+        let first = tiles.first().expect("first tile");
+        assert_eq!(first.input_with_halo.x, 0);
+        assert_eq!(first.input_with_halo.y, 0);
+        let last = tiles.last().expect("last tile");
+        assert_eq!(last.input_with_halo.x + last.input_with_halo.width, 300);
+        assert_eq!(last.input_with_halo.y + last.input_with_halo.height, 300);
     }
 }
