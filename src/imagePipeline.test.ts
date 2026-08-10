@@ -37,6 +37,24 @@ describe('image pipeline', () => {
     expect(result.data[8]).toBeLessThan(220)
   })
 
+  it('lifts dark shadows much more than midtones instead of adding a white veil', () => {
+    const source = pixels([
+      35, 30, 25, 255,
+      130, 120, 110, 255,
+    ])
+    const result = processImageData(source, { ...defaultAdjustments, shadows: 50 })
+    const darkGain = result.data[0] - 35
+    const midGain = result.data[4] - 130
+    expect(darkGain).toBeGreaterThan(0)
+    expect(darkGain).toBeGreaterThan(midGain * 2)
+  })
+
+  it('keeps the black anchor when shadows are raised', () => {
+    const source = pixels([0, 0, 0, 255])
+    const result = processImageData(source, { ...defaultAdjustments, shadows: 100 })
+    expect(Array.from(result.data)).toEqual([0, 0, 0, 255])
+  })
+
   it('applies a visible sharpness change around an edge', () => {
     const values: number[] = []
     for (let index = 0; index < 9; index += 1) {
@@ -48,7 +66,7 @@ describe('image pipeline', () => {
     expect(result.data[16]).toBeGreaterThan(160)
   })
 
-  it('uses Kelvin temperature values', () => {
+  it('uses Kelvin temperature values in the legacy browser preview', () => {
     const source = pixels([100, 100, 100, 255])
     const result = processImageData(source, { ...defaultAdjustments, temperature: 10000 })
     expect(result.data[0]).toBeGreaterThan(result.data[2])
