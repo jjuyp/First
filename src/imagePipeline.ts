@@ -20,19 +20,55 @@ function smoothstep(edge0: number, edge1: number, value: number) {
   return t * t * (3 - 2 * t)
 }
 
-function mapToneCurve(value: number, points?: ToneCurvePoint[]) {
+/**
+ * Monotone cubic Hermite interpolation for the browser reference preview.
+ * This mirrors the Rust reference semantics and avoids the piecewise-linear kinks from v0.1.
+ */
+export function mapToneCurve(value: number, points?: ToneCurvePoint[]) {
   if (!points?.length) return value
-  const sorted = [...points].sort((a, b) => a.x - b.x)
+  const sorted = [...points]
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+    .sort((a, b) => a.x - b.x)
+    .filter((point, index, array) => index === 0 || Math.abs(point.x - array[index - 1].x) >= 1e-6)
+
+  if (sorted.length < 2) return value
   if (value <= sorted[0].x) return sorted[0].y
-  for (let index = 1; index < sorted.length; index += 1) {
-    const left = sorted[index - 1]
-    const right = sorted[index]
-    if (value <= right.x) {
-      const amount = (value - left.x) / Math.max(0.0001, right.x - left.x)
-      return left.y + (right.y - left.y) * amount
-    }
+  if (value >= sorted[sorted.length - 1].x) return sorted[sorted.length - 1].y
+
+  const slopes: number[] = []
+  for (let index = 0; index < sorted.length - 1; index += 1) {
+    const width = Math.max(1e-6, sorted[index + 1].x - sorted[index].x)
+    slopes.push((sorted[index + 1].y - sorted[index].y) / width)
   }
-  return sorted.at(-1)?.y ?? value
+
+  const tangents = Array.from({ length: sorted.length }, () => 0)
+  tangents[0] = slopes[0]
+  tangents[sorted.length - 1] = slopes[slopes.length - 1]
+  for (let index = 1; index < sorted.length - 1; index += 1) {
+    const left = slopes[index - 1]
+    const right = slopes[index]
+    tangents[index] = left * right <= 0 ? 0 : (2 * left * right) / (left + right)
+  }
+
+  for (let index = 0; index < sorted.length - 1; index += 1) {
+    const left = sorted[index]
+    const right = sorted[index + 1]
+    if (value > right.x) continue
+    const width = Math.max(1e-6, right.x - left.x)
+    const t = clamp01((value - left.x) / width)
+    const t2 = t * t
+    const t3 = t2 * t
+    const h00 = 2 * t3 - 3 * t2 + 1
+    const h10 = t3 - 2 * t2 + t
+    const h01 = -2 * t3 + 3 * t2
+    const h11 = t3 - t2
+    return h00 * left.y
+      + h10 * width * tangents[index]
+      + h01 * right.y
+      + h11 * width * tangents[index + 1]
+  }
+
+  return value
 }
 
 export function hasAdjustments(adjustments: Adjustments) {
@@ -47,8 +83,6 @@ export function hasAdjustments(adjustments: Adjustments) {
  */
 function remapToneLuminance(luminance: number, adjustments: Adjustments) {
   let out = Math.max(0, luminance)
-  // A narrow, bell-like shadow zone keeps true black anchored and fades before midtones.
-  // This specifically prevents the v0.1 "white veil" failure mode.
   const shadowWeight = smoothstep(0.004, 0.012, out) * (1 - smoothstep(0.06, 0.18, out))
   const blackWeight = 1 - smoothstep(0, 0.11, out)
   const highlightWeight = smoothstep(0.34, 0.62, out) * (1 - smoothstep(1.10, 1.55, out))
@@ -119,7 +153,7 @@ export function processImageData(imageData: ImageData, adjustments: Adjustments,
 
   const pixels = imageData.data
   const exposure = 2 ** adjustments.exposure
-  const warmth = Math.max(-1, Math.min(1, (adjustments.temperature - 6500) / 4500))
+  const warmth = Math.max(-1, Math.min(1, adjustments.temperature / 100))
   const tint = adjustments.tint / 100
   const saturation = 1 + adjustments.saturation / 100
   const maskExposure = 2 ** adjustments.maskExposure
@@ -161,7 +195,6 @@ export function processImageData(imageData: ImageData, adjustments: Adjustments,
     blue *= toneScale
     luminance = targetLuminance
 
-    // Transitional clarity preview. Production v0.2+ detail math moves to the Rust/GPU detail stage.
     const midtoneWeight = Math.max(0, 1 - Math.abs(clamp01(luminance) - 0.5) * 2)
     const clarityContrast = 1 + clarity * midtoneWeight * 0.65
     red = 0.18 + (red - 0.18) * clarityContrast
