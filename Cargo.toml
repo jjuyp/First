@@ -8,6 +8,7 @@ members = [
   "crates/starroom-project",
   "crates/starroom-render",
   "crates/starroom-detail",
+  "crates/starroom-geometry",
   "src-tauri",
 ]
 default-members = [
@@ -18,6 +19,7 @@ default-members = [
   "crates/starroom-project",
   "crates/starroom-render",
   "crates/starroom-detail",
+  "crates/starroom-geometry",
 ]
 
 [workspace.package]
