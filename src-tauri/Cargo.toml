@@ -17,3 +17,6 @@ serde.workspace = true
 tauri = { version = "2", features = [] }
 starroom-core = { path = "../crates/starroom-core" }
 starroom-project = { path = "../crates/starroom-project" }
+starroom-color = { path = "../crates/starroom-color" }
+starroom-advisor = { path = "../crates/starroom-advisor" }
+starroom-render = { path = "../crates/starroom-render" }
