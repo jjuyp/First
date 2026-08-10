@@ -43,17 +43,42 @@ pub enum BlendMode {
 }
 
 impl Default for BlendMode {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum MaskDefinition {
     None,
-    Radial { x: f32, y: f32, width: f32, height: f32, rotation: f32, feather: f32, invert: bool },
-    Linear { start_x: f32, start_y: f32, end_x: f32, end_y: f32, feather: f32 },
-    Brush { points: Vec<BrushPoint>, radius: f32, feather: f32, flow: f32 },
-    Provider { provider: String, request: String, fingerprint: Option<String> },
+    Radial {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        rotation: f32,
+        feather: f32,
+        invert: bool,
+    },
+    Linear {
+        start_x: f32,
+        start_y: f32,
+        end_x: f32,
+        end_y: f32,
+        feather: f32,
+    },
+    Brush {
+        points: Vec<BrushPoint>,
+        radius: f32,
+        feather: f32,
+        flow: f32,
+    },
+    Provider {
+        provider: String,
+        request: String,
+        fingerprint: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -99,8 +124,15 @@ mod tests {
         let project = Project {
             schema_version: 2,
             engine_version: "0.2.0".into(),
-            source: SourceIdentity { path: "photo.jpg".into(), content_hash: "abc".into(), byte_length: 42 },
-            global_adjustments: GlobalAdjustments { exposure_ev: 0.75, ..Default::default() },
+            source: SourceIdentity {
+                path: "photo.jpg".into(),
+                content_hash: "abc".into(),
+                byte_length: 42,
+            },
+            global_adjustments: GlobalAdjustments {
+                exposure_ev: 0.75,
+                ..Default::default()
+            },
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -109,7 +141,11 @@ mod tests {
                 opacity: 1.0,
                 blend_mode: BlendMode::Normal,
                 order: 0,
-                mask: MaskDefinition::Provider { provider: "subject".into(), request: "person".into(), fingerprint: None },
+                mask: MaskDefinition::Provider {
+                    provider: "subject".into(),
+                    request: "person".into(),
+                    fingerprint: None,
+                },
                 adjustments,
             }],
         };
@@ -118,7 +154,10 @@ mod tests {
         assert_eq!(restored.global_adjustments.exposure_ev, 0.75);
         assert_eq!(restored.source.content_hash, "abc");
         assert_eq!(restored.layers.len(), 1);
-        assert_eq!(restored.layers[0].adjustments.get("exposure"), Some(&0.35));
+        assert_eq!(
+            restored.layers[0].adjustments.get("exposure"),
+            Some(&0.35)
+        );
     }
 
     #[test]
