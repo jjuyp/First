@@ -76,6 +76,36 @@ pub enum MaskDefinition {
     },
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum MaskOperation {
+    Add,
+    Subtract,
+    Intersect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MaskComposite {
+    pub operation: MaskOperation,
+    pub children: Vec<MaskTree>,
+}
+
+/// Serializable non-destructive mask expression. `untagged` keeps the original v0.2 leaf-mask
+/// JSON readable while allowing Add/Subtract/Intersect compositions without rasterizing them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum MaskTree {
+    Leaf(MaskDefinition),
+    Composite(MaskComposite),
+}
+
+impl From<MaskDefinition> for MaskTree {
+    fn from(value: MaskDefinition) -> Self {
+        Self::Leaf(value)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BrushPoint {
@@ -94,7 +124,7 @@ pub struct AdjustmentLayer {
     #[serde(default)]
     pub blend_mode: BlendMode,
     pub order: u32,
-    pub mask: MaskDefinition,
+    pub mask: MaskTree,
     /// Storage-independent parameter map. Typed engine parameters are resolved by schema/version.
     #[serde(default)]
     pub adjustments: BTreeMap<String, f32>,
@@ -140,7 +170,8 @@ mod tests {
                     provider: "subject".into(),
                     request: "person".into(),
                     fingerprint: None,
-                },
+                }
+                .into(),
                 adjustments,
             }],
         };
@@ -153,6 +184,57 @@ mod tests {
             restored.layers[0].adjustments.get("exposure"),
             Some(&0.35)
         );
+    }
+
+    #[test]
+    fn mask_tree_round_trips_add_subtract_and_intersect() {
+        let tree = MaskTree::Composite(MaskComposite {
+            operation: MaskOperation::Intersect,
+            children: vec![
+                MaskDefinition::Provider {
+                    provider: "subject".into(),
+                    request: "person".into(),
+                    fingerprint: Some("model-v1".into()),
+                }
+                .into(),
+                MaskTree::Composite(MaskComposite {
+                    operation: MaskOperation::Subtract,
+                    children: vec![
+                        MaskDefinition::Radial {
+                            x: 0.5,
+                            y: 0.5,
+                            width: 0.8,
+                            height: 0.8,
+                            rotation: 0.0,
+                            feather: 0.25,
+                            invert: false,
+                        }
+                        .into(),
+                        MaskDefinition::Brush {
+                            points: vec![BrushPoint {
+                                x: 0.45,
+                                y: 0.42,
+                                pressure: 1.0,
+                            }],
+                            radius: 0.04,
+                            feather: 0.5,
+                            flow: 1.0,
+                        }
+                        .into(),
+                    ],
+                }),
+            ],
+        });
+        let json = serde_json::to_string(&tree).expect("serialize mask tree");
+        let restored: MaskTree = serde_json::from_str(&json).expect("deserialize mask tree");
+        assert_eq!(restored, tree);
+    }
+
+    #[test]
+    fn legacy_leaf_mask_json_remains_readable_as_tree() {
+        let json = r#"{"type":"radial","x":0.5,"y":0.5,"width":0.4,"height":0.4,"rotation":0.0,"feather":0.5,"invert":false}"#;
+        let restored: MaskTree = serde_json::from_str(json).expect("deserialize legacy leaf");
+        assert!(matches!(restored, MaskTree::Leaf(MaskDefinition::Radial { .. })));
     }
 
     #[test]
