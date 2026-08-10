@@ -47,7 +47,9 @@ export function hasAdjustments(adjustments: Adjustments) {
  */
 function remapToneLuminance(luminance: number, adjustments: Adjustments) {
   let out = Math.max(0, luminance)
-  const shadowWeight = smoothstep(0.008, 0.035, out) * (1 - smoothstep(0.32, 0.58, out))
+  // A narrow, bell-like shadow zone keeps true black anchored and fades before midtones.
+  // This specifically prevents the v0.1 "white veil" failure mode.
+  const shadowWeight = smoothstep(0.004, 0.012, out) * (1 - smoothstep(0.06, 0.18, out))
   const blackWeight = 1 - smoothstep(0, 0.11, out)
   const highlightWeight = smoothstep(0.34, 0.62, out) * (1 - smoothstep(1.10, 1.55, out))
   const whiteWeight = smoothstep(0.72, 1.02, out)
