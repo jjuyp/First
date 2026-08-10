@@ -15,6 +15,7 @@ function linearToSrgb(value: number) {
 }
 
 function smoothstep(edge0: number, edge1: number, value: number) {
+  if (Math.abs(edge1 - edge0) < Number.EPSILON) return value < edge0 ? 0 : 1
   const t = clamp01((value - edge0) / (edge1 - edge0))
   return t * t * (3 - 2 * t)
 }
@@ -37,6 +38,46 @@ function mapToneCurve(value: number, points?: ToneCurvePoint[]) {
 export function hasAdjustments(adjustments: Adjustments) {
   return (Object.keys(defaultAdjustments) as Array<keyof Adjustments>)
     .some((key) => adjustments[key] !== defaultAdjustments[key])
+}
+
+/**
+ * Browser reference for the v0.2 Rust tone engine. Creative production math is moving to
+ * starroom-color; this keeps the interactive vertical slice usable during the migration.
+ * Tone controls remap luminance and scale RGB together instead of blending RGB toward white.
+ */
+function remapToneLuminance(luminance: number, adjustments: Adjustments) {
+  let out = Math.max(0, luminance)
+  const shadowWeight = smoothstep(0.008, 0.035, out) * (1 - smoothstep(0.32, 0.58, out))
+  const blackWeight = 1 - smoothstep(0, 0.11, out)
+  const highlightWeight = smoothstep(0.34, 0.62, out) * (1 - smoothstep(1.10, 1.55, out))
+  const whiteWeight = smoothstep(0.72, 1.02, out)
+  const shadows = adjustments.shadows / 100
+  const highlights = adjustments.highlights / 100
+  const whites = adjustments.whites / 100
+  const blacks = adjustments.blacks / 100
+
+  if (shadows >= 0) out += shadows * shadowWeight * (0.24 + 0.18 * Math.sqrt(out)) * (1 - Math.min(1, out))
+  else out *= 1 + shadows * shadowWeight * 0.72
+
+  if (highlights < 0) {
+    const compression = 1 + -highlights * highlightWeight * 1.35
+    out = out / compression + Math.min(out, 0.22) * (1 - 1 / compression)
+  } else out += highlights * highlightWeight * (1 - Math.min(1, out)) * 0.22
+
+  if (blacks >= 0) out += blacks * blackWeight * 0.055
+  else out *= 1 + blacks * blackWeight * 0.82
+
+  if (whites >= 0) out += whites * whiteWeight * (0.10 + 0.10 * Math.min(1, out))
+  else out *= 1 + whites * whiteWeight * 0.48
+
+  const contrast = adjustments.contrast / 100
+  if (Math.abs(contrast) > Number.EPSILON) {
+    const pivot = 0.18
+    const safe = Math.max(1e-6, out)
+    const stops = Math.log2(safe / pivot)
+    out = pivot * (2 ** (stops * (1 + contrast * 0.62)))
+  }
+  return Number.isFinite(out) ? Math.max(0, out) : 0
 }
 
 function applyDetail(imageData: ImageData, noiseReduction: number, sharpness: number) {
@@ -76,7 +117,6 @@ export function processImageData(imageData: ImageData, adjustments: Adjustments,
 
   const pixels = imageData.data
   const exposure = 2 ** adjustments.exposure
-  const contrast = 2 ** (adjustments.contrast / 55)
   const warmth = Math.max(-1, Math.min(1, (adjustments.temperature - 6500) / 4500))
   const tint = adjustments.tint / 100
   const saturation = 1 + adjustments.saturation / 100
@@ -112,36 +152,16 @@ export function processImageData(imageData: ImageData, adjustments: Adjustments,
     blue *= exposure * localExposure * radialScale * (1 - warmth * 0.22 + tint * 0.08)
 
     let luminance = 0.2627 * red + 0.678 * green + 0.0593 * blue
-    const shadowWeight = (1 - clamp01(luminance)) ** 2
-    const highlightWeight = clamp01(luminance) ** 2
-    const whiteWeight = smoothstep(0.55, 1, luminance)
-    const blackWeight = 1 - smoothstep(0, 0.42, luminance)
+    const targetLuminance = remapToneLuminance(luminance, adjustments)
+    const toneScale = luminance > 1e-7 ? targetLuminance / luminance : 0
+    red *= toneScale
+    green *= toneScale
+    blue *= toneScale
+    luminance = targetLuminance
 
-    const applyRegion = (channel: number, amount: number, weight: number, strength: number) =>
-      amount >= 0
-        ? channel + (1 - channel) * amount * weight * strength
-        : channel * (1 + amount * weight * strength)
-
-    const shadows = adjustments.shadows / 100
-    const highlights = adjustments.highlights / 100
-    const whites = adjustments.whites / 100
-    const blacks = adjustments.blacks / 100
-
-    red = applyRegion(red, shadows, shadowWeight, 0.72)
-    green = applyRegion(green, shadows, shadowWeight, 0.72)
-    blue = applyRegion(blue, shadows, shadowWeight, 0.72)
-    red = applyRegion(red, highlights, highlightWeight, 0.72)
-    green = applyRegion(green, highlights, highlightWeight, 0.72)
-    blue = applyRegion(blue, highlights, highlightWeight, 0.72)
-    red = applyRegion(red, whites, whiteWeight, 0.62)
-    green = applyRegion(green, whites, whiteWeight, 0.62)
-    blue = applyRegion(blue, whites, whiteWeight, 0.62)
-    red = applyRegion(red, blacks, blackWeight, 0.62)
-    green = applyRegion(green, blacks, blackWeight, 0.62)
-    blue = applyRegion(blue, blacks, blackWeight, 0.62)
+    // Transitional clarity preview. Production v0.2+ detail math moves to the Rust/GPU detail stage.
     const midtoneWeight = Math.max(0, 1 - Math.abs(clamp01(luminance) - 0.5) * 2)
-
-    const clarityContrast = contrast * (1 + clarity * midtoneWeight * 0.65)
+    const clarityContrast = 1 + clarity * midtoneWeight * 0.65
     red = 0.18 + (red - 0.18) * clarityContrast
     green = 0.18 + (green - 0.18) * clarityContrast
     blue = 0.18 + (blue - 0.18) * clarityContrast
@@ -165,7 +185,6 @@ export function processImageData(imageData: ImageData, adjustments: Adjustments,
   }
 
   applyDetail(imageData, adjustments.noiseReduction, adjustments.sharpness)
-
   return imageData
 }
 
