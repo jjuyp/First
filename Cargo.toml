@@ -2,16 +2,17 @@
 resolver = "2"
 members = [
   "crates/starroom-core",
-  "crates/starroom-project",
-  "src-tauri",
-]
-exclude = [
   "crates/starroom-color",
   "crates/starroom-advisor",
   "crates/starroom-portrait",
+  "crates/starroom-project",
+  "src-tauri",
 ]
 default-members = [
   "crates/starroom-core",
+  "crates/starroom-color",
+  "crates/starroom-advisor",
+  "crates/starroom-portrait",
   "crates/starroom-project",
 ]
 
