@@ -12,7 +12,13 @@ pub struct Landmark {
 
 pub trait FaceLandmarkProvider {
     type Error;
-    fn detect(&self, width: u32, height: u32, rgba: &[u8]) -> Result<Vec<Vec<Landmark>>, Self::Error>;
+
+    fn detect(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<Vec<Vec<Landmark>>, Self::Error>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -22,28 +28,47 @@ pub struct FrequencySplitParams {
 }
 
 impl Default for FrequencySplitParams {
-    fn default() -> Self { Self { radius: 3, smooth_strength: 0.35 } }
+    fn default() -> Self {
+        Self {
+            radius: 3,
+            smooth_strength: 0.35,
+        }
+    }
 }
 
 /// Reference 1D box blur used only to validate frequency-separation semantics.
 /// Production rendering will use separable Gaussian/edge-aware GPU kernels.
-pub fn split_frequency(signal: &[f32], params: FrequencySplitParams) -> (Vec<f32>, Vec<f32>) {
-    if signal.is_empty() { return (Vec::new(), Vec::new()); }
+pub fn split_frequency(
+    signal: &[f32],
+    params: FrequencySplitParams,
+) -> (Vec<f32>, Vec<f32>) {
+    if signal.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
     let radius = params.radius.max(1);
     let mut low = vec![0.0; signal.len()];
-    for (i, out) in low.iter_mut().enumerate() {
-        let start = i.saturating_sub(radius);
-        let end = (i + radius + 1).min(signal.len());
+    for (index, output) in low.iter_mut().enumerate() {
+        let start = index.saturating_sub(radius);
+        let end = (index + radius + 1).min(signal.len());
         let sum: f32 = signal[start..end].iter().copied().sum();
-        *out = sum / (end - start) as f32;
+        *output = sum / (end - start) as f32;
     }
-    let high = signal.iter().zip(&low).map(|(src, base)| src - base).collect();
+
+    let high = signal
+        .iter()
+        .zip(&low)
+        .map(|(source, base)| source - base)
+        .collect();
     (low, high)
 }
 
 pub fn recombine_with_smoothing(low: &[f32], high: &[f32], strength: f32) -> Vec<f32> {
     let keep = 1.0 - strength.clamp(0.0, 1.0);
-    low.iter().zip(high).map(|(l, h)| l + h * keep).collect()
+    low.iter()
+        .zip(high)
+        .map(|(low_value, high_value)| low_value + high_value * keep)
+        .collect()
 }
 
 #[cfg(test)]
@@ -55,7 +80,10 @@ mod tests {
         let source = [0.1, 0.2, 0.8, 0.3, 0.2];
         let (low, high) = split_frequency(&source, FrequencySplitParams::default());
         let rebuilt = recombine_with_smoothing(&low, &high, 0.0);
-        for (a, b) in rebuilt.iter().zip(source) { assert!((a - b).abs() < 1e-6); }
+
+        for (actual, expected) in rebuilt.iter().zip(source) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
     }
 
     #[test]
