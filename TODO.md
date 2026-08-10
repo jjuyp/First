@@ -1,107 +1,269 @@
 # Complete Internal Build Plan
 
-## Browser vertical slice — completed 2026-08-09
-- [x] Direct numeric entry for every slider control
-- [x] Kelvin white-balance input (2,000–12,000 K)
-- [x] Direct curve editor: add, drag, numeric edit and right-click delete points
-- [x] Detail controls use -100…100; sharpen/soften and NR have pixel regression tests
-- [x] On-image radial mask placement, move, width/height resize and rotation handles
-- [x] Arbitrary -180…180° rotation plus 90° shortcuts and flips
-- [x] Wheel zoom (25–600%), drag-to-pan and Fit reset
-- [x] Removed duplicate Simple/Pro switch; one complete inspector remains
-- [x] Playwright interaction pass and zero browser console errors/warnings
+## Product principle — Open-source Foundation First
 
-> This is the rendered-file CPU browser slice. It does not complete the production RAW/ICC/wgpu, multi-mask, camera-profile or perspective requirements below.
+Before expanding advanced Starroom-specific features, baseline image quality must stand on mature open-source foundations wherever a proven implementation already exists.
+
+Read `docs/16_OPEN_SOURCE_FOUNDATION.md` before foundation work.
+
+Rules:
+- do not replace a mature RAW/tone/color/denoise/optics/perspective implementation with a weaker custom prototype;
+- prefer adapters/providers so third-party APIs do not leak into React or unrelated crates;
+- CPU reference implementations are validation tools unless they meet the production replacement gate;
+- Starroom-native replacements must be equal/better on relevant regression fixtures or be justified by platform, architecture, performance, maintenance, or licensing constraints;
+- directly derived darktable code in the current private-use build must record provenance and be marked `GPL-derived / private-use`;
+- a trait/struct/UI/placeholder is not a completed production feature.
+
+## F0 Foundation Quality Gate — highest priority
+
+- [x] Document Open-source First strategy and Codex decision rules.
+- [ ] CI green on current v0.2 branch after all native crates are enabled.
+- [ ] Create third-party provenance inventory: project, source file, upstream revision, license, integration mode, Starroom files.
+- [ ] Establish Golden Image/regression fixture set: portrait, dark portrait, black clothing, white clothing, HDR/backlight, night, neon, ColorChecker, fine texture, high ISO, lens distortion/CA, perspective.
+- [ ] Define per-stage quality comparison reports against the selected mature foundation.
+- [ ] Do not advance a custom foundation replacement unless the replacement gate passes.
+
+## Browser vertical slice — completed 2026-08-09
+- [x] Direct numeric entry for every slider control.
+- [x] Initial encoded-image white-balance control.
+- [x] Direct curve editor: add, drag, numeric edit and right-click delete points.
+- [x] Detail controls and browser pixel regression tests.
+- [x] On-image radial mask placement, move, width/height resize and rotation handles.
+- [x] Arbitrary -180…180° rotation plus 90° shortcuts and flips.
+- [x] Wheel zoom (25–600%), drag-to-pan and Fit reset.
+- [x] Removed duplicate Simple/Pro switch; one complete inspector remains.
+- [x] Playwright interaction pass and zero browser console errors/warnings at the original slice milestone.
+
+> This is a rendered-file CPU browser slice. It is not the production image engine and must not be used as the quality reference for RAW/ICC/tone/detail/optics work.
 
 ## M0 Workspace / CI
-- [x] Rust workspace + Tauri 2 + React/TS
-- [x] crate boundaries, lint/format/test, Windows CI
-- [x] fixture manifest and source immutability hash test
+- [x] Rust workspace + Tauri 2 + React/TS.
+- [x] crate boundaries, lint/format/test, Windows CI scaffold.
+- [x] fixture manifest and source immutability hash test.
+- [ ] Keep all newly activated native crates green under fmt/clippy/test.
 
-## M1 Render Spine
-- [ ] JPEG/PNG/TIFF decoder abstraction
-- [ ] embedded ICC and fallback rules
-- [ ] LittleCMS wrapper + working-space transform
-- [ ] wgpu device/surface, Exposure GPU + CPU reference
-- [ ] Before/After, display transform, basic export
+## M1 Native Render Foundation
 
-## M2 Tone / Color
-- [ ] WB, Exposure, Highlights, Shadows, Whites, Blacks, Contrast
-- [ ] Master/RGB curves, OKLab/OKLCH, HSL mixer, skin protection
-- [ ] Vibrance/Saturation, gamut compression, histogram
+### M1A Rendered-file I/O
+- [ ] Production JPEG/PNG/TIFF decoder connected to native render path.
+- [ ] Preserve embedded ICC/EXIF metadata through decode boundary.
+- [ ] Production JPEG/PNG/TIFF export path does not use preview pixels as source.
 
-## M3 RAW
-- [ ] LibRaw bridge and RAW metadata model
-- [ ] CFA, active area, black/white levels, normalized mosaic
-- [ ] bad-pixel stage, Bayer demosaic provider, generic CFA/X-Trans interface
-- [ ] camera-profile resolver, RAW WB, DNG matrices
-- [ ] NEF/RAF/CR3/ARW/DNG fixtures
+### M1B Color management — mature foundation required
+- [ ] Integrate real LittleCMS provider.
+- [ ] Explicit input -> working -> display/output transforms.
+- [ ] Validate D50/D65 adaptation and rendering intents.
+- [ ] Define fallback rules; never silently substitute an incorrect profile.
+- [ ] Multi-monitor/display-profile test plan.
+
+### M1C Native rendered-file pipeline
+- [ ] Decode -> input transform -> working RGB -> WB -> exposure/tone -> curve -> color -> detail -> optics/geometry -> display/export in one native graph.
+- [ ] Preview and export use the same logical processing graph.
+- [ ] Tauri native preview replaces browser creative math only after parity/regression acceptance.
+
+## M2 Tone / Color Foundation — use mature open-source behavior
+
+### M2A Exposure / Tone
+Preferred foundation: darktable exposure/tone implementations and validated scene-referred math.
+
+- [ ] Record selected upstream modules/revisions and integration approach.
+- [ ] Exposure ±5 EV.
+- [ ] Highlights / Shadows / Whites / Blacks share one coherent tone model.
+- [ ] Preserve black anchor and highlight detail where mathematically possible.
+- [ ] Contrast uses documented pivot/curve semantics.
+- [ ] Compare against mature foundation on Golden Image fixtures.
+- [ ] Remove temporary browser tone math after native acceptance.
+
+### M2B White balance / calibration
+Preferred foundation: mature darktable color-calibration/channel-mixer concepts plus standard color science.
+
+- [ ] Encoded JPEG/PNG/TIFF uses relative Temperature/Tint semantics, not fake physical Kelvin.
+- [ ] RAW uses camera/metadata/profile-aware WB path.
+- [ ] Calibration remains separate from creative grading.
+
+### M2C Curves
+Preferred foundation: mature darktable curve behavior where useful plus Starroom monotone requirements.
+
+- [ ] Master curve.
+- [ ] R/G/B curves.
+- [ ] Monotone interpolation / no unintended overshoot.
+- [ ] UI curve matches actual render curve.
+
+### M2D Selective color — Starroom differentiator
+- [ ] Eight-band OKLCh Color Mixer UI: Red/Orange/Yellow/Green/Aqua/Blue/Purple/Magenta.
+- [ ] Hue / Chroma / Lightness per band.
+- [ ] Smooth circular overlap.
+- [ ] Hue-lock behavior validated with gamut compression.
+
+### M2E Color grading
+Preferred foundation: darktable `colorbalancergb` as mature reference/port source.
+
+- [ ] Shadows/Midtones/Highlights/Global grading.
+- [ ] Balance/Blending.
+- [ ] Record GPL-derived provenance if code is directly adapted.
+
+## M3 RAW Foundation — mature decoder first
+Preferred foundation: LibRaw or another proven RAW decoder abstraction.
+
+- [ ] LibRaw bridge and RAW metadata model.
+- [ ] CFA, active area, black/white levels, normalized mosaic.
+- [ ] Bad-pixel stage.
+- [ ] Bayer demosaic provider.
+- [ ] Generic CFA/X-Trans interface.
+- [ ] Camera-profile resolver, RAW WB, DNG matrices.
+- [ ] NEF/RAF/CR3/ARW/DNG fixtures.
+- [ ] Nikon/Fujifilm/Sony/Canon regression samples where legally usable.
+- [ ] Do not claim RAW support until real files render through the shared graph.
 
 ## M4 GPU Graph
-- [ ] stage graph/cache keys/invalidation
-- [ ] preview pyramid, tile renderer, halo-aware filters
-- [ ] device-loss recovery, CPU fallback, tiled full-res export
+- [x] Render graph stage/dependency/cache-key/invalidation foundation exists.
+- [x] Halo-aware tile-planning foundation exists.
+- [ ] wgpu device/surface and Windows DX12 preferred path.
+- [ ] RGBA16Float working preview and R16Float masks.
+- [ ] Preview pyramid.
+- [ ] Tiled full-resolution rendering/export.
+- [ ] Device-loss recovery.
+- [ ] CPU fallback.
+- [ ] CPU/GPU parity tests for every migrated image stage.
 
-## M5 Masks
-- [ ] Brush/Eraser/Linear/Radial/Luminance/Color Range
-- [ ] Add/Subtract/Intersect, overlay, mask cache
-- [ ] local tone/color, frozen AI-mask format
+## M5 Layers / Masks — Starroom-owned architecture
+- [x] Versioned AdjustmentLayer data model: mask, adjustments, blend mode, enabled, opacity, order.
+- [x] Mask tree data model with Add/Subtract/Intersect.
+- [ ] Brush/Eraser/Linear/Radial/Luminance/Color Range production masks.
+- [ ] Independent raster-mask cache.
+- [ ] Layer drag reorder and per-layer invalidation.
+- [ ] Local tone/color/detail semantics match global controls.
+- [ ] Frozen AI-mask persistence.
+- [ ] Full Layer Manager UI.
 
-## M6 Detail/Optics/Geometry
-- [ ] Texture/Clarity/Dehaze, classic NR, sharpen
-- [ ] lens interface, distortion/CA/vignette
-- [ ] crop/rotate/straighten/perspective
+## M6 Detail Foundation — mature open-source first
 
-## M7 AI Runtime
-- [ ] Windows ML/ONNX bridge, model manifest, device enumeration
-- [ ] offline CPU fallback, async/cancellable jobs, model cache/fingerprints
+### M6A Sharpen
+Preferred foundation: darktable `sharpen.c` and other proven sharpening references as appropriate.
 
-## M8 AI Mask
-- [ ] MaskProvider, interactive point/box provider
-- [ ] semantic provider interface: Subject/Background/Sky/Person
-- [ ] Face/Skin/Hair contract where supported
-- [ ] editable manual refinement and frozen persistence
+- [ ] Record upstream module/revision and integration approach.
+- [ ] Amount / Radius / Detail / Masking production model.
+- [ ] Avoid halos and color shifts on regression fixtures.
 
-## M9 AI Denoise
-- [ ] DenoiseProvider, LinearRGB path, tiled overlap/blending
-- [ ] strength/detail protection, benchmark suite
-- [ ] optional RawMosaic hook, model-version persistence
+### M6B Denoise
+Preferred foundation: mature darktable classic/profiled denoise implementations where suitable.
 
-## M10 Look Engine
-- [ ] `.srlook`, LookDescriptor, mood axes, basis mapping
-- [ ] parameter-aware Amount and Style Mixer
-- [ ] protected categories and regression gallery
+- [ ] Luminance/color noise controls.
+- [ ] Preserve edges/fine texture.
+- [ ] High ISO fixture suite.
+- [ ] Do not use a generic blur as production denoise.
+- [ ] Keep AI denoise as a later local provider, not a substitute for a good classic baseline.
 
-## M11 Reference Match
-- [ ] analyzer, exposure/WB estimation, quantile tone mapping
-- [ ] monotonic curve, hue-band/grading estimates
-- [ ] optional semantic matching, bounded refinement, confidence/explain report
+### M6C Texture / Clarity / Dehaze
+- [ ] Multi-scale local-contrast foundation.
+- [ ] Verify no severe halos at edges/high-contrast boundaries.
 
-## M12 Workflow
-- [ ] strip, ratings/flags, copy/paste/sync, batch export
-- [ ] history/snapshot/compare/survey/metadata/presets
+## M7 Optics / Geometry Foundation
 
-## M13 Beginner / Pro
-- [ ] one shared state and Adjustment Inspector (Simple/Pro split removed after user validation)
+### M7A Lens correction
+Preferred foundation: Lensfun.
 
-## M14 Release Candidate
-- [ ] camera/GPU/AI matrices, multi-monitor color tests
-- [ ] corrupt input/fuzz, model/dependency license audits
-- [ ] 24/45/60/100MP performance and memory suite
-- [ ] golden-image regressions, installer/update/uninstall validation
+- [ ] Integrate real Lensfun library/database provider.
+- [ ] Lens identification.
+- [ ] Distortion.
+- [ ] Lateral chromatic aberration.
+- [ ] Vignetting profile correction.
+- [ ] Lensfun result feeds Starroom CPU/GPU renderer through adapter boundary.
 
-## UI Design System — required before feature-polish
-- [ ] Load `design/STARROOM_DESIGN_DNA.json`
-- [ ] Implement semantic theme tokens: Dark / Gray / Light
-- [ ] Implement brand gradient tokens and functional accent subset
-- [ ] Implement app shell with collapsible Library, Filmstrip, hybrid Inspector
-- [ ] Implement resizable left/right panels
-- [ ] Implement category icon rail + accordion inspector
-- [ ] Implement B slider + hover/drag numeric bubble
-- [ ] Implement Simple/Pro shared-state toggle
-- [ ] Implement proof background switch independent from theme
-- [ ] Implement Mask floating toolbar + right mask tree
-- [ ] Implement UI quality modes Auto / High / Balanced / Performance
-- [ ] Respect reduced motion
-- [ ] Add screenshot regression tests for all three themes
-- [ ] Validate that UI quality mode cannot change image/export output
+### M7B Geometry / Perspective
+Preferred foundation: darktable `ashift` and proven projective math.
+
+- [ ] Crop.
+- [ ] Rotate / straighten.
+- [ ] Perspective / keystone.
+- [ ] Architecture fixture regression set.
+- [ ] Record GPL-derived provenance if directly adapted.
+
+## M8 Effects / Calibration
+- [ ] Vignette using mature reference where appropriate.
+- [ ] Grain.
+- [ ] Bloom/glow using mature reference where appropriate.
+- [ ] Color calibration implementation separated from creative color grading.
+
+## M9 Semantic Advisor — Starroom differentiator
+- [x] Deterministic local rule-engine foundation.
+- [x] Basic image statistics foundation.
+- [ ] Run analysis as cancellable/background native job.
+- [ ] UI switch.
+- [ ] Explainable suggestions with Apply/Ignore.
+- [ ] Validate numerical helpers against colour-science where useful.
+- [ ] Advisor never silently mutates edits.
+
+## M10 Portrait / Skin / Healing — Starroom workflow
+- [x] Provider-neutral FaceLandmarkProvider contract.
+- [x] Frequency-separation CPU reference foundation.
+- [x] Healing CPU reference foundation.
+- [ ] Integrate MediaPipe adapter after runtime/license/privacy review.
+- [ ] Face ROI and facial-feature exclusions.
+- [ ] Continuous skin likelihood/refinement without a single hard skin-color rule.
+- [ ] Editable skin mask.
+- [ ] Skin Smooth / Texture Preserve / Tone Evenness / Face Exposure / Skin Hue / Skin Chroma.
+- [ ] Production healing brush UI and history transactions.
+- [ ] AI inpainting remains post-V1.
+
+## M11 AI Runtime
+- [ ] Windows ML/ONNX bridge, model manifest, device enumeration.
+- [ ] Offline CPU fallback, async/cancellable jobs, model cache/fingerprints.
+- [ ] Local-first only for core AI.
+
+## M12 AI Mask
+- [ ] MaskProvider, interactive point/box provider.
+- [ ] Subject / Background / Sky / Person.
+- [ ] Face / Skin / Hair where supported.
+- [ ] Editable manual refinement and frozen persistence.
+
+## M13 AI Denoise
+- [ ] DenoiseProvider, LinearRGB path, tiled overlap/blending.
+- [ ] Strength/detail protection, benchmark suite.
+- [ ] Optional RawMosaic hook, model-version persistence.
+
+## M14 Look Engine
+- [ ] `.srlook`, LookDescriptor, mood axes, basis mapping.
+- [ ] Parameter-aware Amount and Style Mixer.
+- [ ] Protected categories and regression gallery.
+
+## M15 Reference Match
+- [ ] Analyzer, exposure/WB estimation, quantile tone mapping.
+- [ ] Monotonic curve, hue-band/grading estimates.
+- [ ] Optional semantic matching, bounded refinement, confidence/explain report.
+
+## M16 Workflow
+- [ ] Strip, ratings/flags, copy/paste/sync, batch export.
+- [ ] Unified Begin/Preview/Commit/Cancel transaction system.
+- [ ] Remove duplicate frontend history logic.
+- [ ] History/snapshot/compare/survey/metadata/presets.
+
+## M17 UI Refactor / Design System
+- [ ] Split oversized `App.tsx` into workspace/library/tools/state/bridge modules.
+- [ ] Load `design/STARROOM_DESIGN_DNA.json`.
+- [ ] Semantic theme tokens: Dark / Gray / Light.
+- [ ] Brand gradient tokens and functional accent subset.
+- [ ] Collapsible Library, Filmstrip, hybrid Inspector.
+- [ ] Resizable left/right panels.
+- [ ] Category icon rail + accordion inspector.
+- [ ] Slider numeric bubble and direct numeric entry.
+- [ ] Proof background switch independent from theme.
+- [ ] Mask floating toolbar + right mask tree.
+- [ ] UI quality modes Auto / High / Balanced / Performance.
+- [ ] Reduced-motion support.
+- [ ] Screenshot regression tests for all three themes.
+- [ ] UI quality mode cannot change image/export output.
+
+## M18 Release Candidate
+- [ ] Camera/GPU/AI matrices.
+- [ ] Multi-monitor color tests.
+- [ ] Corrupt input/fuzz.
+- [ ] Complete dependency/model/GPL/LGPL/CC provenance audit.
+- [ ] 24/45/60/100MP performance and memory suite.
+- [ ] Golden-image regressions.
+- [ ] Installer/update/uninstall validation.
+
+## Product acceptance rule
+The foundation wins before novelty.
+
+Do not call Starroom production-ready if its RAW, tone, color, denoise, sharpening, optics, or perspective baseline is materially worse than the mature open-source foundation selected for that stage, even if advanced Starroom features are already impressive.
