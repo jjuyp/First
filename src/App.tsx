@@ -10,7 +10,7 @@ import {
   defaultAdjustments,
 } from './editorState'
 import {
-  calculateHistogram, hasAdjustments, renderImageSource,
+  calculateHistogram, hasAdjustments, mapToneCurve, renderImageSource,
   type RadialMask, type ToneCurvePoint,
 } from './imagePipeline'
 
@@ -94,7 +94,7 @@ const sliderGroups: Partial<Record<Tool, Array<{ key: AdjustmentKey; label: stri
     { key: 'blacks', label: 'Blacks', min: -100, max: 100, step: 1 },
   ],
   color: [
-    { key: 'temperature', label: 'Temperature', min: 2000, max: 12000, step: 50, suffix: ' K' },
+    { key: 'temperature', label: 'Temperature', min: -100, max: 100, step: 1 },
     { key: 'tint', label: 'Tint', min: -100, max: 100, step: 1 },
     { key: 'vibrance', label: 'Vibrance', min: -100, max: 100, step: 1 },
     { key: 'saturation', label: 'Saturation', min: -100, max: 100, step: 1 },
@@ -130,9 +130,9 @@ function IconButton({ label, disabled, onClick, children }: { label: string; dis
   return <button className="icon-button" aria-label={label} title={label} disabled={disabled} onClick={onClick}>{children}</button>
 }
 
-function Slider({ label, value, min, max, step, suffix = '', onChange, onReset }: {
+function Slider({ label, value, min, max, step, suffix = '', onBeginEdit, onChange, onReset }: {
   label: string; value: number; min: number; max: number; step: number; suffix?: string
-  onChange: (value: number) => void; onReset: () => void
+  onBeginEdit: () => void; onChange: (value: number) => void; onReset: () => void
 }) {
   const [active, setActive] = useState(false)
   const percent = ((value - min) / (max - min)) * 100
@@ -147,7 +147,7 @@ function Slider({ label, value, min, max, step, suffix = '', onChange, onReset }
   return <div className="slider-row">
     <div className="slider-label"><span>{label}</span><label className="numeric-editor" title={`Type ${label} value`}>
       <input aria-label={`${label} value`} type="number" min={min} max={max} step={step} value={editing ? draft : display}
-        onFocus={(event) => { setEditing(true); setDraft(display); event.currentTarget.select() }}
+        onFocus={(event) => { onBeginEdit(); setEditing(true); setDraft(display); event.currentTarget.select() }}
         onChange={(event) => setDraft(event.target.value)} onBlur={commitDraft}
         onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setDraft(display); event.currentTarget.blur() } }} />
       {suffix && <span>{suffix.trim()}</span>}
@@ -155,7 +155,7 @@ function Slider({ label, value, min, max, step, suffix = '', onChange, onReset }
     <div className={`slider-wrap ${active ? 'is-active' : ''}`} style={{ '--fill': `${percent}%` } as React.CSSProperties}>
       <input aria-label={label} type="range" min={min} max={max} step={step} value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        onPointerDown={() => setActive(true)} onPointerUp={() => setActive(false)}
+        onPointerDown={() => { onBeginEdit(); setActive(true) }} onPointerUp={() => setActive(false)}
         onBlur={() => setActive(false)} onDoubleClick={onReset} />
       <span className="value-bubble" style={{ left: `${percent}%` }}>{display}</span>
     </div>
@@ -176,7 +176,11 @@ function ToneCurveEditor({ points, selectedId, onSelect, onBeginEdit, onChange }
   const [dragId, setDragId] = useState<string | null>(null)
   const sorted = [...points].sort((a, b) => a.x - b.x)
   const selected = sorted.find((point) => point.id === selectedId) ?? sorted[2] ?? sorted[0]
-  const path = sorted.map((point, index) => `${index ? 'L' : 'M'} ${point.x * 300} ${(1 - point.y) * 120}`).join(' ')
+  const path = Array.from({ length: 61 }, (_, index) => {
+    const x = index / 60
+    const y = mapToneCurve(x, sorted)
+    return `${index ? 'L' : 'M'} ${x * 300} ${(1 - y) * 120}`
+  }).join(' ')
   const eventPoint = (event: React.PointerEvent<SVGSVGElement>) => {
     const rect = event.currentTarget.getBoundingClientRect()
     return {
@@ -229,7 +233,7 @@ function ToneCurveEditor({ points, selectedId, onSelect, onBeginEdit, onChange }
         <title>Input {Math.round(point.x * 100)}, output {Math.round(point.y * 100)}{point.id === 'black' || point.id === 'white' ? ' (endpoint)' : ' · right click to delete'}</title>
       </circle>)}
     </svg>
-    <div className="curve-help">Left click line to add · drag a point · right click point to delete</div>
+    <div className="curve-help">Monotone curve · left click line to add · drag point · right click to delete</div>
     {selected && <div className="curve-values">
       <label>Input <input aria-label="Selected curve point input" type="number" min="0" max="100" step="1" value={Math.round(selected.x * 100)}
         disabled={selected.id === 'black' || selected.id === 'white'} onFocus={onBeginEdit}
@@ -364,10 +368,11 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
   </>
 }
 
-function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, onAdjust, onReset,
+function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, onAdjust, onBeginAdjustment, onReset,
   onCurveSelect, onCurveBegin, onCurveChange, onMaskBegin, onMaskChange }: {
   tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; selectedCurvePoint: string | null; mask: RadialMask
-  onAdjust: (key: AdjustmentKey, value: number) => void
+  onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
+  onBeginAdjustment: () => void
   onReset: (key: AdjustmentKey) => void
   onCurveSelect: (id: string) => void; onCurveBegin: () => void; onCurveChange: (points: ToneCurvePoint[]) => void
   onMaskBegin: () => void; onMaskChange: (mask: RadialMask) => void
@@ -376,11 +381,12 @@ function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, onAdju
   const normalizeAngle = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
   return <section className="inspector-content" aria-label={`${tool} inspector`}>
     <div className="inspector-head"><div><span className="eyebrow">Live CPU preview</span><h2>{tool}</h2></div><ChevronDown size={16} /></div>
+    {tool === 'color' && <div className="tool-note">Encoded-image Temperature/Tint are relative corrections. Physical Kelvin will be available on the RAW pipeline.</div>}
     {tool === 'masks' && <div className="tool-note">Click the photo to place the mask. Drag inside to move; drag side handles to resize; drag the top handle to rotate.</div>}
     {tool === 'curve' && <ToneCurveEditor points={curvePoints} selectedId={selectedCurvePoint} onSelect={onCurveSelect}
       onBeginEdit={onCurveBegin} onChange={onCurveChange} />}
-    {sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]}
-      onChange={(value) => onAdjust(key, value)} onReset={() => onReset(key)} />)}
+    {sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]} onBeginEdit={onBeginAdjustment}
+      onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
     {tool === 'masks' && <div className="mask-values">
       {([
         ['Center X', 'x', mask.x * 100, 0, 100, '%'], ['Center Y', 'y', mask.y * 100, 0, 100, '%'],
@@ -535,11 +541,15 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   })
 
-  function adjust(key: AdjustmentKey, value: number) {
+  function adjust(key: AdjustmentKey, value: number, recordHistory = true) {
     updateSelected((photo) => {
       if (photo.adjustments[key] === value) return photo
-      return { ...photo, adjustments: { ...photo.adjustments, [key]: value },
-        history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }
+      return {
+        ...photo,
+        adjustments: { ...photo.adjustments, [key]: value },
+        history: recordHistory ? [...photo.history, takeSnapshot(photo)].slice(-100) : photo.history,
+        future: [],
+      }
     })
     setBefore(false)
   }
@@ -693,7 +703,7 @@ export function App() {
             className={tool === id ? 'active' : ''} aria-label={label}
             title={label} onClick={() => setTool(id)}><Icon size={18} /><span>{label}</span></button>)}</nav>
           <Inspector tool={tool} values={selected.adjustments} curvePoints={selected.curvePoints} selectedCurvePoint={selectedCurvePoint}
-            mask={selected.mask} onAdjust={adjust} onReset={resetAdjustment} onCurveSelect={setSelectedCurvePoint}
+            mask={selected.mask} onAdjust={adjust} onBeginAdjustment={beginInteractiveEdit} onReset={resetAdjustment} onCurveSelect={setSelectedCurvePoint}
             onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask} />
         </div>
         <button className="reset-all" disabled={!hasPhotoEdits(selected)} onClick={resetAll}><RotateCcw size={14} /> Reset all edits</button>
