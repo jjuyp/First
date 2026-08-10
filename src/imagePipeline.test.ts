@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateHistogram, hasAdjustments, processImageData } from './imagePipeline'
+import { calculateHistogram, hasAdjustments, mapToneCurve, processImageData } from './imagePipeline'
 import { defaultAdjustments } from './editorState'
 
 function pixels(values: number[]) {
@@ -20,9 +20,9 @@ describe('image pipeline', () => {
     expect(result.data[2]).toBeGreaterThan(120)
   })
 
-  it('treats non-zero neutral defaults as unedited', () => {
+  it('treats relative temperature zero as neutral', () => {
     expect(hasAdjustments(defaultAdjustments)).toBe(false)
-    expect(hasAdjustments({ ...defaultAdjustments, temperature: 6000 })).toBe(true)
+    expect(hasAdjustments({ ...defaultAdjustments, temperature: 20 })).toBe(true)
   })
 
   it('applies tone-curve controls to output pixels', () => {
@@ -35,6 +35,23 @@ describe('image pipeline', () => {
     ])
     expect(result.data[0]).toBeGreaterThan(35)
     expect(result.data[8]).toBeLessThan(220)
+  })
+
+  it('keeps monotone curve output monotone for monotone control points', () => {
+    const points = [
+      { id: 'black', x: 0, y: 0 },
+      { id: 'shadow', x: .25, y: .18 },
+      { id: 'midtone', x: .5, y: .58 },
+      { id: 'white', x: 1, y: 1 },
+    ]
+    let previous = mapToneCurve(0, points)
+    for (let index = 1; index <= 100; index += 1) {
+      const output = mapToneCurve(index / 100, points)
+      expect(output).toBeGreaterThanOrEqual(previous - 1e-5)
+      expect(output).toBeGreaterThanOrEqual(0)
+      expect(output).toBeLessThanOrEqual(1)
+      previous = output
+    }
   })
 
   it('lifts dark shadows much more than midtones instead of adding a white veil', () => {
@@ -66,10 +83,10 @@ describe('image pipeline', () => {
     expect(result.data[16]).toBeGreaterThan(160)
   })
 
-  it('uses Kelvin temperature values in the legacy browser preview', () => {
+  it('uses relative temperature values for encoded-image preview', () => {
     const source = pixels([100, 100, 100, 255])
-    const result = processImageData(source, { ...defaultAdjustments, temperature: 10000 })
-    expect(result.data[0]).toBeGreaterThan(result.data[2])
+    const warm = processImageData(source, { ...defaultAdjustments, temperature: 70 })
+    expect(warm.data[0]).toBeGreaterThan(warm.data[2])
   })
 
   it('returns a normalized histogram', () => {
