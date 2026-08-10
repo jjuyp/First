@@ -4,11 +4,28 @@
 Turn the v0.1 browser vertical slice into a trustworthy editing baseline before RAW/GPU/AI expansion. v0.2 prioritizes image-quality correctness, explainable state, reusable layer/mask architecture, and regression protection.
 
 ## Open-source strategy
-- darktable: study architecture, mathematics, parameter semantics, and test ideas only. Do not copy GPL source into Starroom.
-- Oklab/OKLCh: implement from published color-science equations in Starroom's own Rust code.
-- Lensfun: integrate as an external dependency after license/attribution review; do not copy darktable's lens module.
+Starroom v0.2 is currently a private/personal-use build.
+
+- darktable (GPL-3.0): direct study, adaptation and porting of useful implementations is allowed for this private-use build. Every directly derived component must be clearly marked `GPL-derived / private-use` with source file, upstream revision and license note so a future distribution decision is explicit rather than accidental.
+- Oklab/OKLCh: use published color-science equations and Starroom-native Rust/wgpu implementations for hue-locked selective editing.
+- Lensfun: integrate the library/database as the optics provider instead of rebuilding the lens database.
 - colour-science: use as a development/validation oracle where useful; production advisor logic remains native Rust and offline.
-- MediaPipe: integrate behind `FaceLandmarkProvider`; the Starroom core must not depend on a specific face runtime.
+- MediaPipe: integrate behind `FaceLandmarkProvider`; the Starroom core stays provider-neutral so face runtime can be replaced later.
+
+If Starroom is ever distributed outside private use, perform a complete GPL/LGPL/CC dependency and source audit before shipping.
+
+## darktable integration map
+| Starroom panel | Primary upstream reference / source |
+| --- | --- |
+| Basic / Light | `src/iop/exposure.c` plus relevant tone operators |
+| Tone Curve | `src/iop/basecurve.c` and tone-curve spline implementation |
+| Color Mixer | `src/iop/colorzones.c` selection/overlap ideas; Starroom output model uses OKLab/OKLCh |
+| Color Grading | `src/iop/colorbalancergb.c` |
+| Detail | `src/iop/sharpen.c` plus denoise modules |
+| Lens Correction | Lensfun plus darktable lens integration patterns |
+| Geometry | darktable `ashift` perspective module |
+| Effects | `src/iop/vignette.c`, `src/iop/bloom.c` |
+| Calibration | `channelmixerrgb` / color calibration module |
 
 ## v0.2 architecture
 ```text
@@ -30,17 +47,20 @@ Tauri IPC / commands
 - [x] Preserve a black anchor when Shadows are raised.
 - [x] Add Rust `starroom-color` CPU reference engine.
 - [x] Add Rec.2020/D65 luminance basis.
-- [x] Add clean-room Oklab/OKLCh conversion and hue rotation reference.
+- [x] Add Oklab/OKLCh conversion and hue rotation reference.
+- [x] Add eight-band OKLCh Color Mixer core with smooth overlapping hue regions.
+- [x] Add monotone cubic Hermite tone-curve reference.
+- [x] Add bounded-output OKLCh chroma gamut compression reference.
 - [x] Add regression tests preventing the known Shadows white-veil failure.
 - [ ] Replace legacy encoded-image Kelvin UI with relative Temperature/Tint controls.
-- [ ] Add monotone cubic tone-curve interpolation and RGB curves.
-- [ ] Add gamut compression after perceptual color operations.
+- [ ] Add master/R/G/B curve UI wired to the monotone curve engine.
 - [ ] Add ICC/LittleCMS file/display/output boundary.
 - [ ] Add Golden Image fixtures for portrait, dark portrait, HDR, neon, ColorChecker, fine texture and high ISO.
 
 ## P1 — Core architecture
 - [x] Add versioned `AdjustmentLayer` model with opacity, blend mode, order, mask and parameter map.
 - [x] Keep old v0.1 projects readable when `layers` is absent.
+- [x] Activate `starroom-color`, `starroom-advisor` and `starroom-portrait` as tested workspace crates.
 - [ ] Implement Begin/Preview/Commit/Cancel edit transactions for sliders, curves, masks, crop and healing.
 - [ ] Remove duplicate frontend history systems.
 - [ ] Split oversized `App.tsx` into workspace/library/tools/state/bridge modules.
@@ -51,7 +71,8 @@ Tauri IPC / commands
 ## P2 — Lightroom-style editing modules
 - [ ] Light: exposure, highlights, shadows, whites, blacks, contrast with shared tone semantics.
 - [ ] Curve: master/R/G/B monotone curves.
-- [ ] Color Mixer: eight smooth overlapping OKLCh hue bands, each Hue/Chroma/Lightness.
+- [x] Color Mixer engine core: eight smooth overlapping OKLCh hue bands, each Hue/Chroma/Lightness.
+- [ ] Color Mixer UI and per-band visualization.
 - [ ] Color Grading: shadows/midtones/highlights/global wheels plus blending/balance.
 - [ ] Detail: amount/radius/detail/masking sharpen plus luminance/color NR.
 - [ ] Optics: Lensfun-backed distortion, lateral CA and vignetting correction.
@@ -93,9 +114,11 @@ Every completed rendering stage must include:
 5. golden-image or perceptual regression when the stage becomes visual,
 6. later GPU/CPU parity test before replacing CPU preview.
 
-## v0.2 non-goals
+## v0.2 distribution boundary
+- Current target: private/personal use.
+- GPL-derived darktable source/ports are permitted within this private-use target and must remain traceable.
 - No copied Lightroom implementation, assets, profiles or presets.
-- No copied darktable GPL source code.
 - No cloud AI requirement.
 - No AI inpainting in V1 healing.
 - No claim of physical Kelvin for encoded JPEG/PNG/TIFF editing.
+- Before any external distribution, complete a license audit and decide whether to comply with GPL distribution obligations or replace the GPL-derived components.
