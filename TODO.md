@@ -79,7 +79,7 @@ These milestone numbers supersede the older capability-group numbering below for
 - [x] Use LibRaw AHD/X-Trans demosaic behind `starroom-raw`; no custom weak demosaic was introduced.
 - [x] Route Native Preview, Before/After and Export through the same RAW-aware Rust shared render graph with no browser or embedded-thumbnail fallback.
 - [x] Add typed RAW errors, six immutable CC0 camera fixtures, byte/hash/license validation, real decode regressions and separate decode/first-preview/slider-rerender measurements.
-- [ ] GitHub Actions green for the M2 commit. M3 remains blocked until this is checked.
+- [x] GitHub Actions green for M2 on both push run `31513488590` and Draft PR run `31513493542`; M3 may now begin.
 
 ### M3 Camera profiles / RAW color
 
