@@ -13,8 +13,16 @@ pub struct Xyz {
     pub z: f32,
 }
 
-pub const D50: Xyz = Xyz { x: 0.96422, y: 1.0, z: 0.82521 };
-pub const D65: Xyz = Xyz { x: 0.95047, y: 1.0, z: 1.08883 };
+pub const D50: Xyz = Xyz {
+    x: 0.96422,
+    y: 1.0,
+    z: 0.82521,
+};
+pub const D65: Xyz = Xyz {
+    x: 0.95047,
+    y: 1.0,
+    z: 1.08883,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Matrix3(pub [[f32; 3]; 3]);
@@ -32,7 +40,9 @@ impl Matrix3 {
         let mut out = [[0.0; 3]; 3];
         for (row, values) in out.iter_mut().enumerate() {
             for (column, value) in values.iter_mut().enumerate() {
-                *value = (0..3).map(|index| self.0[row][index] * other.0[index][column]).sum();
+                *value = (0..3)
+                    .map(|index| self.0[row][index] * other.0[index][column])
+                    .sum();
             }
         }
         Self(out)
@@ -76,12 +86,12 @@ const BRADFORD: Matrix3 = Matrix3([
 const SRGB_TO_XYZ_D65: Matrix3 = Matrix3([
     [0.412_456_4, 0.357_576_1, 0.180_437_5],
     [0.212_672_9, 0.715_152_2, 0.072_175_0],
-    [0.019_333_9, 0.119_192_0, 0.950_304_1],
+    [0.019_333_9, 0.119_192, 0.950_304_1],
 ]);
 
 const XYZ_TO_SRGB_D65: Matrix3 = Matrix3([
     [3.240_454_2, -1.537_138_5, -0.498_531_4],
-    [-0.969_266_0, 1.876_010_8, 0.041_556_0],
+    [-0.969_266, 1.876_010_8, 0.041_556_0],
     [0.055_643_4, -0.204_025_9, 1.057_225_2],
 ]);
 
@@ -223,7 +233,11 @@ mod tests {
 
     #[test]
     fn same_white_adaptation_is_identity_for_sample() {
-        let sample = Xyz { x: 0.3, y: 0.4, z: 0.2 };
+        let sample = Xyz {
+            x: 0.3,
+            y: 0.4,
+            z: 0.2,
+        };
         let adapted = adapt_xyz(sample, D65, D65);
         assert!(close(adapted.x, sample.x));
         assert!(close(adapted.y, sample.y));
