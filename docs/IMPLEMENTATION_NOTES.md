@@ -1,6 +1,13 @@
 # Implementation Notes
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
+## 2026-08-11 — F0 provenance and Golden Image specification
+
+- Added the first reviewed third-party inventory in `docs/17_THIRD_PARTY_PROVENANCE.md`. It separates reference-only foundations from binary dependencies and records purpose, immutable upstream version/SHA, license, derivation status, binary inclusion and external-distribution risk.
+- Added the Golden Image contract in `docs/18_GOLDEN_IMAGE_SPEC.md` and the machine-validated required-case manifest in `fixtures/golden/manifest.json`. All eleven required scenes carry identity, extreme-control, finite-number and tone/color-regression obligations; CPU/GPU parity is reserved as a mandatory future assertion when GPU stages arrive.
+- Golden source photographs are deliberately not fabricated or downloaded without redistribution review. Entries remain `planned` until their hashes, licenses, ICC/EXIF metadata, ROIs, settings vectors and reviewed baseline artifacts exist.
+- CI now validates the Golden manifest structure and required case IDs before frontend checks.
+
 ## 2026-08-11 — v0.2 native workspace quality gate
 
 - Repaired the `starroom-heal` test indexing rejected by Rust 1.97 Clippy and retained explicit `(width, x, y)` coordinate semantics through a shared test helper.

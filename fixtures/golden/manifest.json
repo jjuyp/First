@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "workingSpace": "linear Rec.2020 D65",
+  "commonAssertions": ["identity", "extremeControl", "finite", "toneRegression", "colorRegression"],
+  "futureAssertions": ["cpuGpuParity"],
+  "cases": [
+    {"id":"portrait-daylight","scene":"general portrait","status":"planned","extremeControls":["exposure","temperature","tint","saturation"],"rois":["skin","sclera","neutral-background"]},
+    {"id":"portrait-low-key","scene":"dark portrait","status":"planned","extremeControls":["shadows","blacks","denoise","sharpen"],"rois":["face-shadow","hair","black-background"]},
+    {"id":"backlit-portrait","scene":"backlight","status":"planned","extremeControls":["highlights","shadows","exposure"],"rois":["face","sky","rim-light"]},
+    {"id":"high-dynamic-range","scene":"high dynamic range","status":"planned","extremeControls":["exposure","whites","blacks","highlights","shadows"],"rois":["specular","midtone-gray","deep-texture"]},
+    {"id":"night-city","scene":"night","status":"planned","extremeControls":["exposure","shadows","blacks","denoise"],"rois":["sky-black","street-neutral","lamps"]},
+    {"id":"neon","scene":"neon","status":"planned","extremeControls":["saturation","vibrance","color-mixer"],"rois":["cyan","magenta","red","neutral-border"]},
+    {"id":"high-iso","scene":"high ISO","status":"planned","extremeControls":["denoise","sharpen"],"rois":["flat-patch","edge-mtf","chroma-noise"]},
+    {"id":"white-black-clothing","scene":"white and black clothing","status":"planned","extremeControls":["whites","blacks","highlights","shadows"],"rois":["white-weave","black-weave","neutral-reference"]},
+    {"id":"colorchecker","scene":"ColorChecker","status":"planned","extremeControls":["temperature","tint","saturation","rendering-intent"],"rois":["all-patches","neutral-patches"]},
+    {"id":"fine-texture","scene":"detail texture","status":"planned","extremeControls":["clarity","sharpen","denoise"],"rois":["flat-field","fine-texture","contrast-edge"]},
+    {"id":"mixed-temperature","scene":"mixed color temperature","status":"planned","extremeControls":["temperature","tint"],"rois":["warm-neutral","cool-neutral","skin-or-object"]}
+  ]
+}

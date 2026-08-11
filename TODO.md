@@ -18,8 +18,8 @@ Rules:
 
 - [x] Document Open-source First strategy and Codex decision rules.
 - [x] CI green on current v0.2 branch after all native crates are enabled.
-- [ ] Create third-party provenance inventory: project, source file, upstream revision, license, integration mode, Starroom files.
-- [ ] Establish Golden Image/regression fixture set: portrait, dark portrait, black clothing, white clothing, HDR/backlight, night, neon, ColorChecker, fine texture, high ISO, lens distortion/CA, perspective.
+- [x] Create third-party provenance inventory: project, source file, upstream revision, license, integration mode, Starroom files. See `docs/17_THIRD_PARTY_PROVENANCE.md`.
+- [x] Establish the executable Golden Image/regression specification and required-case manifest: portrait, dark portrait, white/black clothing, HDR, backlight, night, neon, ColorChecker, fine texture, high ISO and mixed color temperature. See `docs/18_GOLDEN_IMAGE_SPEC.md` and `fixtures/golden/manifest.json`. (Acquiring license-cleared active fixture files remains a later quality-report task.)
 - [ ] Define per-stage quality comparison reports against the selected mature foundation.
 - [ ] Do not advance a custom foundation replacement unless the replacement gate passes.
 

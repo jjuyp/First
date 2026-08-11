@@ -1,0 +1,49 @@
+# Golden Image regression specification
+
+Status: F0 executable specification. The fixture manifest is `fixtures/golden/manifest.json`; CI validates its required cases and contracts with `scripts/validate-golden-manifest.mjs`. This gate defines the tests before redistributable source photographs are accepted.
+
+## Common capture and storage contract
+
+- Sources are immutable, redistributable files with creator/license/provenance, SHA-256, dimensions, bit depth, format, embedded ICC status, EXIF status and reference ROIs recorded in the manifest.
+- Prefer a RAW plus a rendered reference when legally available. Rendered JPEG/PNG/TIFF fixtures must include both embedded-profile and missing-profile coverage across the set.
+- Accepted baselines store stage fingerprints and metrics, not only a final screenshot: decode/input transform, linear Rec.2020 D65 working image, tone/color result, detail result and encoded output.
+- Preview and export invoke the same logical graph. Output scaling/encoding may differ only where explicitly recorded.
+- Baseline replacement requires a reviewed reason, before/after metrics and visual approval; CI must never auto-accept a new baseline.
+
+## Assertions required for every image
+
+1. **Identity:** neutral settings preserve the intended input appearance. For rendered sRGB, output error is at most 1 code value per 8-bit channel after one input/working/output pass; profiled images compare in CIE Lab after the declared display/output transform.
+2. **Extreme control:** every control named by the case is tested at its documented minimum and maximum. Output must remain bounded, deterministic and visually directional; a nonzero expected ROI must change by at least the case threshold.
+3. **NaN/Inf:** every floating stage has zero non-finite samples. Invalid source/profile data returns a typed error rather than sanitized pixels.
+4. **Tone regression:** against the accepted CPU baseline, linear-light per-channel RMSE <= 0.002 and maximum absolute error <= 0.01 outside deliberately clipped output pixels.
+5. **Color regression:** ColorChecker/declared color ROIs use CIEDE2000; default tolerance is median ΔE00 <= 0.25, P95 <= 0.75 and max <= 2.0. Neutral ROIs additionally require |Δa*| and |Δb*| <= 0.5.
+6. **Determinism:** same build/input/settings produces identical RGB8 output bytes and stage-report schema on repeated CPU runs.
+7. **Future CPU/GPU parity:** manifest reserves `cpuGpuParity`. When a stage migrates to GPU, it becomes mandatory with linear RMSE <= 0.002, max absolute error <= 0.01, P95 ΔE00 <= 1.0 and no additional clipped pixels.
+
+## Required image cases
+
+| ID | Scene / required evidence | Identity focus | Extreme controls and directional expectation | Tone/color regression ROIs |
+|---|---|---|---|---|
+| `portrait-daylight` | General portrait, daylight skin, neutral background | Skin hue and neutral background remain stable | exposure ±5 EV, temperature/tint bounds, saturation ±100; skin ROI moves in the requested direction without hue discontinuity | cheek/forehead skin, sclera, neutral background |
+| `portrait-low-key` | Dark portrait with retained shadow facial detail | Black anchor and low-light skin hue | shadows ±100, blacks ±100, denoise/sharpen bounds; positive shadows reveals face more than background black | face shadow, hair, black background |
+| `backlit-portrait` | Strong backlight and face in shade | Highlight hue and face neutrality | highlights -100 must recover bright ROI; shadows +100 must lift face more than sky; extreme combination remains finite | face, sky, rim light |
+| `high-dynamic-range` | Bright speculars plus deep textured shadows | No unrequested global clipping | exposure, whites, blacks, highlights and shadows at both bounds; monotonic luminance ordering is preserved | specular, midtone gray, deep texture |
+| `night-city` | Low-light city scene with point lights | Near-black neutrality and point-light color | exposure/shadows/black/denoise extremes; point lights do not produce NaN rings or hue inversion | sky/black, street neutral, lamps |
+| `neon` | Saturated cyan/magenta/red signage | Hue continuity near gamut boundary | saturation/vibrance/color-band extremes; gamut compression remains finite and continuous | cyan, magenta, red, neutral sign border |
+| `high-iso` | Visible luminance and chroma noise with a sharp edge | Neutral noise has no chroma bias | denoise and sharpen -100/100; denoise lowers flat-field variance while retaining declared edge contrast | flat patch, edge MTF ROI, chroma noise patch |
+| `white-black-clothing` | White and black fabric in the same frame | Fabric neutrals and texture survive | whites/blacks/highlights/shadows extremes; white texture and black texture respond independently | white weave, black weave, skin/neutral reference |
+| `colorchecker` | ColorChecker under controlled D50 or D65 illumination | ICC/adaptation correctness and patch neutrality | temperature/tint/saturation extremes plus all rendering intents; invalid/missing/embedded profile variants | all chart patches; neutrals receive stricter limits |
+| `fine-texture` | Hair, fabric, foliage or printed microtexture | No default halo or blur | clarity/sharpen/denoise extremes; positive detail increases edge energy within halo limit | flat field, fine texture, high-contrast edge |
+| `mixed-temperature` | Warm practical light plus cool daylight | Local hue relationships and neutral transition | temperature/tint extremes; no abrupt hue seam or channel NaN at the mixed boundary | warm neutral, cool neutral, skin/object reference |
+
+## ICC matrix within the set
+
+- Embedded sRGB: must be honored and reported as `embeddedIcc`.
+- Missing profile: deterministic fallback is assumed sRGB and must be reported as `assumedSrgb`.
+- Valid non-sRGB RGB profile: transformed through ICC PCS into linear Rec.2020 D65 and then to the requested display/output profile.
+- Invalid embedded or output profile: typed error; never fall back silently.
+- D50/D65: Bradford reference math round-trips and LittleCMS profile transforms are covered independently.
+
+## Acceptance workflow
+
+Fixture acquisition is a separate, license-reviewed task. A manifest entry changes from `planned` to `active` only when its file hash, license, profile metadata, ROIs, settings vectors and reviewed baseline artifacts exist. F0 accepts this specification and validator; image-quality milestones accept actual active fixtures and reports.
