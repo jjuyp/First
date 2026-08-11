@@ -29,7 +29,7 @@ pub enum ImageIoError {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DecodedSourceImage {
     Rendered(DecodedRenderedImage),
-    Raw(DecodedRawImage),
+    Raw(Box<DecodedRawImage>),
 }
 
 impl DecodedSourceImage {
@@ -158,7 +158,7 @@ fn resize_raw_preview(mut image: DecodedRawImage, max_edge: u32) -> DecodedRawIm
 pub fn decode_source(path: impl AsRef<Path>) -> Result<DecodedSourceImage, ImageIoError> {
     let path = path.as_ref();
     if raw_format(path) {
-        return Ok(DecodedSourceImage::Raw(decode_raw(path)?));
+        return Ok(DecodedSourceImage::Raw(Box::new(decode_raw(path)?)));
     }
     Ok(DecodedSourceImage::Rendered(decode_rendered(path)?))
 }
@@ -169,10 +169,10 @@ pub fn decode_source_preview(
 ) -> Result<DecodedSourceImage, ImageIoError> {
     let path = path.as_ref();
     if raw_format(path) {
-        return Ok(DecodedSourceImage::Raw(resize_raw_preview(
+        return Ok(DecodedSourceImage::Raw(Box::new(resize_raw_preview(
             decode_raw_preview(path)?,
             max_edge,
-        )));
+        ))));
     }
     Ok(DecodedSourceImage::Rendered(decode_rendered_preview(
         path, max_edge,
