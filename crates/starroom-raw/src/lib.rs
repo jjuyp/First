@@ -276,7 +276,7 @@ fn decode_inner(
     let libraw_version = unsafe { CStr::from_ptr(sr_libraw_version()) }
         .to_string_lossy()
         .into_owned();
-    if libraw_version != LIBRAW_PINNED_VERSION {
+    if !matches_pinned_libraw_version(&libraw_version) {
         return Err(RawDecodeError::Decode {
             code: -1,
             detail: format!(
@@ -341,6 +341,10 @@ pub fn decode_raw_preview(path: impl AsRef<Path>) -> Result<DecodedRawImage, Raw
     decode_inner(path, true)
 }
 
+fn matches_pinned_libraw_version(version: &str) -> bool {
+    version == LIBRAW_PINNED_VERSION || version == format!("{LIBRAW_PINNED_VERSION}-Release")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,5 +363,13 @@ mod tests {
     fn camera_neutral_is_reciprocal_and_green_normalized() {
         let neutral = camera_neutral([2.0, 1.0, 0.5, 1.0]);
         assert_eq!(neutral, [0.5, 1.0, 2.0, 1.0]);
+    }
+
+    #[test]
+    fn pinned_version_accepts_only_the_official_release_suffix() {
+        assert!(matches_pinned_libraw_version("0.22.2"));
+        assert!(matches_pinned_libraw_version("0.22.2-Release"));
+        assert!(!matches_pinned_libraw_version("0.22.1-Release"));
+        assert!(!matches_pinned_libraw_version("0.22.2-custom"));
     }
 }
