@@ -579,9 +579,30 @@ mod tests {
             .expect("fallback transform");
         assert_eq!(embedded_source, InputProfileSource::EmbeddedIcc);
         assert_eq!(fallback_source, InputProfileSource::AssumedSrgb);
+        provider
+            .working_to_output(
+                &mut embedded_pixels,
+                None,
+                RenderingIntent::RelativeColorimetric,
+                true,
+            )
+            .expect("embedded output transform");
+        provider
+            .working_to_output(
+                &mut fallback_pixels,
+                None,
+                RenderingIntent::RelativeColorimetric,
+                true,
+            )
+            .expect("fallback output transform");
         for (embedded, fallback) in embedded_pixels.iter().zip(fallback_pixels) {
             for channel in 0..3 {
-                assert!((embedded[channel] - fallback[channel]).abs() < 1.0e-5);
+                assert!(
+                    (embedded[channel] - fallback[channel]).abs() <= 1.0 / 255.0,
+                    "embedded/fallback sRGB identity exceeded one 8-bit code value: embedded={}, fallback={}",
+                    embedded[channel],
+                    fallback[channel]
+                );
             }
         }
     }
