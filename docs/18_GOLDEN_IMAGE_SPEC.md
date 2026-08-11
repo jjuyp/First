@@ -2,6 +2,8 @@
 
 Status: F0 executable specification. The fixture manifest is `fixtures/golden/manifest.json`; CI validates its required cases and contracts with `scripts/validate-golden-manifest.mjs`. This gate defines the tests before redistributable source photographs are accepted.
 
+The license-cleared RAW decoder matrix is active in `fixtures/raw/manifest.json`. It is deliberately separate from the scene-quality Golden set: the six CC0 files prove real sensor decode/metadata/CFA/WB/demosaic coverage, but they are not relabeled as portrait, HDR, night or ColorChecker scenes without matching visual evidence.
+
 ## Common capture and storage contract
 
 - Sources are immutable, redistributable files with creator/license/provenance, SHA-256, dimensions, bit depth, format, embedded ICC status, EXIF status and reference ROIs recorded in the manifest.
@@ -47,3 +49,5 @@ Status: F0 executable specification. The fixture manifest is `fixtures/golden/ma
 ## Acceptance workflow
 
 Fixture acquisition is a separate, license-reviewed task. A manifest entry changes from `planned` to `active` only when its file hash, license, profile metadata, ROIs, settings vectors and reviewed baseline artifacts exist. F0 accepts this specification and validator; image-quality milestones accept actual active fixtures and reports.
+
+For M2 RAW, `scripts/validate-golden-manifest.mjs` additionally requires all six public RAW formats, checks each source byte length and SHA-256, and rejects any fixture whose per-file license is not CC0-1.0. Rust regression tests then require sensor—not thumbnail—decode, active-area metadata, black/white levels, CFA/X-Trans layout, As-Shot WB/Camera Neutral, finite linear Rec.2020/D65 output, full demosaic, source immutability and decode/preview/rerender timings.

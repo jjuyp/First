@@ -719,7 +719,7 @@ export function App() {
         <div className="panel-title"><span>Library</span><IconButton label="Collapse library" onClick={() => setLeftOpen(false)}><PanelLeftClose size={17} /></IconButton></div>
         <button className="import-button" onClick={requestPhotoImport}><ImagePlus size={16} /> Add photos</button>
         <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp,image/svg+xml" multiple hidden onChange={(event) => { importPhotos(event.target.files); event.target.value = '' }} />
-        <span className="format-note">JPEG · PNG · WebP · SVG</span>
+        <span className="format-note">Native: JPEG · PNG · TIFF · NEF · ARW · CR2/CR3 · DNG · RAF</span>
         <div className="library-group"><span className="eyebrow">Workspace</span>
           <button className={`library-item ${filter === 'all' ? 'selected' : ''}`} onClick={() => chooseFilter('all')}><Grid2X2 size={16} /> All Photos <small>{counts.all}</small></button>
           <button className={`library-item ${filter === 'recent' ? 'selected' : ''}`} onClick={() => chooseFilter('recent')}><Folder size={16} /> Recent Imports <small>{counts.recent}</small></button>

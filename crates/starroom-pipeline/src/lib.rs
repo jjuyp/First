@@ -14,7 +14,8 @@ use starroom_color_management::{
 };
 use starroom_detail::{DenoiseParameters, LinearImage, SharpenParameters, denoise, sharpen};
 use starroom_grading::{GradingParameters, apply_grading};
-use starroom_imageio::DecodedRenderedImage;
+use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage};
+use starroom_raw::DecodedRawImage;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,15 +169,48 @@ fn to_working_image(
     Ok((image, input_source))
 }
 
-fn render_shared_graph(
-    decoded: &DecodedRenderedImage,
+fn to_working_raw(
+    decoded: &DecodedRawImage,
+    settings: &RenderSettings,
+) -> Result<LinearImage, PipelineError> {
+    let expected = decoded.width as usize * decoded.height as usize * 3;
+    if decoded.rgb.len() != expected {
+        return Err(PipelineError::InvalidDecodedBuffer);
+    }
+    let mut data = Vec::with_capacity(decoded.rgb.len());
+    for pixel in decoded.rgb.chunks_exact(3) {
+        let mut rgb = LinearRgb {
+            r: pixel[0],
+            g: pixel[1],
+            b: pixel[2],
+        };
+        // RAW already enters in linear Rec.2020/D65 from the native LibRaw provider. Relative
+        // creative color is intentionally downstream of the camera/as-shot WB stage.
+        rgb = apply_relative_color(rgb, settings.relative_color);
+        rgb = apply_tone(rgb, settings.tone);
+        rgb = apply_curve(rgb, &settings.curve);
+        rgb = apply_color_mixer(rgb, settings.color_mixer);
+        rgb = apply_grading(rgb, settings.grading);
+        if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
+            return Err(PipelineError::InvalidDecodedBuffer);
+        }
+        data.extend_from_slice(&[rgb.r, rgb.g, rgb.b]);
+    }
+    LinearImage::new(decoded.width as usize, decoded.height as usize, data)
+        .map_err(|_| PipelineError::DetailBuffer)
+}
+
+fn render_working_graph(
+    working: LinearImage,
+    width: u32,
+    height: u32,
+    input_source: InputProfileSource,
     settings: &RenderSettings,
     output_icc: Option<&[u8]>,
 ) -> Result<RenderedRgb8, PipelineError> {
-    let (working, input_source) = to_working_image(decoded, settings)?;
     let denoised = denoise(&working, settings.denoise);
     let detailed = sharpen(&denoised, settings.sharpen);
-    let mut pixels = Vec::with_capacity(decoded.width as usize * decoded.height as usize);
+    let mut pixels = Vec::with_capacity(width as usize * height as usize);
     for pixel in detailed.data.chunks_exact(3) {
         let working_rgb = compress_to_unit_gamut(LinearRgb {
             r: pixel[0],
@@ -197,10 +231,9 @@ fn render_shared_graph(
             output.push((channel.clamp(0.0, 1.0) * 255.0).round() as u8);
         }
     }
-
     Ok(RenderedRgb8 {
-        width: decoded.width,
-        height: decoded.height,
+        width,
+        height,
         data: output,
         color: ColorTransformReport {
             input: input_source,
@@ -208,6 +241,40 @@ fn render_shared_graph(
             working_space: "linear Rec.2020 D65",
         },
     })
+}
+
+fn render_shared_graph(
+    decoded: &DecodedRenderedImage,
+    settings: &RenderSettings,
+    output_icc: Option<&[u8]>,
+) -> Result<RenderedRgb8, PipelineError> {
+    let (working, input_source) = to_working_image(decoded, settings)?;
+    render_working_graph(
+        working,
+        decoded.width,
+        decoded.height,
+        input_source,
+        settings,
+        output_icc,
+    )
+}
+
+fn render_shared_source_graph(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+    output_icc: Option<&[u8]>,
+) -> Result<RenderedRgb8, PipelineError> {
+    match decoded {
+        DecodedSourceImage::Rendered(image) => render_shared_graph(image, settings, output_icc),
+        DecodedSourceImage::Raw(image) => render_working_graph(
+            to_working_raw(image, settings)?,
+            image.width,
+            image.height,
+            InputProfileSource::RawCameraMatrix,
+            settings,
+            output_icc,
+        ),
+    }
 }
 
 /// Preview and export deliberately enter the same graph; only the requested output profile differs.
@@ -239,6 +306,20 @@ pub fn render_export_to_icc8(
     output_icc: &[u8],
 ) -> Result<RenderedRgb8, PipelineError> {
     render_shared_graph(decoded, settings, Some(output_icc))
+}
+
+pub fn render_source_preview_to_srgb8(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+) -> Result<RenderedRgb8, PipelineError> {
+    render_shared_source_graph(decoded, settings, None)
+}
+
+pub fn render_source_export_to_srgb8(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+) -> Result<RenderedRgb8, PipelineError> {
+    render_shared_source_graph(decoded, settings, None)
 }
 
 /// Compatibility entry point. New callers should name preview or export explicitly.

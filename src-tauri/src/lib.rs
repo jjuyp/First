@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use starroom_advisor::{AnalysisStats, Suggestion, advise};
 use starroom_color::{CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, SharpenParameters};
-use starroom_imageio::{decode_rendered, decode_rendered_preview, encode_jpeg_rgb8};
+use starroom_imageio::{decode_source, decode_source_preview, encode_jpeg_rgb8};
 use starroom_pipeline::{
-    RelativeColorParameters, RenderSettings, render_export_to_srgb8, render_preview_to_srgb8,
+    RelativeColorParameters, RenderSettings, render_source_export_to_srgb8,
+    render_source_preview_to_srgb8,
 };
 use starroom_render::RenderGraph;
 use std::path::{Path, PathBuf};
@@ -46,7 +47,7 @@ fn engine_capabilities() -> EngineCapabilities {
         portrait_reference: true,
         healing_reference: true,
         gpu_renderer: false,
-        raw_pipeline: false,
+        raw_pipeline: true,
     }
 }
 
@@ -172,6 +173,7 @@ fn profile_flag(source: starroom_color_management::InputProfileSource) -> u16 {
     match source {
         starroom_color_management::InputProfileSource::EmbeddedIcc => 1,
         starroom_color_management::InputProfileSource::AssumedSrgb => 0,
+        starroom_color_management::InputProfileSource::RawCameraMatrix => 2,
     }
 }
 
@@ -191,9 +193,9 @@ fn preview_frame(width: u32, height: u32, flags: u16, jpeg: Vec<u8>) -> Result<V
 #[tauri::command]
 fn native_preview(request: NativePreviewRequest) -> Result<Response, String> {
     let settings = request.settings.validated()?;
-    let decoded = decode_rendered_preview(&request.source_path, request.max_edge.clamp(256, 4096))
+    let decoded = decode_source_preview(&request.source_path, request.max_edge.clamp(256, 4096))
         .map_err(|error| format!("native preview decode failed: {error}"))?;
-    let rendered = render_preview_to_srgb8(&decoded, &settings)
+    let rendered = render_source_preview_to_srgb8(&decoded, &settings)
         .map_err(|error| format!("native preview graph failed: {error}"))?;
     let flags = profile_flag(rendered.color.input);
     let jpeg = encode_jpeg_rgb8(&rendered.data, rendered.width, rendered.height, 91, None)
@@ -222,13 +224,14 @@ fn native_export_jpeg(request: NativeExportRequest) -> Result<NativeExportResult
         return Err("export destination must not overwrite the source image".into());
     }
     let settings = request.settings.validated()?;
-    let decoded = decode_rendered(&request.source_path)
+    let decoded = decode_source(&request.source_path)
         .map_err(|error| format!("native export decode failed: {error}"))?;
-    let rendered = render_export_to_srgb8(&decoded, &settings)
+    let rendered = render_source_export_to_srgb8(&decoded, &settings)
         .map_err(|error| format!("native export graph failed: {error}"))?;
     let input_profile = match rendered.color.input {
         starroom_color_management::InputProfileSource::EmbeddedIcc => "embedded ICC",
         starroom_color_management::InputProfileSource::AssumedSrgb => "assumed sRGB",
+        starroom_color_management::InputProfileSource::RawCameraMatrix => "LibRaw camera matrix",
     };
     let jpeg = encode_jpeg_rgb8(
         &rendered.data,

@@ -253,6 +253,9 @@ pub enum ColorManagementError {
 pub enum InputProfileSource {
     EmbeddedIcc,
     AssumedSrgb,
+    /// RAW sensor data was decoded, white-balanced, demosaiced and converted by the pinned
+    /// camera-matrix provider before entering the linear Rec.2020/D65 working graph.
+    RawCameraMatrix,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

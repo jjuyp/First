@@ -3,6 +3,7 @@
   "workingSpace": "linear Rec.2020 D65",
   "commonAssertions": ["identity", "extremeControl", "finite", "toneRegression", "colorRegression"],
   "futureAssertions": ["cpuGpuParity"],
+  "rawFixtureManifest": "../raw/manifest.json",
   "cases": [
     {"id":"portrait-daylight","scene":"general portrait","status":"planned","extremeControls":["exposure","temperature","tint","saturation"],"rois":["skin","sclera","neutral-background"]},
     {"id":"portrait-low-key","scene":"dark portrait","status":"planned","extremeControls":["shadows","blacks","denoise","sharpen"],"rois":["face-shadow","hair","black-background"]},

@@ -1,0 +1,18 @@
+[package]
+name = "starroom-raw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+cc = { version = "1.2", features = ["parallel"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+sha2.workspace = true

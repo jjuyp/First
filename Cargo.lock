@@ -3126,6 +3126,7 @@ version = "0.2.0"
 dependencies = [
  "image",
  "serde",
+ "starroom-raw",
  "thiserror 2.0.20",
 ]
 
@@ -3147,6 +3148,7 @@ dependencies = [
  "starroom-detail",
  "starroom-grading",
  "starroom-imageio",
+ "starroom-raw",
  "thiserror 2.0.20",
 ]
 
@@ -3165,6 +3167,17 @@ dependencies = [
  "serde",
  "serde_json",
  "starroom-core",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "starroom-raw"
+version = "0.2.0"
+dependencies = [
+ "cc",
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror 2.0.20",
 ]
 

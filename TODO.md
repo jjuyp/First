@@ -66,6 +66,43 @@ Rules:
 - [ ] Replace the temporary JPEG preview payload with a measured cache/shared-buffer strategy only if profiling proves decode/encode overhead is material; do not introduce shared memory without a cross-platform lifecycle design.
 - [ ] Remove temporary Browser Canvas creative math after all remaining rendered-file tools have native coverage and regression acceptance.
 
+## Active sequential foundation milestones (PR #2)
+
+These milestone numbers supersede the older capability-group numbering below for the current acceptance sequence. A later milestone stays blocked until the preceding milestone's local checks and GitHub Actions are green.
+
+### M2 RAW original-file processing
+
+- [x] Vendor and compile real LibRaw 0.22.2 through a narrow Rust provider; select and record the CDDL-1.0 license path.
+- [x] Decode NEF, ARW, CR2, CR3, native DNG and RAF from sensor data; embedded JPEG remains Library-thumbnail-only and is never called by Develop.
+- [x] Preserve typed metadata for RAW/active dimensions, margins, orientation, black/white levels, Bayer CFA or X-Trans layout, As-Shot multipliers and Camera Neutral.
+- [x] Keep the authoritative decode output at 16-bit-to-f32 precision and enter the Native graph as linear Rec.2020/D65 without an 8-bit intermediate.
+- [x] Use LibRaw AHD/X-Trans demosaic behind `starroom-raw`; no custom weak demosaic was introduced.
+- [x] Route Native Preview, Before/After and Export through the same RAW-aware Rust shared render graph with no browser or embedded-thumbnail fallback.
+- [x] Add typed RAW errors, six immutable CC0 camera fixtures, byte/hash/license validation, real decode regressions and separate decode/first-preview/slider-rerender measurements.
+- [ ] GitHub Actions green for the M2 commit. M3 remains blocked until this is checked.
+
+### M3 Camera profiles / RAW color
+
+- [ ] Camera Profile Resolver, DNG ColorMatrix1/2, ForwardMatrix, CalibrationIlluminant and Camera Neutral stages.
+- [ ] Explicit Camera RGB -> XYZ -> linear Rec.2020/D65 and D50/D65 adaptation.
+- [ ] Explicit Generic Profile state for unknown cameras; profile ID/version/hash persisted and visible in UI.
+- [ ] ColorChecker and RAW color finite/round-trip regressions; CI green.
+
+### M4 Professional Tone / Light
+
+- [ ] Integrate or faithfully adapt the selected mature darktable scene-referred foundation for Exposure, Contrast, Highlights, Shadows, Whites and Blacks.
+- [ ] Golden numeric/visual acceptance and CI green.
+
+### M5 Professional white balance / calibration
+
+- [ ] Separate camera/as-shot RAW WB from rendered-file relative Temperature/Tint.
+- [ ] Auto-WB provider, Gray/Neutral picker, sampling, serializable/undo/copy-paste state and regressions; CI green.
+
+### M6 Professional tone curves
+
+- [ ] Master and R/G/B monotone curves, endpoints, black fade, presets, histogram, numeric/direct editing and serialization.
+- [ ] Shared Native Preview/Export stage and identity/S-curve/extreme/channel/Golden regressions; CI green.
+
 ## M2 Tone / Color Foundation — use mature open-source behavior
 
 ### M2A Exposure / Tone

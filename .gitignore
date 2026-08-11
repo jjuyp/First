@@ -10,3 +10,4 @@ models/weights/
 fixtures/private/
 .env
 output/playwright/
+.tmp-*/

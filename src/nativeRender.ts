@@ -24,7 +24,7 @@ export interface NativeEditSettings {
 export interface NativePreviewResult {
   width: number
   height: number
-  inputProfile: 'embedded ICC' | 'assumed sRGB'
+  inputProfile: 'embedded ICC' | 'assumed sRGB' | 'LibRaw camera matrix'
   jpeg: Uint8Array
 }
 
@@ -90,7 +90,7 @@ export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): Native
   return {
     width,
     height,
-    inputProfile: flags & 1 ? 'embedded ICC' : 'assumed sRGB',
+    inputProfile: flags & 2 ? 'LibRaw camera matrix' : flags & 1 ? 'embedded ICC' : 'assumed sRGB',
     jpeg: bytes.slice(HEADER_BYTES),
   }
 }
@@ -100,7 +100,10 @@ export async function chooseNativePhotoPaths(): Promise<string[]> {
     title: 'Add photos to Starroom',
     multiple: true,
     directory: false,
-    filters: [{ name: 'Rendered photos', extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff'] }],
+    filters: [{
+      name: 'Photos and camera RAW',
+      extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff', 'nef', 'arw', 'cr2', 'cr3', 'dng', 'raf'],
+    }],
   })
   return selected ? (Array.isArray(selected) ? selected : [selected]) : []
 }

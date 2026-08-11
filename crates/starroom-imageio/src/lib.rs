@@ -3,9 +3,11 @@
 //! encoded sample values, and exposes embedded metadata so color management can happen explicitly.
 
 use image::{
-    DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageFormat, ImageReader,
+    DynamicImage, ExtendedColorType, ImageBuffer, ImageDecoder, ImageEncoder, ImageFormat,
+    ImageReader, Rgb,
 };
 use serde::{Deserialize, Serialize};
+use starroom_raw::{DecodedRawImage, RawDecodeError, RawFormat, decode_raw, decode_raw_preview};
 use std::{io::Cursor, path::Path};
 use thiserror::Error;
 
@@ -19,6 +21,31 @@ pub enum ImageIoError {
     UnknownFormat,
     #[error("RGB buffer length does not match dimensions")]
     InvalidBufferLength,
+    #[error(transparent)]
+    Raw(#[from] RawDecodeError),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum DecodedSourceImage {
+    Rendered(DecodedRenderedImage),
+    Raw(DecodedRawImage),
+}
+
+impl DecodedSourceImage {
+    pub fn width(&self) -> u32 {
+        match self {
+            Self::Rendered(image) => image.width,
+            Self::Raw(image) => image.width,
+        }
+    }
+
+    pub fn height(&self) -> u32 {
+        match self {
+            Self::Rendered(image) => image.height,
+            Self::Raw(image) => image.height,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +127,56 @@ pub fn decode_rendered_preview(
     max_edge: u32,
 ) -> Result<DecodedRenderedImage, ImageIoError> {
     decode_rendered_inner(path, Some(max_edge))
+}
+
+fn raw_format(path: &Path) -> bool {
+    RawFormat::from_path(path).is_ok()
+}
+
+fn resize_raw_preview(mut image: DecodedRawImage, max_edge: u32) -> DecodedRawImage {
+    let max_edge = max_edge.max(1);
+    if image.width <= max_edge && image.height <= max_edge {
+        return image;
+    }
+    let scale = max_edge as f64 / f64::from(image.width.max(image.height));
+    let width = (f64::from(image.width) * scale).round().max(1.0) as u32;
+    let height = (f64::from(image.height) * scale).round().max(1.0) as u32;
+    let source = ImageBuffer::<Rgb<f32>, Vec<f32>>::from_raw(image.width, image.height, image.rgb)
+        .expect("validated LibRaw RGB buffer");
+    let resized = image::imageops::resize(
+        &source,
+        width,
+        height,
+        image::imageops::FilterType::Lanczos3,
+    );
+    image.width = width;
+    image.height = height;
+    image.rgb = resized.into_raw();
+    image
+}
+
+pub fn decode_source(path: impl AsRef<Path>) -> Result<DecodedSourceImage, ImageIoError> {
+    let path = path.as_ref();
+    if raw_format(path) {
+        return Ok(DecodedSourceImage::Raw(decode_raw(path)?));
+    }
+    Ok(DecodedSourceImage::Rendered(decode_rendered(path)?))
+}
+
+pub fn decode_source_preview(
+    path: impl AsRef<Path>,
+    max_edge: u32,
+) -> Result<DecodedSourceImage, ImageIoError> {
+    let path = path.as_ref();
+    if raw_format(path) {
+        return Ok(DecodedSourceImage::Raw(resize_raw_preview(
+            decode_raw_preview(path)?,
+            max_edge,
+        )));
+    }
+    Ok(DecodedSourceImage::Rendered(decode_rendered_preview(
+        path, max_edge,
+    )?))
 }
 
 /// Encodes an already output-transformed RGB8 buffer. The caller owns gamut mapping and output
