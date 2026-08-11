@@ -34,6 +34,7 @@ The authoritative resolved versions are in `Cargo.lock`. “Direct” means decl
 | Dependency | Purpose / Starroom integration | Fixed version | License | Derivation | Binary | Distribution note |
 |---|---|---:|---|---|---|---|
 | `tauri-plugin-dialog` | Desktop source/output path selection for Native preview/export; selected paths enter the narrow Tauri command contract | 2.7.2 | MIT OR Apache-2.0 | No | Yes | Official Tauri plugin; retain the selected permissive notice and capability allowlist. |
+| `http-range` | Transitive byte-range support enabled by Tauri's `protocol-asset` feature for scoped native thumbnails | 0.1.5 | MIT | No | Yes | Retain MIT notice; this is transport support, not image processing. |
 | `@tauri-apps/api` | Frontend `invoke`, runtime detection and scoped asset URL bridge; no image processing | 2.11.1 | MIT OR Apache-2.0 | No | Bundled JS | Official Tauri package; retain the selected permissive notice. |
 | `@tauri-apps/plugin-dialog` | Typed frontend binding for the native dialog plugin; no image processing | 2.7.2 | MIT OR Apache-2.0 | No | Bundled JS | Keep JS and Rust plugin versions compatible and review permissions on upgrades. |
 
