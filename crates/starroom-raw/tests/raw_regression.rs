@@ -45,7 +45,13 @@ fn all_public_raw_fixtures_decode_from_sensor_through_libraw() {
 
         let decoded = decode_raw(&path).unwrap_or_else(|error| panic!("{}: {error}", fixture.id));
         assert_eq!(decoded.metadata.develop_source, RawDevelopSource::Sensor);
-        assert_eq!(decoded.metadata.libraw_version, LIBRAW_PINNED_VERSION);
+        assert!(
+            decoded.metadata.libraw_version == LIBRAW_PINNED_VERSION
+                || decoded.metadata.libraw_version == format!("{LIBRAW_PINNED_VERSION}-Release"),
+            "{}: unexpected LibRaw binary version {}",
+            fixture.id,
+            decoded.metadata.libraw_version
+        );
         assert!(decoded.width > 0 && decoded.height > 0, "{}", fixture.id);
         assert_eq!(
             decoded.rgb.len(),
