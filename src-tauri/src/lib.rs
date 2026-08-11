@@ -133,7 +133,7 @@ impl NativeEditSettings {
                 ..Default::default()
             },
             sharpen: SharpenParameters {
-                amount: (unit(self.sharpness).max(0.0) * 2.0),
+                amount: unit(self.sharpness).max(0.0) * 2.0,
                 ..Default::default()
             },
             ..Default::default()

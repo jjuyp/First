@@ -70,13 +70,13 @@ fn decode_rendered_inner(
     let embedded_icc = decoder.icc_profile()?;
     let exif = decoder.exif_metadata()?;
     let mut image = DynamicImage::from_decoder(decoder)?;
-    if let Some(max_edge) = max_edge.filter(|edge| *edge > 0) {
-        if width > max_edge || height > max_edge {
-            // Lanczos3 is a mature, deterministic image-crate resampler. Resizing is performed
-            // before the shared color/tone graph only for interactive preview; export always
-            // decodes the full source independently.
-            image = image.resize(max_edge, max_edge, image::imageops::FilterType::Lanczos3);
-        }
+    if let Some(max_edge) = max_edge.filter(|edge| *edge > 0)
+        && (width > max_edge || height > max_edge)
+    {
+        // Lanczos3 is a mature, deterministic image-crate resampler. Resizing is performed
+        // before the shared color/tone graph only for interactive preview; export always
+        // decodes the full source independently.
+        image = image.resize(max_edge, max_edge, image::imageops::FilterType::Lanczos3);
     }
     let (decoded_width, decoded_height) = (image.width(), image.height());
     Ok(DecodedRenderedImage {
