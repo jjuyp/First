@@ -1,6 +1,14 @@
 # Implementation Notes
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
+## 2026-08-11 — v0.2 native workspace quality gate
+
+- Repaired the `starroom-heal` test indexing rejected by Rust 1.97 Clippy and retained explicit `(width, x, y)` coordinate semantics through a shared test helper.
+- Corrected the OKLab inverse XYZ matrix sign for the S contribution to X. The previous negative sign caused measurable lightness and chroma drift after hue rotation; a Rec.2020 RGB -> OKLab -> Rec.2020 RGB round-trip regression now protects the conversion chain.
+- Truncated two color-matrix literals only beyond meaningful `f32` precision, as required by the current Clippy `excessive_precision` lint.
+- Regenerated `Cargo.lock` after activating rendered-image I/O dependencies. Rust CI now uses `--locked` for Clippy and tests, and checks formatting without mutating the checkout.
+- Local native compilation remains unavailable because this workstation has no Visual C++ linker. Two independent Windows GitHub Actions runs passed workspace format, Clippy and tests before the stricter reproducibility gate was enabled; the updated gate remains the authoritative Windows validation.
+
 ## 2026-08-09 — M0 workspace and interactive shell
 
 - Added the React/TypeScript/Vite application shell, theme tokens, persisted Dark/Gray/Light theme, persisted Simple/Pro mode, collapsible Library/Filmstrip, tool rail, inspector controls, local image import, Before state, and reversible UI adjustment history.

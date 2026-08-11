@@ -2,7 +2,9 @@
 //! RAW remains a separate pipeline. This crate decodes common rendered formats, preserves their
 //! encoded sample values, and exposes embedded metadata so color management can happen explicitly.
 
-use image::{DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageFormat, ImageReader};
+use image::{
+    DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageFormat, ImageReader,
+};
 use serde::{Deserialize, Serialize};
 use std::{io::Cursor, path::Path};
 use thiserror::Error;
@@ -89,9 +91,12 @@ pub fn encode_jpeg_rgb8(
         return Err(ImageIoError::InvalidBufferLength);
     }
     let mut cursor = Cursor::new(Vec::new());
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality.clamp(1, 100));
+    let mut encoder =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality.clamp(1, 100));
     if let Some(profile) = icc_profile {
-        encoder.set_icc_profile(profile).map_err(image::ImageError::Unsupported)?;
+        encoder
+            .set_icc_profile(profile)
+            .map_err(image::ImageError::Unsupported)?;
     }
     encoder.write_image(rgb, width, height, ExtendedColorType::Rgb8)?;
     Ok(cursor.into_inner())
@@ -109,10 +114,7 @@ mod tests {
 
     #[test]
     fn jpeg_round_trip_decodes_dimensions() {
-        let rgb = [
-            255, 0, 0, 0, 255, 0,
-            0, 0, 255, 255, 255, 255,
-        ];
+        let rgb = [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
         let bytes = encode_jpeg_rgb8(&rgb, 2, 2, 95, None).expect("encode");
         let reader = ImageReader::new(Cursor::new(bytes))
             .with_guessed_format()

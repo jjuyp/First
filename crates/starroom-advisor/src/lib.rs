@@ -38,7 +38,11 @@ pub fn analyze_linear_rgb(samples: &[[f32; 3]]) -> AnalysisStats {
 
     for [red, green, blue] in samples.iter().copied() {
         let red = if red.is_finite() { red.max(0.0) } else { 0.0 };
-        let green = if green.is_finite() { green.max(0.0) } else { 0.0 };
+        let green = if green.is_finite() {
+            green.max(0.0)
+        } else {
+            0.0
+        };
         let blue = if blue.is_finite() { blue.max(0.0) } else { 0.0 };
         let luminance = 0.2627 * red + 0.6780 * green + 0.0593 * blue;
         luminance_values.push(luminance);
@@ -158,11 +162,7 @@ mod tests {
 
     #[test]
     fn detects_white_clip_and_warm_bias() {
-        let samples = [
-            [1.0, 0.90, 0.45],
-            [0.95, 0.80, 0.30],
-            [0.70, 0.55, 0.20],
-        ];
+        let samples = [[1.0, 0.90, 0.45], [0.95, 0.80, 0.30], [0.70, 0.55, 0.20]];
         let stats = analyze_linear_rgb(&samples);
         assert!(stats.white_clip_fraction > 0.0);
         assert!(stats.estimated_warmth_bias > 0.18);

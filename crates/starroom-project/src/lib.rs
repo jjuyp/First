@@ -180,10 +180,7 @@ mod tests {
         assert_eq!(restored.global_adjustments.exposure_ev, 0.75);
         assert_eq!(restored.source.content_hash, "abc");
         assert_eq!(restored.layers.len(), 1);
-        assert_eq!(
-            restored.layers[0].adjustments.get("exposure"),
-            Some(&0.35)
-        );
+        assert_eq!(restored.layers[0].adjustments.get("exposure"), Some(&0.35));
     }
 
     #[test]
@@ -234,7 +231,10 @@ mod tests {
     fn legacy_leaf_mask_json_remains_readable_as_tree() {
         let json = r#"{"type":"radial","x":0.5,"y":0.5,"width":0.4,"height":0.4,"rotation":0.0,"feather":0.5,"invert":false}"#;
         let restored: MaskTree = serde_json::from_str(json).expect("deserialize legacy leaf");
-        assert!(matches!(restored, MaskTree::Leaf(MaskDefinition::Radial { .. })));
+        assert!(matches!(
+            restored,
+            MaskTree::Leaf(MaskDefinition::Radial { .. })
+        ));
     }
 
     #[test]

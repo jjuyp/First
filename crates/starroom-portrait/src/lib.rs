@@ -76,7 +76,10 @@ pub struct FrequencySplitParams {
 
 impl Default for FrequencySplitParams {
     fn default() -> Self {
-        Self { radius: 4.0, smooth_strength: 0.35 }
+        Self {
+            radius: 4.0,
+            smooth_strength: 0.35,
+        }
     }
 }
 
@@ -126,10 +129,7 @@ pub fn recombine_frequency(
 
 /// Legacy 1D reference retained for project/test compatibility. New portrait rendering uses the
 /// 2D RGB functions above.
-pub fn split_frequency(
-    signal: &[f32],
-    params: FrequencySplitParams,
-) -> (Vec<f32>, Vec<f32>) {
+pub fn split_frequency(signal: &[f32], params: FrequencySplitParams) -> (Vec<f32>, Vec<f32>) {
     if signal.is_empty() {
         return (Vec::new(), Vec::new());
     }
@@ -181,12 +181,8 @@ mod tests {
 
     #[test]
     fn two_dimensional_frequency_layers_recombine_at_zero_strength() {
-        let image = LinearImage::new(
-            3,
-            1,
-            vec![0.1, 0.1, 0.1, 0.8, 0.7, 0.6, 0.1, 0.1, 0.1],
-        )
-        .expect("fixture");
+        let image = LinearImage::new(3, 1, vec![0.1, 0.1, 0.1, 0.8, 0.7, 0.6, 0.1, 0.1, 0.1])
+            .expect("fixture");
         let layers = split_frequency_image(&image, FrequencySplitParams::default());
         let rebuilt = recombine_frequency(&layers, 0.0, None);
         for (actual, expected) in rebuilt.data.iter().zip(&image.data) {
@@ -196,12 +192,8 @@ mod tests {
 
     #[test]
     fn mask_limits_smoothing_to_selected_pixels() {
-        let image = LinearImage::new(
-            3,
-            1,
-            vec![0.1, 0.1, 0.1, 0.8, 0.7, 0.6, 0.1, 0.1, 0.1],
-        )
-        .expect("fixture");
+        let image = LinearImage::new(3, 1, vec![0.1, 0.1, 0.1, 0.8, 0.7, 0.6, 0.1, 0.1, 0.1])
+            .expect("fixture");
         let layers = split_frequency_image(&image, FrequencySplitParams::default());
         let rebuilt = recombine_frequency(&layers, 1.0, Some(&[0.0, 1.0, 0.0]));
         assert!((rebuilt.data[0] - image.data[0]).abs() < 1e-5);
@@ -212,8 +204,16 @@ mod tests {
     #[test]
     fn face_bounds_are_normalized_and_expandable() {
         let bounds = FaceBounds::from_landmarks(&[
-            Landmark { x: 0.3, y: 0.2, z: 0.0 },
-            Landmark { x: 0.7, y: 0.8, z: 0.0 },
+            Landmark {
+                x: 0.3,
+                y: 0.2,
+                z: 0.0,
+            },
+            Landmark {
+                x: 0.7,
+                y: 0.8,
+                z: 0.0,
+            },
         ])
         .expect("bounds");
         let expanded = bounds.expanded(0.1);

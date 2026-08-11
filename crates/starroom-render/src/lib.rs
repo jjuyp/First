@@ -61,7 +61,11 @@ impl Default for RenderGraph {
         ];
         let mut stages = Vec::with_capacity(linear.len());
         for (index, id) in linear.into_iter().enumerate() {
-            let dependencies = if index == 0 { Vec::new() } else { vec![linear[index - 1]] };
+            let dependencies = if index == 0 {
+                Vec::new()
+            } else {
+                vec![linear[index - 1]]
+            };
             let (halo_pixels, tile_safe) = match id {
                 Detail => (32, true),
                 Optics | Geometry => (4, true),
@@ -149,7 +153,11 @@ impl RenderGraph {
     }
 
     pub fn maximum_halo(&self) -> u32 {
-        self.stages.iter().map(|stage| stage.halo_pixels).max().unwrap_or(0)
+        self.stages
+            .iter()
+            .map(|stage| stage.halo_pixels)
+            .max()
+            .unwrap_or(0)
     }
 }
 
@@ -178,12 +186,7 @@ pub struct RenderTile {
 
 /// Plans non-overlapping output tiles with clipped halo regions. A renderer computes the larger
 /// input region, then crops back to `output` when assembling the final image.
-pub fn plan_tiles(
-    width: u32,
-    height: u32,
-    tile_size: u32,
-    halo: u32,
-) -> Vec<RenderTile> {
+pub fn plan_tiles(width: u32, height: u32, tile_size: u32, halo: u32) -> Vec<RenderTile> {
     if width == 0 || height == 0 {
         return Vec::new();
     }
@@ -200,7 +203,12 @@ pub fn plan_tiles(
             let input_right = (x + output_width).saturating_add(halo).min(width);
             let input_bottom = (y + output_height).saturating_add(halo).min(height);
             tiles.push(RenderTile {
-                output: PixelRect { x, y, width: output_width, height: output_height },
+                output: PixelRect {
+                    x,
+                    y,
+                    width: output_width,
+                    height: output_height,
+                },
                 input_with_halo: PixelRect {
                     x: input_x,
                     y: input_y,
@@ -265,9 +273,24 @@ mod tests {
 
     #[test]
     fn cache_key_changes_with_parameters_but_is_stable_for_same_inputs() {
-        let a = stage_cache_key(StageId::Tone, "source", "{\"shadows\":0.2}", &["upstream".into()]);
-        let b = stage_cache_key(StageId::Tone, "source", "{\"shadows\":0.2}", &["upstream".into()]);
-        let c = stage_cache_key(StageId::Tone, "source", "{\"shadows\":0.3}", &["upstream".into()]);
+        let a = stage_cache_key(
+            StageId::Tone,
+            "source",
+            "{\"shadows\":0.2}",
+            &["upstream".into()],
+        );
+        let b = stage_cache_key(
+            StageId::Tone,
+            "source",
+            "{\"shadows\":0.2}",
+            &["upstream".into()],
+        );
+        let c = stage_cache_key(
+            StageId::Tone,
+            "source",
+            "{\"shadows\":0.3}",
+            &["upstream".into()],
+        );
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
@@ -280,8 +303,16 @@ mod tests {
             .map(|tile| u64::from(tile.output.width) * u64::from(tile.output.height))
             .sum();
         assert_eq!(area, 700_000);
-        assert!(tiles.iter().all(|tile| tile.input_with_halo.width >= tile.output.width));
-        assert!(tiles.iter().all(|tile| tile.input_with_halo.height >= tile.output.height));
+        assert!(
+            tiles
+                .iter()
+                .all(|tile| tile.input_with_halo.width >= tile.output.width)
+        );
+        assert!(
+            tiles
+                .iter()
+                .all(|tile| tile.input_with_halo.height >= tile.output.height)
+        );
     }
 
     #[test]

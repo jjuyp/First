@@ -17,7 +17,7 @@ Rules:
 ## F0 Foundation Quality Gate — highest priority
 
 - [x] Document Open-source First strategy and Codex decision rules.
-- [ ] CI green on current v0.2 branch after all native crates are enabled.
+- [x] CI green on current v0.2 branch after all native crates are enabled.
 - [ ] Create third-party provenance inventory: project, source file, upstream revision, license, integration mode, Starroom files.
 - [ ] Establish Golden Image/regression fixture set: portrait, dark portrait, black clothing, white clothing, HDR/backlight, night, neon, ColorChecker, fine texture, high ISO, lens distortion/CA, perspective.
 - [ ] Define per-stage quality comparison reports against the selected mature foundation.
@@ -40,7 +40,7 @@ Rules:
 - [x] Rust workspace + Tauri 2 + React/TS.
 - [x] crate boundaries, lint/format/test, Windows CI scaffold.
 - [x] fixture manifest and source immutability hash test.
-- [ ] Keep all newly activated native crates green under fmt/clippy/test.
+- [x] Keep all newly activated native crates green under fmt/clippy/test.
 
 ## M1 Native Render Foundation
 

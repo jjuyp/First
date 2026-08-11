@@ -20,7 +20,11 @@ impl LinearImage {
         if data.iter().any(|value| !value.is_finite()) {
             return Err(DetailError::NonFiniteInput);
         }
-        Ok(Self { width, height, data })
+        Ok(Self {
+            width,
+            height,
+            data,
+        })
     }
 
     fn sample(&self, x: isize, y: isize, channel: usize) -> f32 {
@@ -42,7 +46,11 @@ pub struct SharpenParameters {
 
 impl Default for SharpenParameters {
     fn default() -> Self {
-        Self { amount: 0.35, radius: 1.0, threshold: 0.002 }
+        Self {
+            amount: 0.35,
+            radius: 1.0,
+            threshold: 0.002,
+        }
     }
 }
 
@@ -57,7 +65,11 @@ pub struct DenoiseParameters {
 
 impl Default for DenoiseParameters {
     fn default() -> Self {
-        Self { luminance: 0.0, chroma: 0.0, radius: 1.25 }
+        Self {
+            luminance: 0.0,
+            chroma: 0.0,
+            radius: 1.25,
+        }
     }
 }
 
@@ -116,13 +128,18 @@ pub fn gaussian_blur(image: &LinearImage, radius: f32) -> LinearImage {
                 let mut value = 0.0;
                 for (index, weight) in kernel.iter().enumerate() {
                     let offset = index as isize - half;
-                    value += horizontal_image.sample(x as isize, y as isize + offset, channel) * weight;
+                    value +=
+                        horizontal_image.sample(x as isize, y as isize + offset, channel) * weight;
                 }
                 output[(y * image.width + x) * 3 + channel] = value;
             }
         }
     }
-    LinearImage { width: image.width, height: image.height, data: output }
+    LinearImage {
+        width: image.width,
+        height: image.height,
+        data: output,
+    }
 }
 
 pub fn sharpen(image: &LinearImage, parameters: SharpenParameters) -> LinearImage {
@@ -133,12 +150,7 @@ pub fn sharpen(image: &LinearImage, parameters: SharpenParameters) -> LinearImag
     let blurred = gaussian_blur(image, parameters.radius);
     let threshold = parameters.threshold.max(0.0);
     let mut output = image.clone();
-    for ((destination, source), low) in output
-        .data
-        .iter_mut()
-        .zip(&image.data)
-        .zip(&blurred.data)
-    {
+    for ((destination, source), low) in output.data.iter_mut().zip(&image.data).zip(&blurred.data) {
         let detail = source - low;
         *destination = if detail.abs() >= threshold {
             source + detail * amount
@@ -209,11 +221,7 @@ mod tests {
             5,
             1,
             vec![
-                0.1, 0.1, 0.1,
-                0.1, 0.1, 0.1,
-                0.8, 0.8, 0.8,
-                0.1, 0.1, 0.1,
-                0.1, 0.1, 0.1,
+                0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.8, 0.8, 0.8, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
             ],
         )
         .expect("fixture")
@@ -222,14 +230,26 @@ mod tests {
     #[test]
     fn zero_sharpen_is_identity() {
         let image = fixture();
-        let output = sharpen(&image, SharpenParameters { amount: 0.0, ..Default::default() });
+        let output = sharpen(
+            &image,
+            SharpenParameters {
+                amount: 0.0,
+                ..Default::default()
+            },
+        );
         assert_eq!(output, image);
     }
 
     #[test]
     fn sharpen_increases_edge_peak() {
         let image = fixture();
-        let output = sharpen(&image, SharpenParameters { amount: 0.8, ..Default::default() });
+        let output = sharpen(
+            &image,
+            SharpenParameters {
+                amount: 0.8,
+                ..Default::default()
+            },
+        );
         assert!(output.data[6] > image.data[6]);
     }
 
@@ -241,15 +261,15 @@ mod tests {
 
     #[test]
     fn chroma_denoise_reduces_color_spike() {
-        let image = LinearImage::new(
-            3,
-            1,
-            vec![0.2, 0.2, 0.2, 0.8, 0.1, 0.1, 0.2, 0.2, 0.2],
-        )
-        .expect("fixture");
+        let image = LinearImage::new(3, 1, vec![0.2, 0.2, 0.2, 0.8, 0.1, 0.1, 0.2, 0.2, 0.2])
+            .expect("fixture");
         let output = denoise(
             &image,
-            DenoiseParameters { luminance: 0.0, chroma: 1.0, radius: 1.0 },
+            DenoiseParameters {
+                luminance: 0.0,
+                chroma: 1.0,
+                radius: 1.0,
+            },
         );
         let original_chroma = (image.data[3] - image.data[4]).abs();
         let output_chroma = (output.data[3] - output.data[4]).abs();

@@ -23,7 +23,11 @@ pub struct DistortionCoefficients {
 
 impl Default for DistortionCoefficients {
     fn default() -> Self {
-        Self { k1: 0.0, k2: 0.0, k3: 0.0 }
+        Self {
+            k1: 0.0,
+            k2: 0.0,
+            k3: 0.0,
+        }
     }
 }
 
@@ -36,7 +40,10 @@ pub struct ChromaticAberrationCoefficients {
 
 impl Default for ChromaticAberrationCoefficients {
     fn default() -> Self {
-        Self { red_scale: 1.0, blue_scale: 1.0 }
+        Self {
+            red_scale: 1.0,
+            blue_scale: 1.0,
+        }
     }
 }
 
@@ -50,7 +57,11 @@ pub struct VignetteCoefficients {
 
 impl Default for VignetteCoefficients {
     fn default() -> Self {
-        Self { v1: 0.0, v2: 0.0, v3: 0.0 }
+        Self {
+            v1: 0.0,
+            v2: 0.0,
+            v3: 0.0,
+        }
     }
 }
 
@@ -78,8 +89,12 @@ pub fn distort(point: NormalizedPoint, coefficients: DistortionCoefficients) -> 
     let radius2 = point.x * point.x + point.y * point.y;
     let radius4 = radius2 * radius2;
     let radius6 = radius4 * radius2;
-    let scale = 1.0 + coefficients.k1 * radius2 + coefficients.k2 * radius4 + coefficients.k3 * radius6;
-    NormalizedPoint { x: point.x * scale, y: point.y * scale }
+    let scale =
+        1.0 + coefficients.k1 * radius2 + coefficients.k2 * radius4 + coefficients.k3 * radius6;
+    NormalizedPoint {
+        x: point.x * scale,
+        y: point.y * scale,
+    }
 }
 
 /// Numerically inverts a radial distortion profile. This is deterministic and suitable for the
@@ -104,14 +119,18 @@ pub fn channel_coordinate(
         2 => coefficients.blue_scale,
         _ => 1.0,
     };
-    NormalizedPoint { x: green_coordinate.x * scale, y: green_coordinate.y * scale }
+    NormalizedPoint {
+        x: green_coordinate.x * scale,
+        y: green_coordinate.y * scale,
+    }
 }
 
 pub fn vignette_gain(point: NormalizedPoint, coefficients: VignetteCoefficients) -> f32 {
     let radius2 = point.x * point.x + point.y * point.y;
     let radius4 = radius2 * radius2;
     let radius6 = radius4 * radius2;
-    let denominator = 1.0 + coefficients.v1 * radius2 + coefficients.v2 * radius4 + coefficients.v3 * radius6;
+    let denominator =
+        1.0 + coefficients.v1 * radius2 + coefficients.v2 * radius4 + coefficients.v3 * radius6;
     if denominator.abs() < 1.0e-6 || !denominator.is_finite() {
         1.0
     } else {
@@ -138,7 +157,11 @@ mod tests {
     #[test]
     fn distortion_round_trip_is_close() {
         let point = NormalizedPoint { x: 0.55, y: 0.32 };
-        let coefficients = DistortionCoefficients { k1: -0.12, k2: 0.03, k3: 0.0 };
+        let coefficients = DistortionCoefficients {
+            k1: -0.12,
+            k2: 0.03,
+            k3: 0.0,
+        };
         let distorted = distort(point, coefficients);
         let restored = undistort(distorted, coefficients);
         assert!(close(point.x, restored.x));
@@ -148,7 +171,10 @@ mod tests {
     #[test]
     fn tca_scales_only_requested_channel() {
         let point = NormalizedPoint { x: 0.8, y: 0.1 };
-        let coefficients = ChromaticAberrationCoefficients { red_scale: 0.998, blue_scale: 1.003 };
+        let coefficients = ChromaticAberrationCoefficients {
+            red_scale: 0.998,
+            blue_scale: 1.003,
+        };
         let red = channel_coordinate(point, coefficients, 0);
         let green = channel_coordinate(point, coefficients, 1);
         let blue = channel_coordinate(point, coefficients, 2);
@@ -158,8 +184,22 @@ mod tests {
 
     #[test]
     fn positive_vignette_coefficients_brighten_corrected_edges() {
-        let center = vignette_gain(NormalizedPoint { x: 0.0, y: 0.0 }, VignetteCoefficients { v1: -0.25, v2: 0.0, v3: 0.0 });
-        let edge = vignette_gain(NormalizedPoint { x: 0.9, y: 0.0 }, VignetteCoefficients { v1: -0.25, v2: 0.0, v3: 0.0 });
+        let center = vignette_gain(
+            NormalizedPoint { x: 0.0, y: 0.0 },
+            VignetteCoefficients {
+                v1: -0.25,
+                v2: 0.0,
+                v3: 0.0,
+            },
+        );
+        let edge = vignette_gain(
+            NormalizedPoint { x: 0.9, y: 0.0 },
+            VignetteCoefficients {
+                v1: -0.25,
+                v2: 0.0,
+                v3: 0.0,
+            },
+        );
         assert!(edge > center);
     }
 }
