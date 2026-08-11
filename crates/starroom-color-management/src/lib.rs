@@ -1,10 +1,11 @@
 //! Color-management boundaries for Starroom.
-//! ICC parsing/execution is provided by a pluggable provider (LittleCMS is the intended native
-//! implementation). Published chromatic adaptation math lives here so the render graph can keep
-//! file, working and display transforms explicit.
+//! ICC parsing/execution is provided by LittleCMS. Published chromatic adaptation math lives here
+//! so the render graph can keep file, working and display transforms explicit.
 
+use lcms2::{CIExyY, CIExyYTRIPLE, Flags, Intent, PixelFormat, Profile, ToneCurve, Transform};
 use serde::{Deserialize, Serialize};
 use starroom_color::LinearRgb;
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Xyz {
@@ -208,6 +209,277 @@ pub trait IccTransformProvider {
     ) -> Result<(), Self::Error>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileRole {
+    Input,
+    Working,
+    Output,
+}
+
+impl std::fmt::Display for ProfileRole {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Input => "input",
+            Self::Working => "working",
+            Self::Output => "output",
+        })
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ColorManagementError {
+    #[error("invalid {role} ICC profile: {source}")]
+    InvalidProfile {
+        role: ProfileRole,
+        #[source]
+        source: lcms2::Error,
+    },
+    #[error("LittleCMS could not create the {direction} transform: {source}")]
+    TransformCreation {
+        direction: &'static str,
+        #[source]
+        source: lcms2::Error,
+    },
+    #[error("{stage} contained NaN or infinity at pixel {pixel}, channel {channel}")]
+    NonFinitePixel {
+        stage: &'static str,
+        pixel: usize,
+        channel: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InputProfileSource {
+    EmbeddedIcc,
+    AssumedSrgb,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OutputProfileSource {
+    SuppliedIcc,
+    Srgb,
+}
+
+pub struct LcmsTransform {
+    transform: Transform<[f32; 3], [f32; 3]>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LittleCmsProvider;
+
+fn lcms_intent(intent: RenderingIntent) -> Intent {
+    match intent {
+        RenderingIntent::Perceptual => Intent::Perceptual,
+        RenderingIntent::RelativeColorimetric => Intent::RelativeColorimetric,
+        RenderingIntent::Saturation => Intent::Saturation,
+        RenderingIntent::AbsoluteColorimetric => Intent::AbsoluteColorimetric,
+    }
+}
+
+fn rec2020_linear_d65_profile() -> Result<Profile, ColorManagementError> {
+    let white = CIExyY {
+        x: 0.3127,
+        y: 0.3290,
+        Y: 1.0,
+    };
+    let primaries = CIExyYTRIPLE {
+        Red: CIExyY {
+            x: 0.708,
+            y: 0.292,
+            Y: 1.0,
+        },
+        Green: CIExyY {
+            x: 0.170,
+            y: 0.797,
+            Y: 1.0,
+        },
+        Blue: CIExyY {
+            x: 0.131,
+            y: 0.046,
+            Y: 1.0,
+        },
+    };
+    let red = ToneCurve::new(1.0);
+    let green = ToneCurve::new(1.0);
+    let blue = ToneCurve::new(1.0);
+    Profile::new_rgb(&white, &primaries, &[&red, &green, &blue]).map_err(|source| {
+        ColorManagementError::InvalidProfile {
+            role: ProfileRole::Working,
+            source,
+        }
+    })
+}
+
+fn ensure_finite(stage: &'static str, pixels: &[[f32; 3]]) -> Result<(), ColorManagementError> {
+    for (pixel, rgb) in pixels.iter().enumerate() {
+        for (channel, value) in rgb.iter().enumerate() {
+            if !value.is_finite() {
+                return Err(ColorManagementError::NonFinitePixel {
+                    stage,
+                    pixel,
+                    channel,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+impl LittleCmsProvider {
+    #[must_use]
+    pub fn engine_version(&self) -> u32 {
+        lcms2::version()
+    }
+
+    pub fn srgb_profile_bytes(&self) -> Result<Vec<u8>, ColorManagementError> {
+        Profile::new_srgb()
+            .icc()
+            .map_err(|source| ColorManagementError::InvalidProfile {
+                role: ProfileRole::Output,
+                source,
+            })
+    }
+
+    pub fn input_to_working(
+        &self,
+        pixels: &mut [[f32; 3]],
+        embedded_icc: Option<&[u8]>,
+        intent: RenderingIntent,
+        black_point_compensation: bool,
+    ) -> Result<InputProfileSource, ColorManagementError> {
+        ensure_finite("encoded input", pixels)?;
+        let source_kind = if embedded_icc.is_some() {
+            InputProfileSource::EmbeddedIcc
+        } else {
+            InputProfileSource::AssumedSrgb
+        };
+        let input = match embedded_icc {
+            Some(bytes) => {
+                Profile::new_icc(bytes).map_err(|source| ColorManagementError::InvalidProfile {
+                    role: ProfileRole::Input,
+                    source,
+                })?
+            }
+            None => Profile::new_srgb(),
+        };
+        let working = rec2020_linear_d65_profile()?;
+        let transform = build_lcms_transform(
+            &input,
+            &working,
+            intent,
+            black_point_compensation,
+            "input-to-working",
+        )?;
+        transform.transform.transform_in_place(pixels);
+        ensure_finite("linear Rec.2020 working output", pixels)?;
+        Ok(source_kind)
+    }
+
+    pub fn working_to_output(
+        &self,
+        pixels: &mut [[f32; 3]],
+        output_icc: Option<&[u8]>,
+        intent: RenderingIntent,
+        black_point_compensation: bool,
+    ) -> Result<OutputProfileSource, ColorManagementError> {
+        ensure_finite("linear Rec.2020 working input", pixels)?;
+        let output_kind = if output_icc.is_some() {
+            OutputProfileSource::SuppliedIcc
+        } else {
+            OutputProfileSource::Srgb
+        };
+        let working = rec2020_linear_d65_profile()?;
+        let output = match output_icc {
+            Some(bytes) => {
+                Profile::new_icc(bytes).map_err(|source| ColorManagementError::InvalidProfile {
+                    role: ProfileRole::Output,
+                    source,
+                })?
+            }
+            None => Profile::new_srgb(),
+        };
+        let transform = build_lcms_transform(
+            &working,
+            &output,
+            intent,
+            black_point_compensation,
+            "working-to-output",
+        )?;
+        transform.transform.transform_in_place(pixels);
+        ensure_finite("encoded output", pixels)?;
+        Ok(output_kind)
+    }
+}
+
+fn build_lcms_transform(
+    input: &Profile,
+    output: &Profile,
+    intent: RenderingIntent,
+    black_point_compensation: bool,
+    direction: &'static str,
+) -> Result<LcmsTransform, ColorManagementError> {
+    let flags = if black_point_compensation {
+        Flags::BLACKPOINT_COMPENSATION
+    } else {
+        Flags::default()
+    };
+    Transform::new_flags(
+        input,
+        PixelFormat::RGB_FLT,
+        output,
+        PixelFormat::RGB_FLT,
+        lcms_intent(intent),
+        flags,
+    )
+    .map(|transform| LcmsTransform { transform })
+    .map_err(|source| ColorManagementError::TransformCreation { direction, source })
+}
+
+impl IccTransformProvider for LittleCmsProvider {
+    type Error = ColorManagementError;
+    type Transform = LcmsTransform;
+
+    fn build_transform(
+        &self,
+        input_profile: &[u8],
+        output_profile: &[u8],
+        intent: RenderingIntent,
+        black_point_compensation: bool,
+    ) -> Result<Self::Transform, Self::Error> {
+        let input = Profile::new_icc(input_profile).map_err(|source| {
+            ColorManagementError::InvalidProfile {
+                role: ProfileRole::Input,
+                source,
+            }
+        })?;
+        let output = Profile::new_icc(output_profile).map_err(|source| {
+            ColorManagementError::InvalidProfile {
+                role: ProfileRole::Output,
+                source,
+            }
+        })?;
+        build_lcms_transform(
+            &input,
+            &output,
+            intent,
+            black_point_compensation,
+            "profile-to-profile",
+        )
+    }
+
+    fn apply_rgb_f32(
+        &self,
+        transform: &Self::Transform,
+        pixels: &mut [[f32; 3]],
+    ) -> Result<(), Self::Error> {
+        ensure_finite("ICC transform input", pixels)?;
+        transform.transform.transform_in_place(pixels);
+        ensure_finite("ICC transform output", pixels)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkingSpace {
@@ -267,5 +539,111 @@ mod tests {
         let restored = rec2020_linear_to_srgb_encoded(working);
         assert!(close(restored[0], restored[1]));
         assert!(close(restored[1], restored[2]));
+    }
+
+    #[test]
+    fn d50_d65_adaptation_round_trip_is_stable() {
+        let sample = Xyz {
+            x: 0.21,
+            y: 0.35,
+            z: 0.18,
+        };
+        let d50 = adapt_xyz(sample, D65, D50);
+        let restored = adapt_xyz(d50, D50, D65);
+        assert!(close(restored.x, sample.x));
+        assert!(close(restored.y, sample.y));
+        assert!(close(restored.z, sample.z));
+    }
+
+    #[test]
+    fn embedded_srgb_and_missing_profile_fallback_match() {
+        let provider = LittleCmsProvider;
+        let explicit = provider.srgb_profile_bytes().expect("serialize sRGB");
+        let mut embedded_pixels = [[0.12, 0.5, 0.91], [0.8, 0.3, 0.1]];
+        let mut fallback_pixels = embedded_pixels;
+        let embedded_source = provider
+            .input_to_working(
+                &mut embedded_pixels,
+                Some(&explicit),
+                RenderingIntent::RelativeColorimetric,
+                true,
+            )
+            .expect("embedded transform");
+        let fallback_source = provider
+            .input_to_working(
+                &mut fallback_pixels,
+                None,
+                RenderingIntent::RelativeColorimetric,
+                true,
+            )
+            .expect("fallback transform");
+        assert_eq!(embedded_source, InputProfileSource::EmbeddedIcc);
+        assert_eq!(fallback_source, InputProfileSource::AssumedSrgb);
+        for (embedded, fallback) in embedded_pixels.iter().zip(fallback_pixels) {
+            for channel in 0..3 {
+                assert!((embedded[channel] - fallback[channel]).abs() < 1.0e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_embedded_profile_is_an_error_not_a_fallback() {
+        let provider = LittleCmsProvider;
+        let mut pixels = [[0.2, 0.3, 0.4]];
+        let result = provider.input_to_working(
+            &mut pixels,
+            Some(b"not an ICC profile"),
+            RenderingIntent::RelativeColorimetric,
+            true,
+        );
+        assert!(matches!(
+            result,
+            Err(ColorManagementError::InvalidProfile {
+                role: ProfileRole::Input,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn non_finite_pixels_are_rejected_before_lcms() {
+        let provider = LittleCmsProvider;
+        let mut pixels = [[f32::NAN, 0.3, 0.4]];
+        let result = provider.input_to_working(
+            &mut pixels,
+            None,
+            RenderingIntent::RelativeColorimetric,
+            true,
+        );
+        assert!(matches!(
+            result,
+            Err(ColorManagementError::NonFinitePixel { .. })
+        ));
+    }
+
+    #[test]
+    fn all_four_icc_rendering_intents_build_and_remain_finite() {
+        let provider = LittleCmsProvider;
+        let intents = [
+            RenderingIntent::Perceptual,
+            RenderingIntent::RelativeColorimetric,
+            RenderingIntent::Saturation,
+            RenderingIntent::AbsoluteColorimetric,
+        ];
+        for intent in intents {
+            let mut pixels = [[0.18, 0.5, 0.82]];
+            provider
+                .input_to_working(&mut pixels, None, intent, true)
+                .expect("input transform");
+            provider
+                .working_to_output(&mut pixels, None, intent, true)
+                .expect("output transform");
+            assert!(pixels[0].iter().all(|channel| channel.is_finite()));
+        }
+    }
+
+    #[test]
+    fn bundled_littlecms_version_matches_provenance_inventory() {
+        assert_eq!(LittleCmsProvider.engine_version(), 2190);
     }
 }

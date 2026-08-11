@@ -12,3 +12,4 @@ starroom-color-management = { path = "../starroom-color-management" }
 starroom-detail = { path = "../starroom-detail" }
 starroom-grading = { path = "../starroom-grading" }
 starroom-imageio = { path = "../starroom-imageio" }
+thiserror.workspace = true

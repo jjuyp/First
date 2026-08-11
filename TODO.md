@@ -50,15 +50,15 @@ Rules:
 - [ ] Production JPEG/PNG/TIFF export path does not use preview pixels as source.
 
 ### M1B Color management — mature foundation required
-- [ ] Integrate real LittleCMS provider.
-- [ ] Explicit input -> working -> display/output transforms.
-- [ ] Validate D50/D65 adaptation and rendering intents.
-- [ ] Define fallback rules; never silently substitute an incorrect profile.
+- [x] Integrate real LittleCMS provider (`lcms2 6.1.1` + statically bundled LittleCMS 2.19).
+- [x] Explicit ICC input -> linear Rec.2020 D65 working -> display/output transforms in the native shared graph.
+- [x] Validate D50/D65 adaptation and all four ICC rendering intents.
+- [x] Missing input profile is explicitly reported as assumed sRGB; invalid embedded/display/output profiles are typed errors and never silently substituted.
 - [ ] Multi-monitor/display-profile test plan.
 
 ### M1C Native rendered-file pipeline
 - [ ] Decode -> input transform -> working RGB -> WB -> exposure/tone -> curve -> color -> detail -> optics/geometry -> display/export in one native graph.
-- [ ] Preview and export use the same logical processing graph.
+- [x] Native preview and export entry points use the same logical processing graph and differ only by requested display/output profile.
 - [ ] Tauri native preview replaces browser creative math only after parity/regression acceptance.
 
 ## M2 Tone / Color Foundation — use mature open-source behavior

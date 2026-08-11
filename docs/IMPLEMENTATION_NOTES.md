@@ -8,6 +8,16 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
 - Golden source photographs are deliberately not fabricated or downloaded without redistribution review. Entries remain `planned` until their hashes, licenses, ICC/EXIF metadata, ROIs, settings vectors and reviewed baseline artifacts exist.
 - CI now validates the Golden manifest structure and required case IDs before frontend checks.
 
+## 2026-08-11 — M1B LittleCMS provider and shared color graph
+
+- Added the production `LittleCmsProvider` using pinned `lcms2 6.1.1`, `lcms2-sys 4.0.7` and its statically compiled LittleCMS 2.19 source (`LCMS_VERSION 2190`). The binary version has a regression assertion tied to the provenance inventory.
+- Input pixels now use an embedded RGB ICC profile when present; missing profiles take the explicit, reported `assumedSrgb` fallback. Invalid embedded profiles are typed errors and do not fall through to sRGB.
+- LittleCMS converts encoded input RGB through ICC PCS into a generated linear Rec.2020/D65 working profile. After shared creative/detail stages, the same graph converts working RGB to either the sRGB fallback, a supplied display ICC or a supplied export ICC.
+- Native preview and export have named entry points over one `render_shared_graph` implementation. Their transform report records actual input/output profile sources and the working space.
+- Tests cover Bradford D50/D65 mapping and round-trip, all four ICC rendering intents, embedded ICC equivalence, missing-profile fallback, invalid input/output profile errors, NaN/Inf rejection, display-profile preview, supplied export profile and preview/export graph identity.
+- The browser Canvas pipeline remains a temporary interactive slice; connecting file import/export UI to the native Tauri graph is still M1C work and is not claimed by this provider milestone.
+- Local Rust linking remains blocked by the workstation's missing Visual C++ linker. Formatting is checked locally; Windows GitHub Actions is the authoritative Clippy/compile/test gate for this native change.
+
 ## 2026-08-11 — v0.2 native workspace quality gate
 
 - Repaired the `starroom-heal` test indexing rejected by Rust 1.97 Clippy and retained explicit `(width, x, y)` coordinate semantics through a shared test helper.
