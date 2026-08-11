@@ -99,7 +99,8 @@ pub fn apply_heal(image: &LinearImage, stroke: HealStroke) -> LinearImage {
             let source_sample_x = x as f32 + delta_x;
             let source_sample_y = y as f32 + delta_y;
             for channel in 0..3 {
-                let source_value = sample_bilinear(image, source_sample_x, source_sample_y, channel);
+                let source_value =
+                    sample_bilinear(image, source_sample_x, source_sample_y, channel);
                 let source_low = sample_bilinear(&low, source_sample_x, source_sample_y, channel);
                 let destination_low = low.data[(y * image.width + x) * 3 + channel];
                 let adapted = destination_low + (source_value - source_low);
@@ -115,9 +116,13 @@ pub fn apply_heal(image: &LinearImage, stroke: HealStroke) -> LinearImage {
 mod tests {
     use super::*;
 
+    fn rgb_index(width: usize, x: usize, y: usize) -> usize {
+        (y * width + x) * 3
+    }
+
     fn flat_with_spot() -> LinearImage {
         let mut data = vec![0.2; 7 * 3 * 3];
-        let center = (1 * 7 + 3) * 3;
+        let center = rgb_index(7, 3, 1);
         data[center] = 0.9;
         data[center + 1] = 0.1;
         data[center + 2] = 0.1;
@@ -143,7 +148,7 @@ mod tests {
     #[test]
     fn healing_reduces_isolated_color_spot() {
         let image = flat_with_spot();
-        let center = (1 * 7 + 3) * 3;
+        let center = rgb_index(7, 3, 1);
         let output = apply_heal(
             &image,
             HealStroke {
