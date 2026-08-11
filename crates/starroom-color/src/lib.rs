@@ -149,11 +149,9 @@ fn zone_weights(y: f32) -> (f32, f32, f32, f32) {
     let safe_y = y.max(0.0);
     // Preserve true black and fade shadow influence before the midtones. This avoids the
     // v0.1 failure where Shadows behaved like a broad white veil.
-    let shadow =
-        smoothstep(0.004, 0.012, safe_y) * (1.0 - smoothstep(0.06, 0.18, safe_y));
+    let shadow = smoothstep(0.004, 0.012, safe_y) * (1.0 - smoothstep(0.06, 0.18, safe_y));
     let black = 1.0 - smoothstep(0.0, 0.11, safe_y);
-    let highlight =
-        smoothstep(0.34, 0.62, safe_y) * (1.0 - smoothstep(1.10, 1.55, safe_y));
+    let highlight = smoothstep(0.34, 0.62, safe_y) * (1.0 - smoothstep(1.10, 1.55, safe_y));
     let white = smoothstep(0.72, 1.02, safe_y);
     (shadow, black, highlight, white)
 }
@@ -168,10 +166,7 @@ fn tone_luminance(y: f32, parameters: ToneParameters) -> f32 {
 
     let shadows = clamp_unit_control(parameters.shadows);
     if shadows >= 0.0 {
-        output += shadows
-            * shadow_weight
-            * (0.24 + 0.18 * output.sqrt())
-            * (1.0 - output.min(1.0));
+        output += shadows * shadow_weight * (0.24 + 0.18 * output.sqrt()) * (1.0 - output.min(1.0));
     } else {
         output *= 1.0 + shadows * shadow_weight * 0.72;
     }
@@ -234,6 +229,8 @@ pub fn apply_tone(rgb: LinearRgb, parameters: ToneParameters) -> LinearRgb {
     }
 }
 
+// OKLab XYZ conversion matrices follow Bjorn Ottosson's published reference:
+// https://bottosson.github.io/posts/oklab/ (public domain / MIT).
 fn rec2020_to_xyz(rgb: LinearRgb) -> (f32, f32, f32) {
     (
         0.636_958_06 * rgb.r + 0.144_616_9 * rgb.g + 0.168_880_98 * rgb.b,
@@ -269,7 +266,7 @@ pub fn oklab_to_rec2020(lab: Oklab) -> LinearRgb {
     let l = l_prime * l_prime * l_prime;
     let m = m_prime * m_prime * m_prime;
     let s = s_prime * s_prime * s_prime;
-    let x = 1.227_014 * l - 0.557_8 * m - 0.281_256_14 * s;
+    let x = 1.227_014 * l - 0.557_8 * m + 0.281_256_14 * s;
     let y = -0.040_580_18 * l + 1.112_256_9 * m - 0.071_676_68 * s;
     let z = -0.076_381_29 * l - 0.421_481_97 * m + 1.586_163_2 * s;
     xyz_to_rec2020(x, y, z)
@@ -521,6 +518,40 @@ mod tests {
         let after = oklab_to_oklch(rec2020_to_oklab(rotate_hue(rgb, 42.0)));
         assert!(delta(before.l, after.l) < 2e-4);
         assert!(delta(before.c, after.c) < 2e-4);
+    }
+
+    #[test]
+    fn rec2020_oklab_round_trip_preserves_linear_rgb() {
+        let samples = [
+            LinearRgb {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearRgb {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+            },
+            LinearRgb {
+                r: 0.30,
+                g: 0.16,
+                b: 0.08,
+            },
+            LinearRgb {
+                r: 0.02,
+                g: 0.42,
+                b: 0.91,
+            },
+        ];
+
+        for source in samples {
+            let restored = oklab_to_rec2020(rec2020_to_oklab(source));
+            assert!(restored.r.is_finite() && restored.g.is_finite() && restored.b.is_finite());
+            assert!(delta(source.r, restored.r) < 2e-5);
+            assert!(delta(source.g, restored.g) < 2e-5);
+            assert!(delta(source.b, restored.b) < 2e-5);
+        }
     }
 
     #[test]
