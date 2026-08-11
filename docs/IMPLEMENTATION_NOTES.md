@@ -1,6 +1,16 @@
 # Implementation Notes
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
+## 2026-08-11 — M1C Native preview vertical slice
+
+- Desktop JPEG/PNG/TIFF imports now retain the dialog-selected source path and use Rust for the actual preview: bounded decode in `starroom-imageio`, LittleCMS input transform, linear Rec.2020 D65 working graph, relative WB, exposure/tone, curve/color/detail stages, sRGB output, then JPEG encoding. Export reopens the full-resolution source and enters the same `render_shared_graph`; it never promotes preview pixels into export input.
+- The Tauri 2 IPC contract deliberately keeps pixel arrays out of JSON. `native_preview` receives a small serializable request (`sourcePath`, `maxEdge`, edit state) and returns a versioned `SRP1` binary frame through `tauri::ipc::Response` (20-byte header plus JPEG payload). `native_export_jpeg` receives source/output paths and writes the encoded result directly. Tauri channels are reserved for future progressive/tiled streaming; cross-platform shared memory was rejected for this slice because ownership and lifecycle complexity are not justified before profiling.
+- React/TypeScript only maps serializable UI values, parses the binary envelope and displays the returned JPEG. No new color-science or creative pixel math was added. Existing `src/imagePipeline.ts` math is marked deprecated and remains solely as an explicit `Browser fallback` for browser-hosted imports and the bundled SVG demo.
+- Native failures never invoke Browser Canvas. The visible status and preview badge identify `Native CPU` or `Browser fallback`; unsupported M1C edits (Masks, Optics, Geometry, Clarity, and signed-negative detail modes) produce an explicit error instead of being ignored. Those tools remain subsequent native-graph work, not completed foundation claims.
+- Before/After uses two requests to the Native graph: neutral serializable settings for Original and current settings for Edited. Native JPEG export also checks that its destination is not the source path.
+- Added a shared frozen fixture at `tests/fixtures/m1c/browser-native-reference.json`. Vitest regenerates the Browser reference, while a Rust integration test compares Native CPU output against documented per-case thresholds for neutral identity, Exposure, relative WB, Tone and Curve. These tolerances describe the migration gap and must tighten rather than disappear as mature tone/WB foundations replace temporary references.
+- Added official `@tauri-apps/api 2.11.1`, `@tauri-apps/plugin-dialog 2.7.2` and Rust `tauri-plugin-dialog 2.7.2` for binary IPC and scoped desktop path selection. Local Rust link tests remain blocked by the missing MSVC `link.exe`; Windows CI is authoritative for native compilation/tests.
+
 ## 2026-08-11 — F0 provenance and Golden Image specification
 
 - Added the first reviewed third-party inventory in `docs/17_THIRD_PARTY_PROVENANCE.md`. It separates reference-only foundations from binary dependencies and records purpose, immutable upstream version/SHA, license, derivation status, binary inclusion and external-distribution risk.

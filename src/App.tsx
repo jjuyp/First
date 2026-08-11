@@ -13,6 +13,10 @@ import {
   calculateHistogram, hasAdjustments, mapToneCurve, renderImageSource,
   type RadialMask, type ToneCurvePoint,
 } from './imagePipeline'
+import {
+  chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
+  nativeThumbnailUrl, renderNativePreview, type RenderBackend,
+} from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
 type WorkspaceView = 'library' | 'edit' | 'compare'
@@ -21,6 +25,8 @@ interface PhotoItem {
   id: string
   name: string
   src: string
+  sourcePath?: string
+  renderBackend: RenderBackend
   imported: boolean
   rating: number
   adjustments: Adjustments
@@ -65,6 +71,7 @@ const demoPhoto: PhotoItem = {
   id: 'starroom-demo',
   name: 'Starroom Demo.svg',
   src: '/starroom-demo.svg',
+  renderBackend: 'browserFallback',
   imported: false,
   rating: 0,
   adjustments: { ...defaultAdjustments },
@@ -325,14 +332,50 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
         const adjustments = before ? defaultAdjustments : photo.adjustments
         const curvePoints = before ? defaultCurvePoints : photo.curvePoints
         const mask = before ? defaultMask : photo.mask
-        const rendered = await renderImageSource(photo.src, adjustments, 1800, curvePoints, mask)
-        if (cancelled || !canvasRef.current) return
+        let rendered: CanvasImageSource
+        let renderedWidth: number
+        let renderedHeight: number
+        let nativeProfile = ''
+        let release: (() => void) | undefined
+        if (photo.renderBackend === 'native') {
+          if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
+          const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask)
+          const jpegBuffer = result.jpeg.buffer.slice(
+            result.jpeg.byteOffset,
+            result.jpeg.byteOffset + result.jpeg.byteLength,
+          ) as ArrayBuffer
+          const blobUrl = URL.createObjectURL(new Blob([jpegBuffer], { type: 'image/jpeg' }))
+          release = () => URL.revokeObjectURL(blobUrl)
+          const image = new Image()
+          await new Promise<void>((resolve, reject) => {
+            image.onload = () => resolve()
+            image.onerror = () => reject(new Error('Native preview JPEG could not be decoded.'))
+            image.src = blobUrl
+          })
+          rendered = image
+          renderedWidth = result.width
+          renderedHeight = result.height
+          nativeProfile = result.inputProfile
+        } else {
+          const fallback = await renderImageSource(photo.src, adjustments, 1800, curvePoints, mask)
+          rendered = fallback
+          renderedWidth = fallback.width
+          renderedHeight = fallback.height
+        }
+        if (cancelled || !canvasRef.current) {
+          release?.()
+          return
+        }
         const canvas = canvasRef.current
-        canvas.width = rendered.width
-        canvas.height = rendered.height
+        canvas.width = renderedWidth
+        canvas.height = renderedHeight
         const context = canvas.getContext('2d', { willReadFrequently: true })
-        if (!context) throw new Error('Canvas 2D is unavailable.')
+        if (!context) {
+          release?.()
+          throw new Error('Canvas 2D is unavailable.')
+        }
         context.drawImage(rendered, 0, 0)
+        release?.()
         window.requestAnimationFrame(() => {
           if (!canvasRef.current) return
           setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -340,8 +383,10 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
         })
         if (metric) {
           onHistogram(calculateHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
-          onDimensions(`${rendered.width} × ${rendered.height}`)
-          onStatus(before ? 'Original preview' : 'Rendered preview')
+          onDimensions(`${renderedWidth} × ${renderedHeight}`)
+          onStatus(photo.renderBackend === 'native'
+            ? `Native CPU · ${nativeProfile}${before ? ' · original' : ''}`
+            : `Browser fallback${before ? ' · original' : ''}`)
         }
       } catch (error) {
         if (!cancelled) onStatus(error instanceof Error ? error.message : 'Preview failed')
@@ -352,7 +397,8 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.mask, photo.src])
+  }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints,
+    photo.mask, photo.renderBackend, photo.sourcePath, photo.src])
 
   useEffect(() => {
     const measure = () => canvasRef.current && setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -368,9 +414,9 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
   </>
 }
 
-function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, onAdjust, onBeginAdjustment, onReset,
+function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, renderBackend, onAdjust, onBeginAdjustment, onReset,
   onCurveSelect, onCurveBegin, onCurveChange, onMaskBegin, onMaskChange }: {
-  tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; selectedCurvePoint: string | null; mask: RadialMask
+  tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
   onBeginAdjustment: () => void
   onReset: (key: AdjustmentKey) => void
@@ -381,6 +427,8 @@ function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, onAdju
   const normalizeAngle = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
   return <section className="inspector-content" aria-label={`${tool} inspector`}>
     <div className="inspector-head"><div><span className="eyebrow">Live CPU preview</span><h2>{tool}</h2></div><ChevronDown size={16} /></div>
+    {renderBackend === 'native' && ['masks', 'optics', 'geometry'].includes(tool)
+      && <div className="tool-note">This tool is outside the M1C Native slice. Applying it raises an explicit error; Starroom will not silently use Browser Canvas.</div>}
     {tool === 'color' && <div className="tool-note">Encoded-image Temperature/Tint are relative corrections. Physical Kelvin will be available on the RAW pipeline.</div>}
     {tool === 'masks' && <div className="tool-note">Click the photo to place the mask. Drag inside to move; drag side handles to resize; drag the top handle to rotate.</div>}
     {tool === 'curve' && <ToneCurveEditor points={curvePoints} selectedId={selectedCurvePoint} onSelect={onCurveSelect}
@@ -499,7 +547,7 @@ export function App() {
     const imported = supported.map<PhotoItem>((file) => {
       const src = URL.createObjectURL(file)
       objectUrls.current.add(src)
-      return { id: crypto.randomUUID(), name: file.name, src, imported: true, rating: 0,
+      return { id: crypto.randomUUID(), name: file.name, src, renderBackend: 'browserFallback', imported: true, rating: 0,
         adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), mask: { ...defaultMask }, history: [], future: [] }
     })
     setPhotos((current) => [...imported, ...current])
@@ -508,6 +556,39 @@ export function App() {
     setView('edit')
     setBefore(false)
     setNotice(`${imported.length} photo${imported.length === 1 ? '' : 's'} imported`)
+  }
+
+  async function requestPhotoImport() {
+    if (!nativeRuntimeAvailable()) {
+      fileInput.current?.click()
+      return
+    }
+    try {
+      const paths = await chooseNativePhotoPaths()
+      if (!paths.length) return
+      const imported = paths.map<PhotoItem>((sourcePath) => ({
+        id: crypto.randomUUID(),
+        name: sourcePath.split(/[\\/]/).at(-1) ?? sourcePath,
+        src: nativeThumbnailUrl(sourcePath),
+        sourcePath,
+        renderBackend: 'native',
+        imported: true,
+        rating: 0,
+        adjustments: { ...defaultAdjustments },
+        curvePoints: copyCurve(defaultCurvePoints),
+        mask: { ...defaultMask },
+        history: [],
+        future: [],
+      }))
+      setPhotos((current) => [...imported, ...current])
+      selectPhoto(imported[0].id)
+      setFilter('all')
+      setView('edit')
+      setBefore(false)
+      setNotice(`${imported.length} photo${imported.length === 1 ? '' : 's'} imported into Native preview`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Native photo picker failed')
+    }
   }
 
   function updateSelected(mutator: (photo: PhotoItem) => PhotoItem) {
@@ -599,8 +680,20 @@ export function App() {
   }
 
   async function exportJpeg() {
-    setRenderStatus('Exporting full resolution…')
+    setRenderStatus(selected.renderBackend === 'native' ? 'Native full-resolution export…' : 'Browser fallback export…')
     try {
+      if (selected.renderBackend === 'native') {
+        if (!selected.sourcePath) throw new Error('Native photo is missing its source path.')
+        const outputPath = await chooseNativeExportPath(selected.name)
+        if (!outputPath) {
+          setRenderStatus('Export cancelled')
+          return
+        }
+        const result = await exportNativeJpeg(selected.sourcePath, outputPath, selected.adjustments, selected.curvePoints, selected.mask)
+        setNotice(`Native JPEG exported · ${result.width} × ${result.height} · ${result.inputProfile}`)
+        setRenderStatus(`Native CPU · ${result.workingSpace}`)
+        return
+      }
       const canvas = await renderImageSource(selected.src, selected.adjustments, Number.POSITIVE_INFINITY, selected.curvePoints, selected.mask)
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('JPEG encoding failed.')), 'image/jpeg', .94))
       const url = URL.createObjectURL(blob)
@@ -610,8 +703,8 @@ export function App() {
       anchor.download = `${base}-starroom.jpg`
       anchor.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-      setNotice('JPEG exported without overwriting the original')
-      setRenderStatus('Rendered preview')
+      setNotice('Browser fallback JPEG exported without overwriting the original')
+      setRenderStatus('Browser fallback preview')
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Export failed')
       setRenderStatus('Export failed')
@@ -624,7 +717,7 @@ export function App() {
     <div className={`workspace view-${view} ${leftOpen ? '' : 'left-collapsed'} ${filmstripOpen ? '' : 'filmstrip-collapsed'}`}>
       <aside className="library-panel">
         <div className="panel-title"><span>Library</span><IconButton label="Collapse library" onClick={() => setLeftOpen(false)}><PanelLeftClose size={17} /></IconButton></div>
-        <button className="import-button" onClick={() => fileInput.current?.click()}><ImagePlus size={16} /> Add photos</button>
+        <button className="import-button" onClick={requestPhotoImport}><ImagePlus size={16} /> Add photos</button>
         <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp,image/svg+xml" multiple hidden onChange={(event) => { importPhotos(event.target.files); event.target.value = '' }} />
         <span className="format-note">JPEG · PNG · WebP · SVG</span>
         <div className="library-group"><span className="eyebrow">Workspace</span>
@@ -641,12 +734,12 @@ export function App() {
 
       {view === 'library' ? <section className="library-browser" aria-label="Photo library">
         <div className="library-browser-head"><div><span className="eyebrow">Photo workspace</span><h1>{filteredPhotos.length} photos</h1></div>
-          <button className="import-button compact" onClick={() => fileInput.current?.click()}><ImagePlus size={16} /> Add photos</button></div>
+          <button className="import-button compact" onClick={requestPhotoImport}><ImagePlus size={16} /> Add photos</button></div>
         <div className="photo-grid">{filteredPhotos.map((photo) => <article key={photo.id} className={photo.id === selected.id ? 'photo-card selected' : 'photo-card'}>
           <button className="photo-card-preview" onClick={() => { selectPhoto(photo.id); setView('edit'); setBefore(false) }} title={`Edit ${photo.name}`}>
             <img src={photo.src} alt={photo.name} />
           </button>
-          <div><span title={photo.name}>{photo.name}</span><small>{hasPhotoEdits(photo) ? 'Edited' : 'Original'}</small></div>
+          <div><span title={photo.name}>{photo.name}</span><small>{photo.renderBackend === 'native' ? 'Native CPU' : 'Browser fallback'} · {hasPhotoEdits(photo) ? 'Edited' : 'Original'}</small></div>
           <button className="card-delete" aria-label={`Remove ${photo.name}`} title="Remove from Starroom (source stays on disk)" disabled={photos.length <= 1} onClick={() => removePhoto(photo.id)}><Trash2 size={15} /></button>
         </article>)}</div>
       </section> : <section className="canvas-area">
@@ -680,7 +773,7 @@ export function App() {
               <PreviewCanvas photo={selected} before={before} zoom={zoom} maskActive={tool === 'masks' && !before}
                 onBeginMaskEdit={beginInteractiveEdit} onMaskChange={updateMask}
                 onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} />
-              <span className="preview-badge">{before ? 'Original' : hasPhotoEdits(selected) ? `${countPhotoEdits(selected)} edits` : 'Original'}</span>
+              <span className="preview-badge">{selected.renderBackend === 'native' ? 'Native CPU' : 'Browser fallback'} · {before ? 'Original' : hasPhotoEdits(selected) ? `${countPhotoEdits(selected)} edits` : 'Original'}</span>
             </div>
           </div>}
           <div className="canvas-footer"><span>{zoomScale !== 1 ? `${Math.round(zoomScale * 100)}%` : zoom === 'fit' ? 'Fit' : '100%'}</span><span className="status-dot" /><span>{renderStatus}</span><span>· {dimensions}</span>
@@ -702,7 +795,7 @@ export function App() {
           <nav className="tool-rail" aria-label="Editing tools">{toolItems.map(({ id, label, icon: Icon }) => <button key={id}
             className={tool === id ? 'active' : ''} aria-label={label}
             title={label} onClick={() => setTool(id)}><Icon size={18} /><span>{label}</span></button>)}</nav>
-          <Inspector tool={tool} values={selected.adjustments} curvePoints={selected.curvePoints} selectedCurvePoint={selectedCurvePoint}
+          <Inspector tool={tool} values={selected.adjustments} curvePoints={selected.curvePoints} selectedCurvePoint={selectedCurvePoint} renderBackend={selected.renderBackend}
             mask={selected.mask} onAdjust={adjust} onBeginAdjustment={beginInteractiveEdit} onReset={resetAdjustment} onCurveSelect={setSelectedCurvePoint}
             onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask} />
         </div>

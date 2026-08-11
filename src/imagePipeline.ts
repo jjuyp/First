@@ -147,6 +147,7 @@ function applyDetail(imageData: ImageData, noiseReduction: number, sharpness: nu
   }
 }
 
+/** @deprecated M1C keeps this only as the explicitly labelled browser-only fallback/reference. */
 export function processImageData(imageData: ImageData, adjustments: Adjustments, curvePoints?: ToneCurvePoint[], mask?: RadialMask) {
   const curveEdited = curvePoints?.some((point) => Math.abs(point.y - point.x) > 0.0001) ?? false
   if (!hasAdjustments(adjustments) && !curveEdited) return imageData
@@ -238,6 +239,7 @@ export function calculateHistogram(imageData: ImageData, bins = 48) {
   return values.map((value) => value / maximum)
 }
 
+/** @deprecated Real desktop photos use the Rust shared graph. This path is never a silent fallback. */
 export async function renderImageSource(source: string, adjustments: Adjustments, maxEdge = Number.POSITIVE_INFINITY, curvePoints?: ToneCurvePoint[], mask?: RadialMask) {
   const image = new Image()
   image.decoding = 'async'

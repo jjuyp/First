@@ -29,9 +29,17 @@ The authoritative resolved versions are in `Cargo.lock`. “Direct” means decl
 | `fdeflate`, `flate2`, `miniz_oxide` | PNG/DEFLATE implementation closure | 0.3.7 / 1.1.9 / 0.8.9 | permissive multi-license | No | Yes | Retain the selected MIT/Apache/Zlib notices. |
 | `byteorder-lite` | TIFF/image byte-order support | 0.1.0 | Unlicense OR MIT | No | Yes | Prefer MIT notice for predictable external distribution records. |
 
+## Current desktop transport dependencies
+
+| Dependency | Purpose / Starroom integration | Fixed version | License | Derivation | Binary | Distribution note |
+|---|---|---:|---|---|---|---|
+| `tauri-plugin-dialog` | Desktop source/output path selection for Native preview/export; selected paths enter the narrow Tauri command contract | 2.7.2 | MIT OR Apache-2.0 | No | Yes | Official Tauri plugin; retain the selected permissive notice and capability allowlist. |
+| `@tauri-apps/api` | Frontend `invoke`, runtime detection and scoped asset URL bridge; no image processing | 2.11.1 | MIT OR Apache-2.0 | No | Bundled JS | Official Tauri package; retain the selected permissive notice. |
+| `@tauri-apps/plugin-dialog` | Typed frontend binding for the native dialog plugin; no image processing | 2.7.2 | MIT OR Apache-2.0 | No | Bundled JS | Keep JS and Rust plugin versions compatible and review permissions on upgrades. |
+
 ## Current JavaScript image-related dependencies
 
-There is currently **no third-party JavaScript image-processing dependency**. The browser slice uses platform `CanvasRenderingContext2D`, `Image`, `ImageData`, Blob and object-URL APIs in `src/imagePipeline.ts` and `src/App.tsx`. React, Lucide, Vite and test/lint packages are UI/tooling dependencies, not image algorithms. Their exact versions remain pinned by `package-lock.json` and require the normal release notice audit, but they are outside this image-foundation inventory.
+There is currently **no third-party JavaScript image-processing dependency**. The browser fallback uses platform `CanvasRenderingContext2D`, `Image`, `ImageData`, Blob and object-URL APIs in `src/imagePipeline.ts` and `src/App.tsx`; real desktop-photo processing enters the Rust graph. The official Tauri JS packages listed above provide transport/dialog bindings only. React, Lucide, Vite and test/lint packages are UI/tooling dependencies, not image algorithms. Their exact versions remain pinned by `package-lock.json` and require the normal release notice audit, but they are outside this image-foundation inventory.
 
 ## Provenance rule for future integrations
 

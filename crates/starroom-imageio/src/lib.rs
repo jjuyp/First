@@ -58,7 +58,10 @@ fn dynamic_to_rgba_f32(image: DynamicImage) -> Vec<f32> {
     image.into_rgba32f().into_raw()
 }
 
-pub fn decode_rendered(path: impl AsRef<Path>) -> Result<DecodedRenderedImage, ImageIoError> {
+fn decode_rendered_inner(
+    path: impl AsRef<Path>,
+    max_edge: Option<u32>,
+) -> Result<DecodedRenderedImage, ImageIoError> {
     let reader = ImageReader::open(path)?.with_guessed_format()?;
     let format = reader.format().ok_or(ImageIoError::UnknownFormat)?;
     let rendered_format = RenderedFormat::try_from(format)?;
@@ -66,15 +69,37 @@ pub fn decode_rendered(path: impl AsRef<Path>) -> Result<DecodedRenderedImage, I
     let (width, height) = decoder.dimensions();
     let embedded_icc = decoder.icc_profile()?;
     let exif = decoder.exif_metadata()?;
-    let image = DynamicImage::from_decoder(decoder)?;
+    let mut image = DynamicImage::from_decoder(decoder)?;
+    if let Some(max_edge) = max_edge.filter(|edge| *edge > 0) {
+        if width > max_edge || height > max_edge {
+            // Lanczos3 is a mature, deterministic image-crate resampler. Resizing is performed
+            // before the shared color/tone graph only for interactive preview; export always
+            // decodes the full source independently.
+            image = image.resize(max_edge, max_edge, image::imageops::FilterType::Lanczos3);
+        }
+    }
+    let (decoded_width, decoded_height) = (image.width(), image.height());
     Ok(DecodedRenderedImage {
-        width,
-        height,
+        width: decoded_width,
+        height: decoded_height,
         format: rendered_format,
         rgba: dynamic_to_rgba_f32(image),
         embedded_icc,
         exif,
     })
+}
+
+pub fn decode_rendered(path: impl AsRef<Path>) -> Result<DecodedRenderedImage, ImageIoError> {
+    decode_rendered_inner(path, None)
+}
+
+/// Decodes a bounded interactive-preview source while retaining metadata/profile ownership.
+/// Full-resolution export must call [`decode_rendered`] instead.
+pub fn decode_rendered_preview(
+    path: impl AsRef<Path>,
+    max_edge: u32,
+) -> Result<DecodedRenderedImage, ImageIoError> {
+    decode_rendered_inner(path, Some(max_edge))
 }
 
 /// Encodes an already output-transformed RGB8 buffer. The caller owns gamut mapping and output

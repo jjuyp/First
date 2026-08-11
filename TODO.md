@@ -45,9 +45,9 @@ Rules:
 ## M1 Native Render Foundation
 
 ### M1A Rendered-file I/O
-- [ ] Production JPEG/PNG/TIFF decoder connected to native render path.
-- [ ] Preserve embedded ICC/EXIF metadata through decode boundary.
-- [ ] Production JPEG/PNG/TIFF export path does not use preview pixels as source.
+- [x] Production JPEG/PNG/TIFF decoder connected to native render path.
+- [x] Preserve embedded ICC/EXIF metadata through decode boundary.
+- [x] Production JPEG/PNG/TIFF export path does not use preview pixels as source.
 
 ### M1B Color management — mature foundation required
 - [x] Integrate real LittleCMS provider (`lcms2 6.1.1` + statically bundled LittleCMS 2.19).
@@ -57,9 +57,14 @@ Rules:
 - [ ] Multi-monitor/display-profile test plan.
 
 ### M1C Native rendered-file pipeline
-- [ ] Decode -> input transform -> working RGB -> WB -> exposure/tone -> curve -> color -> detail -> optics/geometry -> display/export in one native graph.
+- [x] Native vertical slice: file-path decode -> input transform -> linear Rec.2020 D65 -> relative WB -> exposure/tone -> curve -> color -> preview/export output in one Rust graph.
 - [x] Native preview and export entry points use the same logical processing graph and differ only by requested display/output profile.
-- [ ] Tauri native preview replaces browser creative math only after parity/regression acceptance.
+- [x] Tauri 2 request/result contract sends source path + edit state as small JSON and returns preview JPEG through versioned binary `ipc::Response`; full-resolution export writes directly to the selected path.
+- [x] Real desktop photo preview, Before/After and JPEG export use the Native CPU graph; Browser Canvas remains an explicitly labelled browser/demo fallback and is never selected after a native error.
+- [x] Browser reference vs Native CPU regression fixtures cover identity, Exposure, relative WB, Tone and Curve with explicit migration tolerances.
+- [ ] Move masks, optics and geometry into the native graph; Native M1C reports these unsupported edits instead of silently ignoring or falling back.
+- [ ] Replace the temporary JPEG preview payload with a measured cache/shared-buffer strategy only if profiling proves decode/encode overhead is material; do not introduce shared memory without a cross-platform lifecycle design.
+- [ ] Remove temporary Browser Canvas creative math after all remaining rendered-file tools have native coverage and regression acceptance.
 
 ## M2 Tone / Color Foundation — use mature open-source behavior
 

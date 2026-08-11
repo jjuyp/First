@@ -14,9 +14,14 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 serde.workspace = true
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
 starroom-core = { path = "../crates/starroom-core" }
 starroom-project = { path = "../crates/starroom-project" }
 starroom-color = { path = "../crates/starroom-color" }
 starroom-advisor = { path = "../crates/starroom-advisor" }
 starroom-render = { path = "../crates/starroom-render" }
+starroom-imageio = { path = "../crates/starroom-imageio" }
+starroom-pipeline = { path = "../crates/starroom-pipeline" }
+starroom-detail = { path = "../crates/starroom-detail" }
+starroom-color-management = { path = "../crates/starroom-color-management" }
