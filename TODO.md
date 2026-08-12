@@ -101,7 +101,7 @@ These milestone numbers supersede the older capability-group numbering below for
 - [x] Separate typed Camera/As-Shot RAW WB from rendered-file Relative Temperature/Tint in the Native shared graph; invalid source/mode combinations are typed errors, never silent fallbacks.
 - [x] Add an active deterministic gray-world Auto WB provider plus normalized Native Neutral Picker sampling; both operate before the shared creative graph.
 - [x] Persist WB mode, relative Temperature/Tint and optional picker ROI in project state with backward-compatible defaults; UI transport keeps the state small and pixel-free.
-- [x] Add neutral-gray, auto/extreme and semantic-error numerical regressions. M5 CI acceptance is recorded after the dedicated acceptance commit.
+- [x] Add neutral-gray, auto/extreme and semantic-error numerical regressions. M5 CI acceptance passed: push run `31591507530` and Draft PR run `31591511674` are green; M6 may now begin.
 
 ### M6 Professional tone curves
 
