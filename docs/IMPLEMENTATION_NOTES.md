@@ -5,6 +5,7 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
 
 - The Native shared graph now owns `ToneCurveSet` with Master, Red, Green and Blue curves. Every curve uses the existing tested monotone cubic Hermite mapper; endpoint tangents extrapolate scene-linear values outside 0..1 instead of clipping HDR data. The legacy single curve remains a backward-compatible Master fallback.
 - Preview and Export invoke exactly the same curve stage. Added native channel-curve parity regression; UI transport serializes the curve set without transmitting pixels. Remaining UI channel controls and project-side persistence are tracked until acceptance.
+- The M6 editor exposes Master/Red/Green/Blue tabs, per-channel direct point creation/drag/right-click deletion/numeric editing, endpoint X anchoring, Identity/S-curve/Black-fade presets and histogram background from the actual rendered preview. All operations use the existing non-destructive history snapshot and IPC submits a compact typed curve set to the Native graph.
 
 ## 2026-08-12 M5 white balance / calibration candidate
 

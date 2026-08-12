@@ -107,7 +107,8 @@ These milestone numbers supersede the older capability-group numbering below for
 
 - [x] Native Master and R/G/B monotone cubic-Hermite curves with endpoint/HDR-safe extrapolation and backward-compatible legacy Master curve migration.
 - [x] Channel-aware UI editing (tabs, add/drag/delete, numeric endpoint editing) and undo snapshots now serialize and send the full curve set to Native Preview/Export.
-- [ ] Add named presets/histogram curve background and complete acceptance CI.
+- [x] Add named Identity/S-curve/Black-fade presets and live histogram curve background; preset application is undoable and uses the same Native curve contract.
+- [ ] Complete M6 acceptance CI.
 
 ## M2 Tone / Color Foundation — use mature open-source behavior
 

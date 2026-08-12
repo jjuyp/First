@@ -188,8 +188,9 @@ function Histogram({ values }: { values: number[] }) {
   </div>
 }
 
-function ToneCurveEditor({ points, selectedId, onSelect, onBeginEdit, onChange }: {
+function ToneCurveEditor({ points, selectedId, histogram, onSelect, onBeginEdit, onChange }: {
   points: ToneCurvePoint[]; selectedId: string | null
+  histogram: number[]
   onSelect: (id: string) => void; onBeginEdit: () => void; onChange: (points: ToneCurvePoint[]) => void
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
@@ -229,6 +230,7 @@ function ToneCurveEditor({ points, selectedId, onSelect, onBeginEdit, onChange }
   }
 
   return <>
+    <div className="curve-presets"><button onClick={() => { onBeginEdit(); onChange(copyCurve(defaultCurvePoints)) }}>Identity</button><button onClick={() => { onBeginEdit(); onChange([{ id: 'black', x: 0, y: 0 }, { id: 'shadow', x: .25, y: .18 }, { id: 'midtone', x: .5, y: .5 }, { id: 'highlight', x: .75, y: .84 }, { id: 'white', x: 1, y: 1 }]) }}>S-curve</button><button onClick={() => { onBeginEdit(); onChange([{ id: 'black', x: 0, y: .10 }, { id: 'midtone', x: .5, y: .55 }, { id: 'white', x: 1, y: 1 }]) }}>Black fade</button></div>
     <svg ref={svgRef} className="curve-preview curve-editor" viewBox="0 0 300 120" preserveAspectRatio="none"
       aria-label="Editable tone curve. Left click to add a point; drag points to adjust; right click a point to delete."
       onPointerDown={addPoint}
@@ -243,6 +245,7 @@ function ToneCurveEditor({ points, selectedId, onSelect, onBeginEdit, onChange }
         <line x1="75" y1="0" x2="75" y2="120" /><line x1="150" y1="0" x2="150" y2="120" /><line x1="225" y1="0" x2="225" y2="120" />
         <line x1="0" y1="30" x2="300" y2="30" /><line x1="0" y1="60" x2="300" y2="60" /><line x1="0" y1="90" x2="300" y2="90" />
       </g>
+      <g className="curve-histogram">{histogram.map((height, index) => <rect key={index} x={index * 300 / histogram.length} y={(1 - height) * 120} width={300 / histogram.length} height={height * 120} />)}</g>
       <line className="curve-baseline" x1="0" y1="120" x2="300" y2="0" />
       <path className="curve-hit-line" d={path} />
       <path className="curve-line" d={path} />
@@ -418,7 +421,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.whiteBalanceMode, photo.whiteBalanceSample,
+  }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
     photo.mask, photo.renderBackend, photo.sourcePath, photo.src])
 
   useEffect(() => {
@@ -443,9 +446,9 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
   </>
 }
 
-function Inspector({ tool, values, curvePoints, curveChannel, onCurveChannel, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, onAdjust, onBeginAdjustment, onReset,
+function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurveChannel, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, onAdjust, onBeginAdjustment, onReset,
   onCurveSelect, onCurveBegin, onCurveChange, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance }: {
-  tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; curveChannel: keyof NativeToneCurves; onCurveChannel: (channel: keyof NativeToneCurves) => void; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
+  tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; curveChannel: keyof NativeToneCurves; histogram: number[]; onCurveChannel: (channel: keyof NativeToneCurves) => void; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
   onBeginAdjustment: () => void
   onReset: (key: AdjustmentKey) => void
@@ -472,7 +475,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, onCurveChannel, se
     </>}
     {tool === 'masks' && <div className="tool-note">Click the photo to place the mask. Drag inside to move; drag side handles to resize; drag the top handle to rotate.</div>}
     {tool === 'curve' && <><CurveChannelTabs value={curveChannel} onChange={onCurveChannel} /><ToneCurveEditor points={curvePoints} selectedId={selectedCurvePoint} onSelect={onCurveSelect}
-      onBeginEdit={onCurveBegin} onChange={onCurveChange} /></>}
+      histogram={histogram} onBeginEdit={onCurveBegin} onChange={onCurveChange} /></>}
     {sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]} onBeginEdit={onBeginAdjustment}
       onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
     {tool === 'masks' && <div className="mask-values">
@@ -862,7 +865,7 @@ export function App() {
           <nav className="tool-rail" aria-label="Editing tools">{toolItems.map(({ id, label, icon: Icon }) => <button key={id}
             className={tool === id ? 'active' : ''} aria-label={label}
             title={label} onClick={() => setTool(id)}><Icon size={18} /><span>{label}</span></button>)}</nav>
-          <Inspector tool={tool} values={selected.adjustments} curvePoints={selected.curveChannels[curveChannel]} curveChannel={curveChannel} onCurveChannel={(channel) => { setCurveChannel(channel); setSelectedCurvePoint(null) }} selectedCurvePoint={selectedCurvePoint} renderBackend={selected.renderBackend}
+          <Inspector tool={tool} values={selected.adjustments} curvePoints={selected.curveChannels[curveChannel]} curveChannel={curveChannel} histogram={histogram} onCurveChannel={(channel) => { setCurveChannel(channel); setSelectedCurvePoint(null) }} selectedCurvePoint={selectedCurvePoint} renderBackend={selected.renderBackend}
             whiteBalanceMode={selected.whiteBalanceMode}
             mask={selected.mask} onAdjust={adjust} onBeginAdjustment={beginInteractiveEdit} onReset={resetAdjustment} onCurveSelect={setSelectedCurvePoint}
             onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask}
