@@ -695,29 +695,46 @@ mod tests {
 
     #[test]
     fn s_curve_changes_gradient_ends_while_preserving_midpoint() {
-        let decoded = fixture(&[
-            [0.2, 0.2, 0.2, 1.0],
-            [0.5, 0.5, 0.5, 1.0],
-            [0.8, 0.8, 0.8, 1.0],
-        ]);
-        let settings = RenderSettings {
-            curves: ToneCurveSet {
-                master: vec![
-                    CurvePoint { x: 0.0, y: 0.0 },
-                    CurvePoint { x: 0.25, y: 0.16 },
-                    CurvePoint { x: 0.5, y: 0.5 },
-                    CurvePoint { x: 0.75, y: 0.86 },
-                    CurvePoint { x: 1.0, y: 1.0 },
-                ],
-                ..Default::default()
-            },
+        let curves = ToneCurveSet {
+            master: vec![
+                CurvePoint { x: 0.0, y: 0.0 },
+                CurvePoint { x: 0.25, y: 0.16 },
+                CurvePoint { x: 0.5, y: 0.5 },
+                CurvePoint { x: 0.75, y: 0.86 },
+                CurvePoint { x: 1.0, y: 1.0 },
+            ],
             ..Default::default()
         };
-        let baseline = render_to_srgb8(&decoded, &RenderSettings::default()).expect("baseline");
-        let output = render_to_srgb8(&decoded, &settings).expect("s curve");
-        assert!(output.data[0] < baseline.data[0]);
-        assert!((i16::from(output.data[3]) - i16::from(baseline.data[3])).abs() <= 1);
-        assert!(output.data[6] > baseline.data[6]);
+        let dark = apply_curve(
+            LinearRgb {
+                r: 0.2,
+                g: 0.2,
+                b: 0.2,
+            },
+            &[],
+            &curves,
+        );
+        let middle = apply_curve(
+            LinearRgb {
+                r: 0.5,
+                g: 0.5,
+                b: 0.5,
+            },
+            &[],
+            &curves,
+        );
+        let bright = apply_curve(
+            LinearRgb {
+                r: 0.8,
+                g: 0.8,
+                b: 0.8,
+            },
+            &[],
+            &curves,
+        );
+        assert!(dark.r < 0.2);
+        assert!((middle.r - 0.5).abs() <= 1.0e-6);
+        assert!(bright.r > 0.8);
     }
 
     #[test]
