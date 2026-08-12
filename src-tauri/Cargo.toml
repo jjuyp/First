@@ -22,6 +22,7 @@ starroom-color = { path = "../crates/starroom-color" }
 starroom-advisor = { path = "../crates/starroom-advisor" }
 starroom-render = { path = "../crates/starroom-render" }
 starroom-imageio = { path = "../crates/starroom-imageio" }
+starroom-optics = { path = "../crates/starroom-optics" }
 starroom-pipeline = { path = "../crates/starroom-pipeline" }
 starroom-detail = { path = "../crates/starroom-detail" }
 starroom-color-management = { path = "../crates/starroom-color-management" }

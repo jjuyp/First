@@ -35,6 +35,8 @@ pub struct Project {
     #[serde(default)]
     pub detail: PersistedDetail,
     #[serde(default)]
+    pub optics: PersistedOptics,
+    #[serde(default)]
     pub masks: Vec<MaskNode>,
     #[serde(default)]
     pub layers: Vec<AdjustmentLayer>,
@@ -189,6 +191,50 @@ impl Default for PersistedDetail {
             texture: 0.0,
             clarity: 0.0,
             dehaze: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedOptics {
+    pub enabled: bool,
+    pub distortion: bool,
+    pub tca: bool,
+    pub vignette: bool,
+    pub auto_scale: bool,
+    pub match_mode: String,
+    pub profile_id: Option<String>,
+    pub profile_status: Option<String>,
+    pub database_version: String,
+    pub manual_identity: Option<PersistedLensIdentity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedLensIdentity {
+    pub camera_make: String,
+    pub camera_model: String,
+    pub lens_make: String,
+    pub lens_model: String,
+    pub focal_length_mm: f32,
+    pub aperture: f32,
+    pub focus_distance_m: Option<f32>,
+}
+
+impl Default for PersistedOptics {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            distortion: true,
+            tca: true,
+            vignette: true,
+            auto_scale: true,
+            match_mode: "auto".into(),
+            profile_id: None,
+            profile_status: None,
+            database_version: "0.3.4".into(),
+            manual_identity: None,
         }
     }
 }
@@ -359,6 +405,7 @@ mod tests {
             },
             color_grading: PersistedColorGrading::default(),
             detail: PersistedDetail::default(),
+            optics: PersistedOptics::default(),
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -384,6 +431,7 @@ mod tests {
         assert_eq!(restored.color_mixer.bands.len(), 8);
         assert_eq!(restored.color_grading.amount, 1.0);
         assert_eq!(restored.detail.sharpen_radius, 1.0);
+        assert_eq!(restored.optics.database_version, "0.3.4");
         assert_eq!(
             restored.camera_profile.as_ref().unwrap().hash,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

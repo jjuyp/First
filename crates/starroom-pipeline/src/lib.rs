@@ -17,7 +17,11 @@ use starroom_detail::{
     local_detail, sharpen,
 };
 use starroom_grading::{GradingParameters, apply_grading};
-use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage};
+use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage, lens_metadata};
+use starroom_optics::{
+    LensIdentity, LensMatchMode, LensProfileResolution, LensProfileStatus, LensfunProvider,
+    OpticsSettings, apply_lens_correction,
+};
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use thiserror::Error;
 
@@ -119,6 +123,8 @@ pub struct RenderSettings {
     #[serde(default)]
     pub local_detail: LocalDetailParameters,
     pub sharpen: SharpenParameters,
+    #[serde(default)]
+    pub optics: OpticsSettings,
 }
 
 impl Default for RenderSettings {
@@ -138,6 +144,7 @@ impl Default for RenderSettings {
                 amount: 0.0,
                 ..Default::default()
             },
+            optics: OpticsSettings::default(),
         }
     }
 }
@@ -148,6 +155,12 @@ pub enum PipelineError {
     InvalidDecodedBuffer,
     #[error("detail image buffer is invalid")]
     DetailBuffer,
+    #[error("Lensfun profile is unavailable: {0:?}")]
+    OpticsProfile(LensProfileStatus),
+    #[error("Lensfun correction failed")]
+    OpticsCorrection,
+    #[error("Lensfun database failed: {0}")]
+    OpticsDatabase(String),
     #[error("white-balance mode {mode:?} is not valid for {input_kind} input")]
     WhiteBalanceSemantic {
         mode: WhiteBalanceMode,
@@ -405,7 +418,7 @@ fn to_working_image(
         SourceKind::Encoded,
         settings.white_balance,
     )?;
-    let data = apply_creative_graph(pixels, settings)?;
+    let data = pixels.into_iter().flatten().collect();
 
     let image = LinearImage::new(decoded.width as usize, decoded.height as usize, data)
         .map_err(|_| PipelineError::DetailBuffer)?;
@@ -432,7 +445,7 @@ fn to_working_raw(
         SourceKind::Raw,
         settings.white_balance,
     )?;
-    let data = apply_creative_graph(pixels, settings)?;
+    let data = pixels.into_iter().flatten().collect();
     LinearImage::new(decoded.width as usize, decoded.height as usize, data)
         .map_err(|_| PipelineError::DetailBuffer)
 }
@@ -478,9 +491,41 @@ fn render_working_graph(
     input_source: InputProfileSource,
     camera_profile: Option<&CameraProfileDescriptor>,
     settings: &RenderSettings,
+    optics_resolution: Option<&LensProfileResolution>,
     output_icc: Option<&[u8]>,
 ) -> Result<RenderedRgb8, PipelineError> {
-    let denoised = denoise(&working, settings.denoise);
+    let optically_corrected = if settings.optics.parameters.enabled {
+        let resolution = optics_resolution.ok_or(PipelineError::OpticsProfile(
+            LensProfileStatus::MissingMetadata,
+        ))?;
+        let correction = resolution
+            .correction
+            .ok_or_else(|| PipelineError::OpticsProfile(resolution.status.clone()))?;
+        let corrected = apply_lens_correction(
+            working.width,
+            working.height,
+            &working.data,
+            correction,
+            settings.optics.parameters,
+        )
+        .map_err(|_| PipelineError::OpticsCorrection)?;
+        LinearImage::new(working.width, working.height, corrected.data)
+            .map_err(|_| PipelineError::DetailBuffer)?
+    } else {
+        working
+    };
+    let pixels: Vec<[f32; 3]> = optically_corrected
+        .data
+        .chunks_exact(3)
+        .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+        .collect();
+    let creative = LinearImage::new(
+        optically_corrected.width,
+        optically_corrected.height,
+        apply_creative_graph(pixels, settings)?,
+    )
+    .map_err(|_| PipelineError::DetailBuffer)?;
+    let denoised = denoise(&creative, settings.denoise);
     let locally_adjusted = local_detail(&denoised, settings.local_detail);
     let detailed = sharpen(&locally_adjusted, settings.sharpen);
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
@@ -524,6 +569,11 @@ fn render_shared_graph(
     output_icc: Option<&[u8]>,
 ) -> Result<RenderedRgb8, PipelineError> {
     let (working, input_source) = to_working_image(decoded, settings)?;
+    let resolution = if settings.optics.parameters.enabled {
+        Some(resolve_rendered_optics(decoded, &settings.optics)?)
+    } else {
+        None
+    };
     render_working_graph(
         working,
         decoded.width,
@@ -531,6 +581,7 @@ fn render_shared_graph(
         input_source,
         None,
         settings,
+        resolution.as_ref(),
         output_icc,
     )
 }
@@ -540,8 +591,25 @@ fn render_shared_source_graph(
     settings: &RenderSettings,
     output_icc: Option<&[u8]>,
 ) -> Result<RenderedRgb8, PipelineError> {
+    let optics_resolution = if settings.optics.parameters.enabled {
+        Some(resolve_source_lens_profile(decoded, &settings.optics)?)
+    } else {
+        None
+    };
     match decoded {
-        DecodedSourceImage::Rendered(image) => render_shared_graph(image, settings, output_icc),
+        DecodedSourceImage::Rendered(image) => {
+            let (working, input_source) = to_working_image(image, settings)?;
+            render_working_graph(
+                working,
+                image.width,
+                image.height,
+                input_source,
+                None,
+                settings,
+                optics_resolution.as_ref(),
+                output_icc,
+            )
+        }
         DecodedSourceImage::Raw(image) => {
             let input_source = match image.metadata.camera_profile.status {
                 CameraProfileStatus::Resolved => InputProfileSource::RawCameraMatrix,
@@ -554,10 +622,67 @@ fn render_shared_source_graph(
                 input_source,
                 Some(&image.metadata.camera_profile),
                 settings,
+                optics_resolution.as_ref(),
                 output_icc,
             )
         }
     }
+}
+
+fn rendered_lens_identity(image: &DecodedRenderedImage) -> LensIdentity {
+    let metadata = lens_metadata(image);
+    LensIdentity {
+        camera_make: metadata.camera_make,
+        camera_model: metadata.camera_model,
+        lens_make: metadata.lens_make,
+        lens_model: metadata.lens_model,
+        focal_length_mm: metadata.focal_length_mm.unwrap_or(0.0),
+        aperture: metadata.aperture.unwrap_or(0.0),
+        focus_distance_m: metadata.focus_distance_m,
+    }
+}
+
+fn raw_lens_identity(image: &DecodedRawImage) -> LensIdentity {
+    LensIdentity {
+        camera_make: image.metadata.make.clone(),
+        camera_model: image.metadata.model.clone(),
+        lens_make: image.metadata.lens_make.clone(),
+        lens_model: image.metadata.lens_model.clone(),
+        focal_length_mm: image.metadata.focal_length_mm,
+        aperture: image.metadata.aperture,
+        focus_distance_m: image.metadata.focus_distance_m,
+    }
+}
+
+fn resolve_rendered_optics(
+    image: &DecodedRenderedImage,
+    settings: &OpticsSettings,
+) -> Result<LensProfileResolution, PipelineError> {
+    let identity = settings
+        .manual_identity
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| rendered_lens_identity(image));
+    LensfunProvider
+        .resolve_profile(&identity, settings.match_mode)
+        .map_err(|error| PipelineError::OpticsDatabase(format!("{error:?}")))
+}
+
+pub fn resolve_source_lens_profile(
+    decoded: &DecodedSourceImage,
+    settings: &OpticsSettings,
+) -> Result<LensProfileResolution, PipelineError> {
+    let identity = settings
+        .manual_identity
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| match decoded {
+            DecodedSourceImage::Rendered(image) => rendered_lens_identity(image),
+            DecodedSourceImage::Raw(image) => raw_lens_identity(image),
+        });
+    LensfunProvider
+        .resolve_profile(&identity, settings.match_mode)
+        .map_err(|error| PipelineError::OpticsDatabase(format!("{error:?}")))
 }
 
 /// Preview and export deliberately enter the same graph; only the requested output profile differs.
@@ -770,6 +895,68 @@ mod tests {
         let export = render_export_to_srgb8(&decoded, &settings).expect("export");
         assert_eq!(preview, export);
         assert_eq!(preview.data.len(), 45);
+    }
+
+    #[test]
+    fn m10_lensfun_manual_profile_preview_export_parity() {
+        let decoded = fixture(&[
+            [0.1, 0.1, 0.1, 1.0],
+            [0.3, 0.25, 0.2, 1.0],
+            [0.7, 0.6, 0.5, 1.0],
+            [0.2, 0.3, 0.4, 1.0],
+            [0.5, 0.5, 0.5, 1.0],
+            [0.9, 0.7, 0.4, 1.0],
+        ]);
+        let settings = RenderSettings {
+            optics: OpticsSettings {
+                parameters: starroom_optics::OpticsParameters {
+                    enabled: true,
+                    ..Default::default()
+                },
+                match_mode: LensMatchMode::Manual,
+                manual_identity: Some(LensIdentity {
+                    camera_make: "Nikon".into(),
+                    camera_model: "Nikon D750".into(),
+                    lens_make: "Nikon".into(),
+                    lens_model: "Nikon AF-S Nikkor 16-35mm f/4G ED VR".into(),
+                    focal_length_mm: 24.0,
+                    aperture: 5.6,
+                    focus_distance_m: Some(10.0),
+                }),
+            },
+            ..Default::default()
+        };
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("preview");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("export");
+        assert_eq!(preview, export);
+    }
+
+    #[test]
+    fn m10_unknown_lens_never_silently_uses_generic_profile() {
+        let decoded = fixture(&[[0.2, 0.2, 0.2, 1.0]]);
+        let settings = RenderSettings {
+            optics: OpticsSettings {
+                parameters: starroom_optics::OpticsParameters {
+                    enabled: true,
+                    ..Default::default()
+                },
+                match_mode: LensMatchMode::Manual,
+                manual_identity: Some(LensIdentity {
+                    camera_make: "Nikon".into(),
+                    camera_model: "Nikon D750".into(),
+                    lens_make: "Missing".into(),
+                    lens_model: "Definitely Missing Lens".into(),
+                    focal_length_mm: 50.0,
+                    aperture: 2.0,
+                    focus_distance_m: None,
+                }),
+            },
+            ..Default::default()
+        };
+        assert!(matches!(
+            render_preview_to_srgb8(&decoded, &settings),
+            Err(PipelineError::OpticsProfile(LensProfileStatus::UnknownLens))
+        ));
     }
 
     #[test]

@@ -16,6 +16,7 @@ import {
 import {
   chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
   nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
+  defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -34,6 +35,7 @@ interface PhotoItem {
   curveChannels: NativeToneCurves
   whiteBalanceMode: NativeWhiteBalanceMode
   whiteBalanceSample: NativeWhiteBalanceSample | null
+  opticsState: NativeOpticsState
   mask: RadialMask
   history: EditSnapshot[]
   future: EditSnapshot[]
@@ -45,6 +47,7 @@ interface EditSnapshot {
   curveChannels: NativeToneCurves
   whiteBalanceMode: NativeWhiteBalanceMode
   whiteBalanceSample: NativeWhiteBalanceSample | null
+  opticsState: NativeOpticsState
   mask: RadialMask
 }
 
@@ -63,19 +66,23 @@ const copyCurveChannels = (curves: NativeToneCurves): NativeToneCurves => ({ mas
 const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
   adjustments: { ...photo.adjustments }, curvePoints: copyCurve(photo.curvePoints), curveChannels: copyCurveChannels(photo.curveChannels), whiteBalanceMode: photo.whiteBalanceMode,
   whiteBalanceSample: photo.whiteBalanceSample ? { ...photo.whiteBalanceSample } : null, mask: { ...photo.mask },
+  opticsState: { ...photo.opticsState, manualIdentity: photo.opticsState.manualIdentity ? { ...photo.opticsState.manualIdentity } : null },
 })
 const applySnapshot = (photo: PhotoItem, snapshot: EditSnapshot) => ({
   ...photo, adjustments: { ...snapshot.adjustments }, curvePoints: copyCurve(snapshot.curvePoints), curveChannels: copyCurveChannels(snapshot.curveChannels),
   whiteBalanceMode: snapshot.whiteBalanceMode, whiteBalanceSample: snapshot.whiteBalanceSample ? { ...snapshot.whiteBalanceSample } : null, mask: { ...snapshot.mask },
+  opticsState: { ...snapshot.opticsState, manualIdentity: snapshot.opticsState.manualIdentity ? { ...snapshot.opticsState.manualIdentity } : null },
 })
 const hasCurveEdits = (points: ToneCurvePoint[]) => points.length !== defaultCurvePoints.length
   || points.some((point, index) => Math.abs(point.x - defaultCurvePoints[index].x) > .0001 || Math.abs(point.y - defaultCurvePoints[index].y) > .0001)
 const hasMaskGeometryEdits = (mask: RadialMask) => (Object.keys(defaultMask) as Array<keyof RadialMask>)
   .some((key) => Math.abs(mask[key] - defaultMask[key]) > .0001)
 const hasPhotoEdits = (photo: PhotoItem) => hasAdjustments(photo.adjustments) || hasCurveEdits(photo.curvePoints) || hasMaskGeometryEdits(photo.mask)
+  || photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity !== null
 const countPhotoEdits = (photo: PhotoItem) => (Object.keys(defaultAdjustments) as AdjustmentKey[])
   .filter((key) => photo.adjustments[key] !== defaultAdjustments[key]).length
   + (hasCurveEdits(photo.curvePoints) ? 1 : 0) + (hasMaskGeometryEdits(photo.mask) ? 1 : 0)
+  + (photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity ? 1 : 0)
 
 const demoPhoto: PhotoItem = {
   id: 'starroom-demo',
@@ -89,6 +96,7 @@ const demoPhoto: PhotoItem = {
   curveChannels: defaultCurveChannels(),
   whiteBalanceMode: 'sourceDefault',
   whiteBalanceSample: null,
+  opticsState: { ...defaultNativeOpticsState },
   mask: { ...defaultMask },
   history: [],
   future: [],
@@ -137,10 +145,6 @@ const sliderGroups: Partial<Record<Tool, Array<{ key: AdjustmentKey; label: stri
   masks: [
     { key: 'maskExposure', label: 'Center exposure', min: -3, max: 3, step: .01, suffix: ' EV' },
     { key: 'maskFeather', label: 'Feather', min: 0, max: 100, step: 1 },
-  ],
-  optics: [
-    { key: 'vignette', label: 'Vignette', min: -100, max: 100, step: 1 },
-    { key: 'lensBrightness', label: 'Edge brightness', min: -100, max: 100, step: 1 },
   ],
   geometry: [
     { key: 'rotation', label: 'Rotation', min: -180, max: 180, step: .1, suffix: '°' },
@@ -374,7 +378,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
           if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
-            before ? defaultCurveChannels() : photo.curveChannels)
+            before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState)
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -433,7 +437,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
       window.clearTimeout(timeout)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
-    photo.mask, photo.renderBackend, photo.sourcePath, photo.src])
+    photo.mask, photo.opticsState, photo.renderBackend, photo.sourcePath, photo.src])
 
   useEffect(() => {
     const measure = () => canvasRef.current && setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -463,7 +467,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
 
 function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurveChannel, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, onAdjust, onBeginAdjustment, onReset,
   onCurveSelect, onCurveBegin, onCurveChange, onCurvePresetSave, onCurvePresetLoad, canLoadCurvePreset, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance,
-  mixerBand, onMixerBand, mixerPicking, onMixerPicking }: {
+  mixerBand, onMixerBand, mixerPicking, onMixerPicking, opticsState, opticsStatus, onOpticsState, onResolveOptics }: {
   tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; curveChannel: keyof NativeToneCurves; histogram: number[]; onCurveChannel: (channel: keyof NativeToneCurves) => void; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
   onBeginAdjustment: () => void
@@ -474,6 +478,8 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   whiteBalanceMode: NativeWhiteBalanceMode; onWhiteBalanceMode: (mode: NativeWhiteBalanceMode) => void
   onCopyWhiteBalance: () => void; onPasteWhiteBalance: () => void
   mixerBand: string; onMixerBand: (band: string) => void; mixerPicking: boolean; onMixerPicking: () => void
+  opticsState: NativeOpticsState; opticsStatus: NativeLensProfileResolution | null
+  onOpticsState: (state: NativeOpticsState) => void; onResolveOptics: () => void
 }) {
   const mixerBands = ['Red', 'Orange', 'Yellow', 'Green', 'Cyan', 'Blue', 'Purple', 'Magenta'] as const
   const gradingZones = ['Global', 'Shadows', 'Midtones', 'Highlights'] as const
@@ -482,7 +488,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   const normalizeAngle = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
   return <section className="inspector-content" aria-label={`${tool} inspector`}>
     <div className="inspector-head"><div><span className="eyebrow">Live CPU preview</span><h2>{tool}</h2></div><ChevronDown size={16} /></div>
-    {renderBackend === 'native' && ['masks', 'optics', 'geometry'].includes(tool)
+    {renderBackend === 'native' && ['masks', 'geometry'].includes(tool)
       && <div className="tool-note">This tool is outside the M1C Native slice. Applying it raises an explicit error; Starroom will not silently use Browser Canvas.</div>}
     {tool === 'color' && <>
       <div className="tool-note">Encoded-image Temperature/Tint are relative corrections, not physical Kelvin. RAW Camera/As-Shot uses LibRaw metadata.</div>
@@ -529,6 +535,27 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
     {tool === 'masks' && <div className="tool-note">Click the photo to place the mask. Drag inside to move; drag side handles to resize; drag the top handle to rotate.</div>}
     {tool === 'curve' && <><CurveChannelTabs value={curveChannel} onChange={onCurveChannel} /><ToneCurveEditor points={curvePoints} selectedId={selectedCurvePoint} onSelect={onCurveSelect}
       histogram={histogram} onBeginEdit={onCurveBegin} onChange={onCurveChange} /><div className="curve-presets"><button onClick={onCurvePresetSave}>Save custom</button><button disabled={!canLoadCurvePreset} onClick={onCurvePresetLoad}>Load custom</button></div></>}
+    {tool === 'optics' && <div className="optics-controls">
+      <div className="tool-note">Lensfun v0.3.4 profile correction. Missing, ambiguous or mismatched metadata is reported explicitly.</div>
+      <label><input type="checkbox" checked={values.lensCorrection !== 0} onChange={(event) => onAdjust('lensCorrection', event.target.checked ? 1 : 0)} /> Enable Lensfun correction</label>
+      <label><input type="checkbox" checked={values.lensDistortion !== 0} onChange={(event) => onAdjust('lensDistortion', event.target.checked ? 1 : 0)} /> Distortion</label>
+      <label><input type="checkbox" checked={values.lensTca !== 0} onChange={(event) => onAdjust('lensTca', event.target.checked ? 1 : 0)} /> TCA</label>
+      <label><input type="checkbox" checked={values.lensVignette !== 0} onChange={(event) => onAdjust('lensVignette', event.target.checked ? 1 : 0)} /> Vignette</label>
+      <label><input type="checkbox" checked={values.lensAutoScale !== 0} onChange={(event) => onAdjust('lensAutoScale', event.target.checked ? 1 : 0)} /> Auto scale</label>
+      <label>Match mode<select value={opticsState.matchMode} onChange={(event) => onOpticsState({ ...opticsState, matchMode: event.target.value as 'auto' | 'manual',
+        manualIdentity: event.target.value === 'manual' ? opticsState.manualIdentity ?? { cameraMake: '', cameraModel: '', lensMake: '', lensModel: '', focalLengthMm: 0, aperture: 0, focusDistanceM: null } : null })}>
+        <option value="auto">Auto metadata</option><option value="manual">Manual profile</option></select></label>
+      {opticsState.matchMode === 'manual' && <div className="optics-manual">{([
+        ['Camera make', 'cameraMake'], ['Camera model', 'cameraModel'], ['Lens make', 'lensMake'], ['Lens model', 'lensModel'],
+      ] as const).map(([label, key]) => <label key={key}>{label}<input value={opticsState.manualIdentity?.[key] ?? ''}
+        onChange={(event) => onOpticsState({ ...opticsState, manualIdentity: { ...(opticsState.manualIdentity as NativeLensIdentity), [key]: event.target.value } })} /></label>)}
+        {([['Focal mm', 'focalLengthMm'], ['Aperture', 'aperture'], ['Focus m', 'focusDistanceM']] as const).map(([label, key]) => <label key={key}>{label}<input type="number" min="0" step="0.1"
+          value={opticsState.manualIdentity?.[key] ?? ''} onChange={(event) => onOpticsState({ ...opticsState,
+            manualIdentity: { ...(opticsState.manualIdentity as NativeLensIdentity), [key]: event.target.value === '' ? (key === 'focusDistanceM' ? null : 0) : Number(event.target.value) } })} /></label>)}</div>}
+      <button onClick={onResolveOptics}>Resolve Lensfun profile</button>
+      <div className={`optics-status status-${opticsStatus?.status ?? 'idle'}`}><strong>{opticsStatus?.status ?? 'Not resolved'}</strong>
+        <span>{opticsStatus?.profileId ?? 'No profile selected'}</span><small>{opticsStatus?.cameraMount ?? ''} · DB {opticsStatus?.databaseVersion ?? '0.3.4'}</small></div>
+    </div>}
     {sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]} onBeginEdit={onBeginAdjustment}
       onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
     {tool === 'masks' && <div className="mask-values">
@@ -600,6 +627,7 @@ export function App() {
   const [savedCurvePreset, setSavedCurvePreset] = usePersistedValue<NativeToneCurves | null>('starroom-custom-curve-preset', null)
   const [mixerBand, setMixerBand] = useState('Red')
   const [mixerPicking, setMixerPicking] = useState(false)
+  const [opticsStatus, setOpticsStatus] = useState<NativeLensProfileResolution | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -615,6 +643,7 @@ export function App() {
     setZoom('fit')
     setZoomScale(1)
     setPan({ x: 0, y: 0 })
+    setOpticsStatus(null)
   }
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
@@ -649,7 +678,8 @@ export function App() {
       const src = URL.createObjectURL(file)
       objectUrls.current.add(src)
       return { id: crypto.randomUUID(), name: file.name, src, renderBackend: 'browserFallback', imported: true, rating: 0,
-        adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null, mask: { ...defaultMask }, history: [], future: [] }
+        adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null,
+        opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask }, history: [], future: [] }
     })
     setPhotos((current) => [...imported, ...current])
     selectPhoto(imported[0].id)
@@ -680,6 +710,7 @@ export function App() {
         curveChannels: defaultCurveChannels(),
         whiteBalanceMode: 'sourceDefault',
         whiteBalanceSample: null,
+        opticsState: { ...defaultNativeOpticsState },
         mask: { ...defaultMask },
         history: [],
         future: [],
@@ -788,7 +819,7 @@ export function App() {
     }
     try {
       const band = await sampleNativeColor(selected.sourcePath, x, y, selected.adjustments, selected.curvePoints,
-        selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels)
+        selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState)
       if (!band) { setNotice('The sampled area is neutral; no color band was selected.'); return }
       setMixerBand(`${band[0].toUpperCase()}${band.slice(1)}`)
       setMixerPicking(false)
@@ -801,6 +832,26 @@ export function App() {
   function updateMask(mask: RadialMask) {
     updateSelected((photo) => ({ ...photo, mask: { ...mask }, future: [] }))
     setBefore(false)
+  }
+
+  function updateOpticsState(opticsState: NativeOpticsState) {
+    updateSelected((photo) => ({ ...photo, opticsState, history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    setOpticsStatus(null)
+    setBefore(false)
+  }
+
+  async function refreshOpticsStatus() {
+    if (!selected.sourcePath || selected.renderBackend !== 'native') {
+      setNotice('Lensfun profile resolution requires a Native photo; Browser fallback was not used.')
+      return
+    }
+    try {
+      const status = await resolveNativeOpticsStatus(selected.sourcePath, selected.adjustments, selected.curvePoints,
+        selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState)
+      setOpticsStatus(status)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Lensfun resolution failed')
+    }
   }
 
   function resetAdjustment(key: AdjustmentKey) {
@@ -829,7 +880,8 @@ export function App() {
 
   function resetAll() {
     if (!hasPhotoEdits(selected)) return
-    updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null, mask: { ...defaultMask },
+    updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null,
+      opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask },
       history: [...photo.history, takeSnapshot(photo)], future: [] }))
   }
 
@@ -844,7 +896,7 @@ export function App() {
           return
         }
         const result = await exportNativeJpeg(selected.sourcePath, outputPath, selected.adjustments, selected.curvePoints, selected.mask,
-          selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels)
+          selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState)
         setNotice(`Native JPEG exported · ${result.width} × ${result.height} · ${result.inputProfile}`)
         setRenderStatus(`Native CPU · ${result.workingSpace}`)
         return
@@ -958,7 +1010,8 @@ export function App() {
             onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask}
             onCurvePresetSave={saveCurvePreset} onCurvePresetLoad={loadCurvePreset} canLoadCurvePreset={savedCurvePreset !== null}
             onWhiteBalanceMode={(mode) => updateWhiteBalance(mode)} onCopyWhiteBalance={copyWhiteBalance} onPasteWhiteBalance={pasteWhiteBalance}
-            mixerBand={mixerBand} onMixerBand={setMixerBand} mixerPicking={mixerPicking} onMixerPicking={() => setMixerPicking(!mixerPicking)} />
+            mixerBand={mixerBand} onMixerBand={setMixerBand} mixerPicking={mixerPicking} onMixerPicking={() => setMixerPicking(!mixerPicking)}
+            opticsState={selected.opticsState} opticsStatus={opticsStatus} onOpticsState={updateOpticsState} onResolveOptics={refreshOpticsStatus} />
         </div>
         <button className="reset-all" disabled={!hasPhotoEdits(selected)} onClick={resetAll}><RotateCcw size={14} /> Reset all edits</button>
       </aside>

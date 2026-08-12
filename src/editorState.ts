@@ -39,6 +39,7 @@ export type AdjustmentKey =
   | 'sharpenRadius' | 'sharpenDetail' | 'sharpenMasking' | 'sharpenHaloProtection'
   | 'denoiseLuminance' | 'denoiseChroma' | 'denoiseRadius' | 'denoiseDetailProtection' | 'denoiseHighIso'
   | 'texture' | 'dehaze'
+  | 'lensCorrection' | 'lensDistortion' | 'lensTca' | 'lensVignette' | 'lensAutoScale'
 
 export type Adjustments = Record<AdjustmentKey, number>
 
@@ -82,6 +83,7 @@ export const defaultAdjustments: Adjustments = {
   sharpenRadius: 1, sharpenDetail: 50, sharpenMasking: 0, sharpenHaloProtection: 75,
   denoiseLuminance: 0, denoiseChroma: 0, denoiseRadius: 1.25, denoiseDetailProtection: 50, denoiseHighIso: 0,
   texture: 0, dehaze: 0,
+  lensCorrection: 0, lensDistortion: 1, lensTca: 1, lensVignette: 1, lensAutoScale: 1,
 }
 
 export interface EditorSnapshot {

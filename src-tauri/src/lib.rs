@@ -4,10 +4,11 @@ use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
 use starroom_grading::GradingParameters;
 use starroom_imageio::{decode_source, decode_source_preview, encode_jpeg_rgb8};
+use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
     RelativeColorParameters, RenderSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
     WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_to_srgb8,
-    sample_source_color_band,
+    resolve_source_lens_profile, sample_source_color_band,
 };
 use starroom_render::RenderGraph;
 use std::path::{Path, PathBuf};
@@ -90,6 +91,8 @@ struct NativeEditSettings {
     denoise_settings: DenoiseParameters,
     #[serde(default)]
     local_detail: LocalDetailParameters,
+    #[serde(default)]
+    optics: OpticsSettings,
 }
 
 impl NativeEditSettings {
@@ -192,6 +195,21 @@ impl NativeEditSettings {
         {
             return Err("native detail settings are outside supported ranges".into());
         }
+        if self
+            .optics
+            .manual_identity
+            .as_ref()
+            .is_some_and(|identity| {
+                ![identity.focal_length_mm, identity.aperture]
+                    .into_iter()
+                    .all(f32::is_finite)
+                    || identity
+                        .focus_distance_m
+                        .is_some_and(|distance| !distance.is_finite() || distance <= 0.0)
+            })
+        {
+            return Err("native manual lens metadata is invalid".into());
+        }
 
         let unit = |value: f32| (value / 100.0).clamp(-1.0, 1.0);
         let mut curve = self.curve;
@@ -228,6 +246,7 @@ impl NativeEditSettings {
             denoise: self.denoise_settings,
             local_detail: self.local_detail,
             sharpen: self.sharpen_settings,
+            optics: self.optics,
             ..Default::default()
         })
     }
@@ -257,6 +276,24 @@ struct NativeColorSampleRequest {
     x: f32,
     y: f32,
     settings: NativeEditSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeOpticsStatusRequest {
+    source_path: PathBuf,
+    settings: NativeEditSettings,
+}
+
+#[tauri::command]
+fn native_optics_status(
+    request: NativeOpticsStatusRequest,
+) -> Result<LensProfileResolution, String> {
+    let settings = request.settings.validated()?;
+    let decoded = decode_source_preview(&request.source_path, 512)
+        .map_err(|error| format!("native optics metadata decode failed: {error}"))?;
+    resolve_source_lens_profile(&decoded, &settings.optics)
+        .map_err(|error| format!("native Lensfun resolution failed: {error}"))
 }
 
 #[tauri::command]
@@ -397,7 +434,8 @@ pub fn run() {
             advise_image,
             native_preview,
             native_export_jpeg,
-            native_sample_color
+            native_sample_color,
+            native_optics_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running Starroom");
@@ -433,6 +471,7 @@ mod tests {
             },
             denoise_settings: DenoiseParameters::default(),
             local_detail: LocalDetailParameters::default(),
+            optics: OpticsSettings::default(),
         }
     }
 

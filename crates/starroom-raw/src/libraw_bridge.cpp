@@ -41,8 +41,13 @@ struct SrRawResult {
   uint16_t reserved;
   double unpack_milliseconds;
   double process_milliseconds;
+  float focal_length_mm;
+  float aperture;
+  float focus_distance_m;
   char make[64];
   char model[64];
+  char lens_make[128];
+  char lens_model[128];
   char decoder[128];
   uint16_t *rgb16;
   size_t rgb16_length;
@@ -152,6 +157,14 @@ int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
           .count();
   sr_copy_text(result->make, sizeof(result->make), data.idata.make);
   sr_copy_text(result->model, sizeof(result->model), data.idata.model);
+  result->focal_length_mm = data.other.focal_len;
+  result->aperture = data.other.aperture;
+  result->focus_distance_m = data.lens.makernotes.MinFocusDistance;
+  sr_copy_text(result->lens_make, sizeof(result->lens_make), data.lens.LensMake);
+  sr_copy_text(result->lens_model, sizeof(result->lens_model), data.lens.Lens);
+  if (result->lens_model[0] == '\0') {
+    sr_copy_text(result->lens_model, sizeof(result->lens_model), data.lens.makernotes.Lens);
+  }
   libraw_decoder_info_t decoder_info{};
   if (processor.get_decoder_info(&decoder_info) == LIBRAW_SUCCESS) {
     sr_copy_text(result->decoder, sizeof(result->decoder),

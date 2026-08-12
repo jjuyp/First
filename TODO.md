@@ -5,7 +5,7 @@
 - [x] M7: Native eight-band Red/Orange/Yellow/Green/Cyan/Blue/Purple/Magenta OKLCh Color Mixer; H/C/L controls, circular overlap, hue-lock state, Native targeted sample, undo/serialization, Preview/Export shared stage and finite/HDR regressions.
 - [x] M8: Four-way Color Grading with Global/Shadows/Midtones/Highlights H/C/L, balance, blending and amount; shared Native graph, undo/serialization, finite/HDR and Preview/Export parity regressions.
 - [x] M9: Native Detail Engine with edge-masked/halo-protected multi-scale sharpen, edge-aware luma/chroma/high-ISO denoise, distinct Texture/Clarity/Dehaze frequency bands, serialization/undo and Preview/Export parity regressions.
-- [ ] M10: actual Lensfun database/provider integration with explicit match status and shared Native optics stage.
+- [x] M10: pinned Lensfun v0.3.4 database/provider, LibRaw/EXIF metadata, auto/manual camera-mount-aware matching, explicit missing/unknown/mismatch/ambiguous states, distortion/TCA/vignette/auto-scale switches, persisted UI and shared Native Preview/Export optics stage.
 - [ ] M11: crop/geometry/perspective/upright production stage and coordinate-space contract.
 - [ ] Level 3 Full Acceptance, acceptance commits, Draft PR push and final GitHub Actions green.
 

@@ -81,6 +81,61 @@ pub struct DecodedRenderedImage {
     pub exif: Option<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LensMetadata {
+    pub camera_make: String,
+    pub camera_model: String,
+    pub lens_make: String,
+    pub lens_model: String,
+    pub focal_length_mm: Option<f32>,
+    pub aperture: Option<f32>,
+    pub focus_distance_m: Option<f32>,
+}
+
+fn exif_text(exif: &exif::Exif, tag: exif::Tag) -> String {
+    exif.get_field(tag, exif::In::PRIMARY)
+        .and_then(|field| match &field.value {
+            exif::Value::Ascii(values) => values
+                .first()
+                .map(|value| String::from_utf8_lossy(value).trim().to_owned()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn exif_number(exif: &exif::Exif, tag: exif::Tag) -> Option<f32> {
+    exif.get_field(tag, exif::In::PRIMARY)
+        .and_then(|field| match &field.value {
+            exif::Value::Rational(values) => values.first().map(|value| value.to_f64() as f32),
+            exif::Value::SRational(values) => values.first().map(|value| value.to_f64() as f32),
+            exif::Value::Float(values) => values.first().copied(),
+            exif::Value::Double(values) => values.first().map(|value| *value as f32),
+            _ => field.value.get_uint(0).map(|value| value as f32),
+        })
+        .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+/// Extracts only Lensfun matching metadata from encoded EXIF. Missing fields remain explicit;
+/// callers must not invent a camera/lens profile.
+pub fn lens_metadata(image: &DecodedRenderedImage) -> LensMetadata {
+    let Some(bytes) = image.exif.clone() else {
+        return LensMetadata::default();
+    };
+    let Ok(exif) = exif::Reader::new().read_raw(bytes) else {
+        return LensMetadata::default();
+    };
+    LensMetadata {
+        camera_make: exif_text(&exif, exif::Tag::Make),
+        camera_model: exif_text(&exif, exif::Tag::Model),
+        lens_make: exif_text(&exif, exif::Tag::LensMake),
+        lens_model: exif_text(&exif, exif::Tag::LensModel),
+        focal_length_mm: exif_number(&exif, exif::Tag::FocalLength),
+        aperture: exif_number(&exif, exif::Tag::FNumber),
+        focus_distance_m: exif_number(&exif, exif::Tag::SubjectDistance),
+    }
+}
+
 fn dynamic_to_rgba_f32(image: DynamicImage) -> Vec<f32> {
     image.into_rgba32f().into_raw()
 }

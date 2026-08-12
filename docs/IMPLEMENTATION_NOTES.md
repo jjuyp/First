@@ -1,4 +1,12 @@
 # Implementation Notes
+## 2026-08-12 M10 Lensfun optics acceptance candidate
+
+- M10 is a real pinned Lensfun provider rather than a trait/stub. The complete upstream v0.3.4 XML database at commit `101c745e847a5de4a1e569a94368ce2027198598` is embedded unchanged. Rust streams it through pinned `quick-xml` 0.41.0, resolves camera mount and lens, interpolates focal calibration, selects aperture/distance vignetting calibration, and adapts Lensfun's exact Poly3/Poly5/PTLens modifier equations.
+- RAW camera/lens/focal/aperture/focus metadata is now copied through the LibRaw C ABI. JPEG/TIFF metadata is extracted by pinned `kamadak-exif` 0.6.1. Auto and manual matching both report typed `autoMatched`, `manualMatched`, `missingMetadata`, `unknownCamera`, `unknownLens`, `mountMismatch` or `ambiguous`; enabling correction without a usable profile is an error and never a silent generic fallback.
+- Distortion, lateral TCA, vignetting and auto-scale switches execute on linear RGB before M7/M8 creative color, tone and detail. A deterministic bilinear CPU reference reports crop fraction and finite failures. Preview and Export call this same shared stage for RAW and encoded inputs. Before remains profile-disabled source processing.
+- The UI exposes all switches, Auto/Manual identity entry and an explicit profile-status resolver. Project schema persists switches, matching intent, selected profile/status/version and manual identity. Profile data and adapted model source are retained under CC-BY-SA-3.0/LGPL-3.0 with NOTICE/provenance updates; no unverified system Lensfun DLL is loaded.
+- Regressions cover official-database Nikon match/mount/profile ID, missing/unknown status, exact model finite/crop behavior, unknown-profile rejection, compact IPC state and Preview/Export parity. Local frontend acceptance passed with Vitest 25/25, TypeScript, ESLint and production build; authoritative C++/Rust compile/tests run on Windows CI because local MSVC `link.exe` is unavailable.
+
 ## 2026-08-12 M9 Detail Engine acceptance candidate
 
 - Replaced the prototype one-radius Gaussian behavior with three distinct Native operators. Sharpen combines fine/coarse residuals with Amount/Radius/Detail, edge Masking and local-range Halo Protection. Denoise is an edge-aware range/spatial filter with separate Luminance/Chroma, Detail Protection and High ISO strength. Local Detail separates Texture (fine residual), Clarity (mid-frequency residual) and Dehaze (broad veil/local contrast); these are not aliases for one filter.

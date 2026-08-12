@@ -172,6 +172,14 @@ button:disabled { opacity: .35; cursor: default; }
 .grading-tabs { display:grid; grid-template-columns:repeat(2,1fr); gap:5px; margin-bottom:12px; }
 .grading-tabs button { padding:6px; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); color:var(--text-3); font-size:10px; }
 .grading-tabs button.active { color:white; border-color:var(--accent); }
+.optics-controls { display:flex; flex-direction:column; gap:9px; }
+.optics-controls > label { display:flex; align-items:center; gap:7px; color:var(--text-2); font-size:11px; }
+.optics-controls select,.optics-controls input { margin-left:auto; max-width:170px; }
+.optics-manual { display:grid; grid-template-columns:1fr; gap:6px; padding:9px; border:1px solid var(--border); border-radius:7px; }
+.optics-manual label { display:flex; justify-content:space-between; gap:8px; color:var(--text-3); font-size:10px; }
+.optics-status { display:flex; flex-direction:column; gap:3px; padding:9px; border:1px solid var(--border); border-radius:7px; overflow-wrap:anywhere; }
+.optics-status span,.optics-status small { color:var(--text-3); font-size:9px; }
+.optics-status.status-autoMatched,.optics-status.status-manualMatched { border-color:var(--success); }
 .curve-preview { width: 100%; height: 120px; display: block; margin-bottom: 7px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--surface-2) 72%, var(--canvas)); touch-action: none; }
 .curve-tabs,.curve-presets { display:flex; gap:6px; margin:0 0 8px; }
 .curve-tabs button,.curve-presets button { flex:1; padding:5px; border:1px solid var(--border); border-radius:5px; background:var(--surface-2); color:var(--text-2); font-size:11px; }

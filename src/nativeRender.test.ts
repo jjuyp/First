@@ -84,4 +84,13 @@ describe('native preview contract', () => {
     expect(settings.denoiseSettings).toMatchObject({ luminance: .3, chroma: .6, highIso: .8 })
     expect(settings.localDetail).toEqual({ texture: .25, clarity: -.15, dehaze: .2 })
   })
+
+  it('serializes Lensfun switches and explicit manual identity', () => {
+    const identity = { cameraMake: 'Nikon', cameraModel: 'Nikon D750', lensMake: 'Nikon',
+      lensModel: 'Nikon AF-S Nikkor 16-35mm f/4G ED VR', focalLengthMm: 24, aperture: 5.6, focusDistanceM: 10 }
+    const settings = toNativeSettings({ ...defaultAdjustments, lensCorrection: 1, lensTca: 0 }, [],
+      'sourceDefault', null, { master: [], red: [], green: [], blue: [] }, { matchMode: 'manual', manualIdentity: identity })
+    expect(settings.optics.parameters).toMatchObject({ enabled: true, distortion: true, tca: false, vignette: true, autoScale: true })
+    expect(settings.optics.manualIdentity).toEqual(identity)
+  })
 })
