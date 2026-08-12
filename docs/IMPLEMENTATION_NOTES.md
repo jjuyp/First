@@ -1,6 +1,12 @@
 # Implementation Notes
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
+## 2026-08-12 M4 tone / light candidate
+
+- M4 selects a **direct GPL-derived / private-use adaptation** of darktable's stable generalized-loglogistic sigmoid response, rather than retaining the former simple highlight division. The source is `darktable-org/darktable` `release-5.6.0`, tag object `f89bf9231fb21db0a53b3c279ff164caef48cef8`, commit `3c17b2976793303c186a5f64e8c9635ecf8b15d3`, `src/iop/sigmoid.c`, GPL-3.0-or-later. The adapted function is isolated in `crates/starroom-color/src/lib.rs`, carries a source marker, and the project workspace now declares GPL-3.0-or-later. `NOTICE.md` and provenance identify the corresponding-source duty before any external binary release.
+- Exposure remains scene-linear EV multiplication. Contrast operates around 18% middle gray in stops. Highlights use the adapted film/paper shoulder only in the bright zone, then luminance-ratio RGB scaling preserves hue/chroma; Shadows have a zero-at-black influence weight so `Shadows +50` cannot introduce a white veil at true black. Whites/Blacks retain deliberately narrower zone weights than Highlights/Shadows. No creative stage clamps to 0..1; gamut bounding remains solely at the declared output boundary.
+- The same `apply_tone` function is used by rendered images and LibRaw camera-profile output in `starroom-pipeline`; Preview, Before/After and Export remain the same native graph. M4 tests are numerical Golden vectors while redistributable portrait/backlight/night photographs are still honestly `planned` in the fixture manifest.
+
 ## 2026-08-12 — M3 camera profile / RAW color candidate
 
 - The LibRaw bridge still owns sensor parsing, black/white normalization, As-Shot WB and mature demosaic, but no longer performs the final camera-to-working transform. It emits 16-bit linear, white-balanced camera RGB with an identity `rgb_cam`; Rust converts to authoritative `f32`, resolves a typed camera profile, executes camera RGB -> XYZ D65 -> linear Rec.2020 D65, and only then enters the shared creative graph. Preview, Before/After and Export therefore use the same explicit profile stage.

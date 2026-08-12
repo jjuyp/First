@@ -156,6 +156,56 @@ fn zone_weights(y: f32) -> (f32, f32, f32, f32) {
     (shadow, black, highlight, white)
 }
 
+// GPL-derived / private-use: adapted from darktable `src/iop/sigmoid.c`,
+// release-5.6.0 (commit 3c17b2976793303c186a5f64e8c9635ecf8b15d3), GPL-3.0-or-later.
+// This is the numerically stable generalized-loglogistic film/paper response,
+// isolated here as a typed Starroom adapter rather than importing darktable's runtime.
+fn darktable_generalized_loglogistic(
+    value: f32,
+    magnitude: f32,
+    paper_exposure: f32,
+    film_fog: f32,
+    film_power: f32,
+    paper_power: f32,
+) -> f32 {
+    let film_response = (film_fog + value.max(0.0)).powf(film_power.max(1.0e-4));
+    let denominator = (paper_exposure + film_response).max(1.0e-12);
+    let response = magnitude * (film_response / denominator).powf(paper_power.max(1.0e-4));
+    if response.is_finite() {
+        response
+    } else {
+        magnitude
+    }
+}
+
+/// A scene-linear highlight shoulder adapted from darktable's sigmoid foundation.
+/// It is blended only in the declared highlight zone, so `Highlights -100` recovers
+/// bright values without globally dimming shadows or midtones.
+fn darktable_highlight_rolloff(y: f32, amount: f32, highlight_weight: f32) -> f32 {
+    if amount >= 0.0 || highlight_weight <= 0.0 {
+        return y;
+    }
+    let strength = (-amount).clamp(0.0, 1.0) * highlight_weight;
+    // Parameters follow the neutral-gray normalized sigmoid construction. The black target
+    // avoids the zero pole while the output remains scene-linear until the final gamut stage.
+    let mapped = darktable_generalized_loglogistic(
+        y,
+        1.0,
+        0.84,
+        0.000_152,
+        1.22 + strength * 1.45,
+        1.0 + strength * 0.55,
+    );
+    // Preserve 18% middle gray exactly by operating on excess above the pivot.
+    let pivot = 0.1845;
+    let shoulder = if y > pivot {
+        pivot + (mapped - pivot).max(0.0)
+    } else {
+        y
+    };
+    y + (shoulder - y) * strength
+}
+
 fn tone_luminance(y: f32, parameters: ToneParameters) -> f32 {
     if !y.is_finite() {
         return 0.0;
@@ -173,8 +223,7 @@ fn tone_luminance(y: f32, parameters: ToneParameters) -> f32 {
 
     let highlights = clamp_unit_control(parameters.highlights);
     if highlights < 0.0 {
-        let compression = 1.0 + (-highlights) * highlight_weight * 1.35;
-        output = output / compression + output.min(0.22) * (1.0 - 1.0 / compression);
+        output = darktable_highlight_rolloff(output, highlights, highlight_weight);
     } else {
         output += highlights * highlight_weight * (1.0 - output.min(1.0)) * 0.22;
     }
@@ -505,6 +554,121 @@ mod tests {
         };
         let output = apply_tone(black, parameters);
         assert!(output.r.abs() < 1e-6 && output.g.abs() < 1e-6 && output.b.abs() < 1e-6);
+    }
+
+    #[test]
+    fn highlights_recover_only_bright_region_without_global_dimming() {
+        let parameters = ToneParameters {
+            highlights: -1.0,
+            ..Default::default()
+        };
+        let shadow = LinearRgb {
+            r: 0.03,
+            g: 0.03,
+            b: 0.03,
+        };
+        let mid = LinearRgb {
+            r: 0.18,
+            g: 0.18,
+            b: 0.18,
+        };
+        let bright = LinearRgb {
+            r: 1.8,
+            g: 1.5,
+            b: 1.2,
+        };
+        assert!(delta(luminance(apply_tone(shadow, parameters)), luminance(shadow)) < 1.0e-5);
+        assert!(delta(luminance(apply_tone(mid, parameters)), luminance(mid)) < 1.0e-4);
+        assert!(luminance(apply_tone(bright, parameters)) < luminance(bright));
+    }
+
+    #[test]
+    fn tone_extremes_remain_finite_and_scene_linear() {
+        let source = LinearRgb {
+            r: 8.0,
+            g: 2.0,
+            b: 0.4,
+        };
+        for control in [-1.0, 1.0] {
+            let output = apply_tone(
+                source,
+                ToneParameters {
+                    exposure_ev: control * 5.0,
+                    contrast: control,
+                    highlights: control,
+                    shadows: control,
+                    whites: control,
+                    blacks: control,
+                },
+            );
+            assert!(output.r.is_finite() && output.g.is_finite() && output.b.is_finite());
+        }
+        let hdr = apply_tone(
+            source,
+            ToneParameters {
+                exposure_ev: 5.0,
+                ..Default::default()
+            },
+        );
+        assert!(hdr.r > 1.0 && hdr.g > 1.0 && hdr.b > 1.0);
+    }
+
+    #[test]
+    fn whites_and_blacks_have_narrower_target_than_shadow_and_highlight_controls() {
+        let low = LinearRgb {
+            r: 0.035,
+            g: 0.035,
+            b: 0.035,
+        };
+        let lower_mid = LinearRgb {
+            r: 0.12,
+            g: 0.12,
+            b: 0.12,
+        };
+        let high = LinearRgb {
+            r: 0.82,
+            g: 0.82,
+            b: 0.82,
+        };
+        let upper_mid = LinearRgb {
+            r: 0.48,
+            g: 0.48,
+            b: 0.48,
+        };
+        let black_low = (luminance(apply_tone(
+            low,
+            ToneParameters {
+                blacks: 1.0,
+                ..Default::default()
+            },
+        )) - luminance(low))
+        .abs();
+        let black_mid = (luminance(apply_tone(
+            lower_mid,
+            ToneParameters {
+                blacks: 1.0,
+                ..Default::default()
+            },
+        )) - luminance(lower_mid))
+        .abs();
+        let white_high = (luminance(apply_tone(
+            high,
+            ToneParameters {
+                whites: 1.0,
+                ..Default::default()
+            },
+        )) - luminance(high))
+        .abs();
+        let white_mid = (luminance(apply_tone(
+            upper_mid,
+            ToneParameters {
+                whites: 1.0,
+                ..Default::default()
+            },
+        )) - luminance(upper_mid))
+        .abs();
+        assert!(black_low > black_mid * 2.0);
+        assert!(white_high > white_mid * 2.0);
     }
 
     #[test]

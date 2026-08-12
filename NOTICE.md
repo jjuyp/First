@@ -4,6 +4,13 @@
 
 This product includes DNG technology under license by Adobe.
 
+Starroom's M4 scene-linear tone operator contains GPL-derived / private-use
+adaptations of darktable's sigmoid module. Source: darktable-org/darktable,
+release-5.6.0, commit 3c17b2976793303c186a5f64e8c9635ecf8b15d3,
+src/iop/sigmoid.c. Original license: GPL-3.0-or-later. Starroom is made
+available under GPL-3.0-or-later; see the upstream GPL-3.0 text and the
+provenance inventory for source and modification details.
+
 Starroom reads and processes DNG files through its LibRaw integration and the
 documented DNG metadata boundary. The applicable DNG patent-license terms are
 recorded in `docs/17_THIRD_PARTY_PROVENANCE.md`.

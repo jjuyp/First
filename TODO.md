@@ -91,8 +91,10 @@ These milestone numbers supersede the older capability-group numbering below for
 
 ### M4 Professional Tone / Light
 
-- [ ] Integrate or faithfully adapt the selected mature darktable scene-referred foundation for Exposure, Contrast, Highlights, Shadows, Whites and Blacks.
-- [ ] Golden numeric/visual acceptance and CI green.
+- [x] Directly adapt the stable darktable `sigmoid.c` generalized-loglogistic scene-linear shoulder under GPL-3.0-or-later, with source/revision/NOTICE and external-distribution obligations recorded.
+- [x] Native luminance-ratio Tone Engine covers Exposure, Contrast, Highlights, Shadows, Whites and Blacks while preserving a true-black anchor, midtone pivot and unbounded working range.
+- [x] Add native numerical portrait-low-key/backlight/HDR/night-style regression vectors: identity, targeted shadow lift, highlight roll-off, narrow white/black zones, hue/chroma ratio preservation and finite extremes.
+- [ ] GitHub Actions green and M4 acceptance commit; M5 remains blocked until this is checked.
 
 ### M5 Professional white balance / calibration
 
