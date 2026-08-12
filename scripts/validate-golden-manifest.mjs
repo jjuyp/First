@@ -1,5 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { goldenTags } from './test-target-config.mjs'
+import { selectGoldenFixtures } from './select-golden-fixtures.mjs'
 
 const manifest = JSON.parse(readFileSync(new URL('../fixtures/golden/manifest.json', import.meta.url), 'utf8'))
 const required = new Set([
@@ -9,8 +11,11 @@ const required = new Set([
 ])
 const assertions = ['identity', 'extremeControl', 'finite', 'toneRegression', 'colorRegression']
 
-if (manifest.schemaVersion !== 1 || manifest.workingSpace !== 'linear Rec.2020 D65') {
+if (manifest.schemaVersion !== 2 || manifest.workingSpace !== 'linear Rec.2020 D65') {
   throw new Error('Golden manifest schema or working space is invalid')
+}
+if (JSON.stringify(manifest.supportedTags) !== JSON.stringify(goldenTags)) {
+  throw new Error('Golden manifest supportedTags does not match the canonical tag registry')
 }
 for (const assertion of assertions) {
   if (!manifest.commonAssertions?.includes(assertion)) throw new Error(`Missing common assertion: ${assertion}`)
@@ -19,9 +24,13 @@ if (!manifest.futureAssertions?.includes('cpuGpuParity')) throw new Error('Missi
 for (const entry of manifest.cases ?? []) {
   if (!entry.id || !entry.scene || !['planned', 'active'].includes(entry.status)) throw new Error(`Invalid case: ${JSON.stringify(entry)}`)
   if (!entry.extremeControls?.length || !entry.rois?.length) throw new Error(`Case lacks controls or ROIs: ${entry.id}`)
+  if (!entry.tags?.length || entry.tags.some((tag) => !goldenTags.includes(tag))) throw new Error(`Case has invalid tags: ${entry.id}`)
   required.delete(entry.id)
 }
 if (required.size) throw new Error(`Missing required Golden cases: ${[...required].join(', ')}`)
+const requestedTags = (process.argv.find((arg) => arg.startsWith('--tags='))?.slice(7) ?? '')
+  .split(',').map((tag) => tag.trim()).filter(Boolean)
+const selectedCases = selectGoldenFixtures(manifest, requestedTags)
 const colorchecker = manifest.cases.find((entry) => entry.id === 'colorchecker')
 if (colorchecker?.referenceOracle?.status !== 'active' || colorchecker.referenceOracle.license !== 'BSD-3-Clause') {
   throw new Error('ColorChecker reference oracle is missing or has an unexpected license')
@@ -33,8 +42,9 @@ if (colorcheckerFixture.license !== 'BSD-3-Clause'
   || !existsSync(new URL(colorcheckerFixture.licenseFile, colorcheckerUrl))) {
   throw new Error('ColorChecker oracle data or retained BSD-3-Clause license is invalid')
 }
-console.log(`OK fixtures/golden/manifest.json (${manifest.cases.length} required cases)`)
+console.log(`OK fixtures/golden/manifest.json (${selectedCases.length}/${manifest.cases.length} selected cases)`)
 
+if (!requestedTags.length || requestedTags.includes('raw')) {
 const rawManifestUrl = new URL('../fixtures/raw/manifest.json', import.meta.url)
 const rawManifest = JSON.parse(readFileSync(rawManifestUrl, 'utf8'))
 const requiredFormats = new Set(['NEF', 'ARW', 'CR2', 'CR3', 'DNG', 'RAF'])
@@ -56,3 +66,4 @@ for (const fixture of rawManifest.fixtures ?? []) {
 }
 if (requiredFormats.size) throw new Error(`Missing RAW formats: ${[...requiredFormats].join(', ')}`)
 console.log(`OK fixtures/raw/manifest.json (${rawManifest.fixtures.length} CC0 sensor fixtures)`)
+}

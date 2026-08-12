@@ -71,4 +71,8 @@ A foundation feature is done only when the real implementation or a validated pr
 ## Codex
 Implement one milestone at a time. Run tests/lints after each milestone and record deviations in `docs/IMPLEMENTATION_NOTES.md`.
 
+Start a milestone by reading this file and `codex/CURRENT_TASK.md`, then load only the listed modules and the referenced implementation-map section. Escalate tests progressively: targeted Level 1 during development, relevant Golden subset plus Level 2 at milestone acceptance, and Level 3 Full Acceptance only for batch/release/final acceptance. `npm run test:<target>` is the canonical local entry point; a commit containing `[full-acceptance]` opts a push into the authoritative Full Check.
+
+Keep development commits focused on code plus tests. Synchronize TODO, implementation notes, provenance and roadmap in the milestone acceptance commit, or earlier only when a dependency/license or architecture decision actually changes.
+
 Before coding a foundation feature, check `docs/16_OPEN_SOURCE_FOUNDATION.md` and explicitly decide whether to integrate, adapt/port, or replace the mature upstream solution. Do not invent a new baseline algorithm without documenting why.

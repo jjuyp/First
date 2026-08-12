@@ -11,3 +11,4 @@ fixtures/private/
 .env
 output/playwright/
 .tmp-*/
+.starroom-reports/

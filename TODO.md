@@ -23,6 +23,16 @@ Rules:
 - [ ] Define per-stage quality comparison reports against the selected mature foundation.
 - [ ] Do not advance a custom foundation replacement unless the replacement gate passes.
 
+## Development Acceleration Pass — accepted before M7
+
+- [x] Add canonical `test:color/tone/curve/raw/detail/optics/geometry/masks/portrait/ai/web/full` commands and machine-readable duration reports.
+- [x] Define Level 1 targeted, Level 2 milestone and Level 3 Full Acceptance without weakening the final gate.
+- [x] Upgrade Golden manifest to validated multi-tag schema with deterministic tag subset selection.
+- [x] Add dependency-aware path classification and targeted web/color/RAW/detail/optics/geometry/AI CI jobs.
+- [x] Add compiler/lockfile/platform-keyed Cargo/native caches, npm download cache, hit/miss output and timing artifacts.
+- [x] Add `codex/CURRENT_TASK.md`, module dependency/test-invalidation map and pinned M7–M12 implementation map.
+- [x] Preserve Draft PR #2, do not merge `main`, and stop before M7.
+
 ## Browser vertical slice — completed 2026-08-09
 - [x] Direct numeric entry for every slider control.
 - [x] Initial encoded-image white-balance control.

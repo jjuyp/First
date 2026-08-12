@@ -1,0 +1,20 @@
+# Open-source Implementation Map (M7–M12)
+
+Planning map only. None of these milestones is started by this document. Each integration must re-check the pinned source, license and provenance before code is copied, adapted, linked or distributed.
+
+| Milestone | Foundation / pinned revision | Source focus | License | Integration strategy / Starroom adapter | Required regression |
+|---|---|---|---|---|---|
+| M7 OKLCh Color Mixer | darktable `release-5.6.0`, tag object `f89bf9231fb21db0a53b3c279ff164caef48cef8`, commit `3c17b2976793303c186a5f64e8c9635ecf8b15d3` | `src/iop/colorzones.c`, hue-zone selection and smooth band behavior | GPL-3.0-or-later | Study mature zone semantics; Starroom owns an OKLab/OKLCh adapter in `starroom-color`, typed parameters and hue-lock. Any direct adaptation must be marked and added to provenance. | identity, hue-wrap continuity, skin/neon/landscape, finite HDR, shared Preview/Export |
+| M8 Color Grading | same pinned darktable source | `src/iop/colorbalancergb.c` | GPL-3.0-or-later | Adapt through `starroom-grading`; keep scene-linear/perceptual stages native and UI math-free. | neutral identity, shadows/midtones/highlights separation, skin hue, HDR finite, Golden `grading,color,portrait,neon` |
+| M9 Detail | same pinned darktable source | `src/iop/sharpen.c`, `src/iop/denoiseprofile.c`, local-contrast/detail modules selected during milestone review | GPL-3.0-or-later | Mature CPU provider behind `starroom-detail`; do not substitute blur/unsharp prototypes for claimed production denoise. Profile data receives separate license/hash review. | flat-field noise, edge MTF/halo, high ISO, fine texture, portrait, extreme finite |
+| M10 Lens Correction | Lensfun `v0.3.4`, commit `101c745e847a5de4a1e569a94368ce2027198598` | public correction API plus separately reviewed lens database | LGPL-3.0-or-later; database audited separately | `starroom-optics` owns lookup/result adapter; prefer dynamic-link/distribution-compatible packaging. Cache database by version/hash. | identity/no-profile typed state, distortion, CA, vignetting, lens/camera match, Preview/Export parity |
+| M11 Geometry | darktable pinned source above | `src/iop/ashift.c` and proven projective transform/crop logic | GPL-3.0-or-later | Typed transform/crop model in `starroom-geometry`; direct ports isolated and marked. Renderer owns resampling application. | identity, lines/architecture, inverse/round-trip, bounds/crop, extreme finite, no source overwrite |
+| M12 GPU | wgpu `v30.0.0`, tag object `10239959d28d4283d89fd2fb0b04475881ba3f4f8`, commit `bf3e5ff4ab45e2c150e0d6c70d01d25f5b126c1` | official `wgpu` API, WGSL validation, DX12 backend | MIT OR Apache-2.0 | `starroom-render` backend selected behind stable stage contracts; CPU remains acceptance oracle until parity passes. Pin Cargo versions/lockfile at implementation time. | CPU/GPU RMSE/max/DeltaE, NaN/Inf, cache invalidation, 24/45/60/100 MP timings, device-loss typed fallback |
+
+## Milestone startup checklist
+
+1. Put the exact milestone and only its modules into `codex/CURRENT_TASK.md`.
+2. Verify tag/commit and license against official upstream; update provenance before importing code or data.
+3. Choose integrate, adapt/port or validated replacement explicitly.
+4. Run the target's Level 1 command, related Golden tags, Level 2 acceptance, then the required Full Acceptance trigger.
+5. Never silently substitute a missing provider/profile/model or move creative image math into React/TypeScript.

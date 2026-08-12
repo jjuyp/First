@@ -1,6 +1,8 @@
 # Golden Image regression specification
 
-Status: F0 executable specification. The fixture manifest is `fixtures/golden/manifest.json`; CI validates its required cases and contracts with `scripts/validate-golden-manifest.mjs`. This gate defines the tests before redistributable source photographs are accepted.
+Status: F0 executable specification. The fixture manifest is `fixtures/golden/manifest.json`; CI validates its required cases and contracts with `scripts/validate-golden-manifest.mjs`. Schema v2 adds canonical multi-value tags so inner-loop and milestone gates can select only relevant fixtures without weakening Full Acceptance.
+
+The supported tag registry is `raw`, `camera-color`, `tone`, `wb`, `curve`, `color`, `grading`, `detail`, `optics`, `geometry`, `mask`, `portrait`, `skin`, `ai`, `night`, `high-iso`, `neon`, `landscape`, and `hdr`. Select a union with `npm run golden:select -- --tags=color,portrait,skin`; add `--all-tags` to require the intersection. Omitting `--tags` selects the complete manifest. A selected `planned` case remains visible rather than being silently treated as an active photographic regression.
 
 The license-cleared RAW decoder matrix is active in `fixtures/raw/manifest.json`. It is deliberately separate from the scene-quality Golden set: the six CC0 files prove real sensor decode/metadata/CFA/WB/demosaic coverage, but they are not relabeled as portrait, HDR, night or ColorChecker scenes without matching visual evidence.
 

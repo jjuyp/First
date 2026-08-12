@@ -1,6 +1,15 @@
 # Implementation Notes
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
+## 2026-08-12 Development Acceleration Pass
+
+- Added executable Level 1/2/3 routing through `scripts/test-target.mjs`. The eleven named targets own explicit Rust commands, related Vitest files and Golden tags; Level 2 adds shared pipeline/render regressions plus lint/format/build, while Level 3 retains the complete former acceptance surface and JSON/package checks.
+- Golden schema v2 gives every scene canonical tags and validates them against one registry. `select-golden-fixtures.mjs` supports union or all-tag intersection without silently changing `planned` fixtures to `active`. Full Acceptance still validates every Golden and all immutable CC0 RAW bytes/hashes.
+- Replaced unconditional duplicate full jobs with dependency-aware classification. Leaf changes run relevant checks; pipeline/render/project/workspace/CI changes fan out. A `[full-acceptance]` push, release tag or explicit workflow input runs authoritative Full Rust and Full Web. Action revisions are immutable; Cargo/native keys contain OS, architecture, complete compiler hash and lockfile hash. The npm cache accelerates verified `npm ci`; cached `node_modules` is deliberately rejected as stale-tree risk.
+- Baseline before this pass: run `31597151940` took 8m28s wall time (Rust 8m25s: fmt 9s, Clippy 3m29s, tests 4m23s; web 22s), and the duplicate PR run `31597154881` took 8m20s (Rust 8m15s; web 34s). Every push paid both full native builds because there was no Cargo target cache.
+- Local post-pass frontend baseline on the same workstation: Level 1 `test:web` 3.76s measured command time (Vitest 21/21 plus Golden contract); Level 3 Web 9.21s (JSON 0.05s, Golden/RAW hash validation 0.14s, lint 3.60s, Vitest 1.35s, build 4.07s). Local native timing remains unavailable because this workstation still lacks MSVC `link.exe`; the runner records that typed toolchain failure and Windows CI remains authoritative for Rust/LibRaw timing.
+- Remaining performance risks: the first Windows cache population must still compile static LibRaw/LittleCMS; RAW sensor regressions remain intrinsically I/O/CPU heavy; path fan-out is intentionally broad for shared graph/contracts. Uploaded timing JSON and explicit cache-hit output make cold/warm comparison visible instead of guessing. Quality, Preview/Export parity and Full Acceptance were not relaxed.
+
 ## 2026-08-12 M6 tone curve candidate
 
 - The Native shared graph now owns `ToneCurveSet` with Master, Red, Green and Blue curves. Every curve uses the existing tested monotone cubic Hermite mapper; endpoint tangents extrapolate scene-linear values outside 0..1 instead of clipping HDR data. The legacy single curve remains a backward-compatible Master fallback.

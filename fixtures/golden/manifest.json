@@ -1,20 +1,21 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "supportedTags": ["raw","camera-color","tone","wb","curve","color","grading","detail","optics","geometry","mask","portrait","skin","ai","night","high-iso","neon","landscape","hdr"],
   "workingSpace": "linear Rec.2020 D65",
   "commonAssertions": ["identity", "extremeControl", "finite", "toneRegression", "colorRegression"],
   "futureAssertions": ["cpuGpuParity"],
   "rawFixtureManifest": "../raw/manifest.json",
   "cases": [
-    {"id":"portrait-daylight","scene":"general portrait","status":"planned","extremeControls":["exposure","temperature","tint","saturation"],"rois":["skin","sclera","neutral-background"]},
-    {"id":"portrait-low-key","scene":"dark portrait","status":"planned","extremeControls":["shadows","blacks","denoise","sharpen"],"rois":["face-shadow","hair","black-background"]},
-    {"id":"backlit-portrait","scene":"backlight","status":"planned","extremeControls":["highlights","shadows","exposure"],"rois":["face","sky","rim-light"]},
-    {"id":"high-dynamic-range","scene":"high dynamic range","status":"planned","extremeControls":["exposure","whites","blacks","highlights","shadows"],"rois":["specular","midtone-gray","deep-texture"]},
-    {"id":"night-city","scene":"night","status":"planned","extremeControls":["exposure","shadows","blacks","denoise"],"rois":["sky-black","street-neutral","lamps"]},
-    {"id":"neon","scene":"neon","status":"planned","extremeControls":["saturation","vibrance","color-mixer"],"rois":["cyan","magenta","red","neutral-border"]},
-    {"id":"high-iso","scene":"high ISO","status":"planned","extremeControls":["denoise","sharpen"],"rois":["flat-patch","edge-mtf","chroma-noise"]},
-    {"id":"white-black-clothing","scene":"white and black clothing","status":"planned","extremeControls":["whites","blacks","highlights","shadows"],"rois":["white-weave","black-weave","neutral-reference"]},
-    {"id":"colorchecker","scene":"ColorChecker","status":"planned","referenceOracle":{"status":"active","path":"../colorchecker/babelcolor-average-v0.4.7.json","license":"BSD-3-Clause","patches":24},"extremeControls":["temperature","tint","saturation","rendering-intent"],"rois":["all-patches","neutral-patches"]},
-    {"id":"fine-texture","scene":"detail texture","status":"planned","extremeControls":["clarity","sharpen","denoise"],"rois":["flat-field","fine-texture","contrast-edge"]},
-    {"id":"mixed-temperature","scene":"mixed color temperature","status":"planned","extremeControls":["temperature","tint"],"rois":["warm-neutral","cool-neutral","skin-or-object"]}
+    {"id":"portrait-daylight","scene":"general portrait","status":"planned","tags":["portrait","skin","tone","wb","curve","color"],"extremeControls":["exposure","temperature","tint","saturation"],"rois":["skin","sclera","neutral-background"]},
+    {"id":"portrait-low-key","scene":"dark portrait","status":"planned","tags":["portrait","skin","tone","detail","night"],"extremeControls":["shadows","blacks","denoise","sharpen"],"rois":["face-shadow","hair","black-background"]},
+    {"id":"backlit-portrait","scene":"backlight","status":"planned","tags":["portrait","skin","tone","hdr"],"extremeControls":["highlights","shadows","exposure"],"rois":["face","sky","rim-light"]},
+    {"id":"high-dynamic-range","scene":"high dynamic range","status":"planned","tags":["tone","curve","hdr","landscape"],"extremeControls":["exposure","whites","blacks","highlights","shadows"],"rois":["specular","midtone-gray","deep-texture"]},
+    {"id":"night-city","scene":"night","status":"planned","tags":["night","tone","detail","high-iso","neon"],"extremeControls":["exposure","shadows","blacks","denoise"],"rois":["sky-black","street-neutral","lamps"]},
+    {"id":"neon","scene":"neon","status":"planned","tags":["neon","color","grading","night"],"extremeControls":["saturation","vibrance","color-mixer"],"rois":["cyan","magenta","red","neutral-border"]},
+    {"id":"high-iso","scene":"high ISO","status":"planned","tags":["high-iso","detail","night"],"extremeControls":["denoise","sharpen"],"rois":["flat-patch","edge-mtf","chroma-noise"]},
+    {"id":"white-black-clothing","scene":"white and black clothing","status":"planned","tags":["portrait","tone","detail"],"extremeControls":["whites","blacks","highlights","shadows"],"rois":["white-weave","black-weave","neutral-reference"]},
+    {"id":"colorchecker","scene":"ColorChecker","status":"planned","tags":["camera-color","raw","wb","color","grading"],"referenceOracle":{"status":"active","path":"../colorchecker/babelcolor-average-v0.4.7.json","license":"BSD-3-Clause","patches":24},"extremeControls":["temperature","tint","saturation","rendering-intent"],"rois":["all-patches","neutral-patches"]},
+    {"id":"fine-texture","scene":"detail texture","status":"planned","tags":["detail","optics","geometry","landscape"],"extremeControls":["clarity","sharpen","denoise"],"rois":["flat-field","fine-texture","contrast-edge"]},
+    {"id":"mixed-temperature","scene":"mixed color temperature","status":"planned","tags":["wb","color","portrait","skin"],"extremeControls":["temperature","tint"],"rois":["warm-neutral","cool-neutral","skin-or-object"]}
   ]
 }
