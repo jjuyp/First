@@ -274,10 +274,10 @@ fn solve_8x8(mut matrix: [[f32; 9]; 8]) -> Option<[f32; 8]> {
             *value /= scale;
         }
         let pivot_row = matrix[column];
-        for row in 0..8 {
+        for (row, row_values) in matrix.iter_mut().enumerate() {
             if row != column {
-                let factor = matrix[row][column];
-                for (target, source) in matrix[row][column..=8]
+                let factor = row_values[column];
+                for (target, source) in row_values[column..=8]
                     .iter_mut()
                     .zip(&pivot_row[column..=8])
                 {
