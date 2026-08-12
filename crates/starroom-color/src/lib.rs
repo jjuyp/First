@@ -151,7 +151,9 @@ fn zone_weights(y: f32) -> (f32, f32, f32, f32) {
     // v0.1 failure where Shadows behaved like a broad white veil.
     let shadow = smoothstep(0.004, 0.012, safe_y) * (1.0 - smoothstep(0.06, 0.18, safe_y));
     let black = 1.0 - smoothstep(0.0, 0.11, safe_y);
-    let highlight = smoothstep(0.34, 0.62, safe_y) * (1.0 - smoothstep(1.10, 1.55, safe_y));
+    // The scene-linear highlight shoulder must continue into HDR values above display white.
+    // It gently relaxes there, but never falls to zero as the old prototype did.
+    let highlight = smoothstep(0.34, 0.62, safe_y) * (1.0 - 0.25 * smoothstep(1.10, 8.0, safe_y));
     let white = smoothstep(0.72, 1.02, safe_y);
     (shadow, black, highlight, white)
 }
