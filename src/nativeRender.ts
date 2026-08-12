@@ -4,6 +4,7 @@ import type { Adjustments } from './editorState'
 import type { RadialMask, ToneCurvePoint } from './imagePipeline'
 
 export type RenderBackend = 'native' | 'browserFallback'
+export interface NativeGpuStatus { backend: 'dx12' | 'other' | 'cpuFallback'; adapterName: string | null; reason: string | null }
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
 export interface NativeToneCurves { master: ToneCurvePoint[]; red: ToneCurvePoint[]; green: ToneCurvePoint[]; blue: ToneCurvePoint[] }
@@ -70,6 +71,10 @@ export interface NativeExportResult {
 const HEADER_BYTES = 24
 
 export const nativeRuntimeAvailable = () => isTauri()
+
+/** Explicit M12 acceleration/fallback status for UI badges and diagnostics. */
+export const getNativeGpuStatus = (preferGpu = true) =>
+  invoke<NativeGpuStatus>('gpu_preview_status', { preferGpu })
 
 export function assertNativeSupported(adjustments: Adjustments, mask: RadialMask) {
   const unsupported: string[] = []

@@ -13,7 +13,7 @@ use starroom_pipeline::{
 };
 use starroom_render::{
     RenderGraph,
-    gpu::{GpuBackendKind, GpuRenderer},
+    gpu::{GpuBackendKind, GpuRenderer, GpuStatus, probe_gpu_status},
 };
 use std::path::{Path, PathBuf};
 use tauri::ipc::Response;
@@ -56,6 +56,13 @@ fn engine_capabilities() -> EngineCapabilities {
         gpu_renderer: true,
         raw_pipeline: true,
     }
+}
+
+/// UI-visible M12 backend state. This intentionally reports the fallback reason instead of
+/// silently treating unavailable DX12/device resources as a browser-rendering failure.
+#[tauri::command]
+fn gpu_preview_status(prefer_gpu: Option<bool>) -> GpuStatus {
+    probe_gpu_status(prefer_gpu.unwrap_or(true))
 }
 
 #[tauri::command]
@@ -517,6 +524,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             engine_status,
             engine_capabilities,
+            gpu_preview_status,
             advise_image,
             native_preview,
             native_export_jpeg,

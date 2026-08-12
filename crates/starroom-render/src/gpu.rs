@@ -8,6 +8,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use std::{borrow::Cow, sync::Arc};
+use serde::Serialize;
 use thiserror::Error;
 
 pub const GPU_WORKING_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -44,18 +45,32 @@ fn exposure_main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 "#;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum GpuBackendKind {
     Dx12,
     Other,
     CpuFallback,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GpuStatus {
     pub backend: GpuBackendKind,
     pub adapter_name: Option<String>,
     pub reason: Option<String>,
+}
+
+/// Probes the acceleration backend without rendering image pixels. The desktop UI uses this to
+/// distinguish DX12/other wgpu acceleration from a deliberately reported CPU fallback reason.
+pub fn probe_gpu_status(prefer_gpu: bool) -> GpuStatus {
+    if !prefer_gpu {
+        return GpuStatus::cpu_fallback("GPU preview is disabled by request");
+    }
+    match GpuRenderer::try_new() {
+        Ok(renderer) => renderer.status().clone(),
+        Err(error) => GpuStatus::cpu_fallback(error.to_string()),
+    }
 }
 
 impl GpuStatus {
@@ -468,6 +483,13 @@ mod tests {
                 .unwrap_or_default()
                 .contains("adapter")
         );
+    }
+
+    #[test]
+    fn disabled_gpu_preference_never_probes_or_hides_cpu_status() {
+        let status = probe_gpu_status(false);
+        assert_eq!(status.backend, GpuBackendKind::CpuFallback);
+        assert_eq!(status.reason.as_deref(), Some("GPU preview is disabled by request"));
     }
 
     #[test]
