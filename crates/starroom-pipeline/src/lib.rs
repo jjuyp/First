@@ -4,9 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 use starroom_color::{
-    ColorMixer, CurvePoint, LinearRgb, ToneParameters, apply_color_mixer, apply_tone,
+    ColorBand, ColorMixer, CurvePoint, LinearRgb, ToneParameters, apply_color_mixer, apply_tone,
     compress_to_unit_gamut, map_monotone_curve, oklab_to_oklch, oklab_to_rec2020, oklch_to_oklab,
-    rec2020_to_oklab,
+    rec2020_to_oklab, sample_color_band,
 };
 use starroom_color_management::{
     ColorManagementError, InputProfileSource, LittleCmsProvider, OutputProfileSource,
@@ -429,6 +429,40 @@ fn to_working_raw(
     let data = apply_creative_graph(pixels, settings)?;
     LinearImage::new(decoded.width as usize, decoded.height as usize, data)
         .map_err(|_| PipelineError::DetailBuffer)
+}
+
+/// Samples the actual native working graph at normalized image coordinates for M7's targeted
+/// Color Mixer tool. The browser transports only the selected enum, never image pixels or color
+/// science. RAW and encoded inputs therefore use exactly the same decode/WB/creative stages as
+/// preview and export.
+pub fn sample_source_color_band(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+    x: f32,
+    y: f32,
+) -> Result<Option<ColorBand>, PipelineError> {
+    if !x.is_finite() || !y.is_finite() || !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
+        return Err(PipelineError::InvalidDecodedBuffer);
+    }
+    let (image, width, height) = match decoded {
+        DecodedSourceImage::Rendered(source) => {
+            let (image, _) = to_working_image(source, settings)?;
+            (image, source.width as usize, source.height as usize)
+        }
+        DecodedSourceImage::Raw(source) => (
+            to_working_raw(source, settings)?,
+            source.width as usize,
+            source.height as usize,
+        ),
+    };
+    let px = ((x * width as f32).floor() as usize).min(width.saturating_sub(1));
+    let py = ((y * height as f32).floor() as usize).min(height.saturating_sub(1));
+    let offset = (py * width + px) * 3;
+    Ok(sample_color_band(LinearRgb {
+        r: image.data[offset],
+        g: image.data[offset + 1],
+        b: image.data[offset + 2],
+    }))
 }
 
 fn render_working_graph(

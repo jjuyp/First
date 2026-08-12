@@ -61,7 +61,8 @@ pub enum ColorBand {
     Orange,
     Yellow,
     Green,
-    Aqua,
+    #[serde(alias = "aqua")]
+    Cyan,
     Blue,
     Purple,
     Magenta,
@@ -73,7 +74,7 @@ impl ColorBand {
         Self::Orange,
         Self::Yellow,
         Self::Green,
-        Self::Aqua,
+        Self::Cyan,
         Self::Blue,
         Self::Purple,
         Self::Magenta,
@@ -85,7 +86,7 @@ impl ColorBand {
             Self::Orange => 55.0,
             Self::Yellow => 95.0,
             Self::Green => 145.0,
-            Self::Aqua => 195.0,
+            Self::Cyan => 195.0,
             Self::Blue => 250.0,
             Self::Purple => 300.0,
             Self::Magenta => 335.0,
@@ -98,7 +99,7 @@ impl ColorBand {
             Self::Orange => 1,
             Self::Yellow => 2,
             Self::Green => 3,
-            Self::Aqua => 4,
+            Self::Cyan => 4,
             Self::Blue => 5,
             Self::Purple => 6,
             Self::Magenta => 7,
@@ -116,9 +117,34 @@ pub struct BandAdjustment {
     pub lightness: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ColorMixer {
     pub bands: [BandAdjustment; 8],
+    /// Hue lock means chroma/lightness controls preserve the source hue exactly; only the
+    /// explicitly weighted Hue control may rotate it. Enabled by default.
+    #[serde(default = "default_hue_lock")]
+    pub hue_lock: bool,
+    /// Smooth transition half-width in degrees. The inner half has full influence and the
+    /// outer half uses cubic smoothstep overlap with adjacent bands.
+    #[serde(default = "default_band_width")]
+    pub band_width_degrees: f32,
+}
+
+const fn default_hue_lock() -> bool {
+    true
+}
+const fn default_band_width() -> f32 {
+    52.0
+}
+
+impl Default for ColorMixer {
+    fn default() -> Self {
+        Self {
+            bands: [BandAdjustment::default(); 8],
+            hue_lock: true,
+            band_width_degrees: default_band_width(),
+        }
+    }
 }
 
 impl ColorMixer {
@@ -356,16 +382,40 @@ fn circular_distance_degrees(a: f32, b: f32) -> f32 {
     difference.min(360.0 - difference)
 }
 
-fn color_band_weight(hue: f32, band: ColorBand) -> f32 {
+fn color_band_weight(hue: f32, band: ColorBand, width: f32) -> f32 {
     let distance = circular_distance_degrees(hue, band.center_degrees());
-    1.0 - smoothstep(20.0, 55.0, distance)
+    let outer = width.clamp(30.0, 80.0);
+    1.0 - smoothstep(outer * 0.42, outer, distance)
+}
+
+/// Picks the strongest of the eight circular bands. Achromatic samples are rejected because
+/// assigning an arbitrary hue to neutral grey would make the targeted tool unstable.
+pub fn sample_color_band(rgb: LinearRgb) -> Option<ColorBand> {
+    let lch = oklab_to_oklch(rec2020_to_oklab(rgb));
+    if !lch.l.is_finite() || !lch.c.is_finite() || lch.c < 1.0e-4 {
+        return None;
+    }
+    ColorBand::ALL.into_iter().max_by(|left, right| {
+        color_band_weight(lch.h_deg, *left, default_band_width()).total_cmp(&color_band_weight(
+            lch.h_deg,
+            *right,
+            default_band_width(),
+        ))
+    })
 }
 
 /// Eight-band selective color editing in OKLCh. Hue adjustment keeps L and C fixed before
 /// gamut mapping; chroma and lightness are explicit independent controls.
 pub fn apply_color_mixer(rgb: LinearRgb, mixer: ColorMixer) -> LinearRgb {
+    if ![rgb.r, rgb.g, rgb.b].into_iter().all(f32::is_finite) {
+        return LinearRgb {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        };
+    }
     let mut lch = oklab_to_oklch(rec2020_to_oklab(rgb));
-    if lch.c < 1.0e-7 {
+    if lch.c < 1.0e-4 {
         return rgb;
     }
 
@@ -376,7 +426,7 @@ pub fn apply_color_mixer(rgb: LinearRgb, mixer: ColorMixer) -> LinearRgb {
     let mut lightness_delta = 0.0;
 
     for band in ColorBand::ALL {
-        let weight = color_band_weight(original_hue, band);
+        let weight = color_band_weight(original_hue, band, mixer.band_width_degrees);
         if weight <= 0.0 {
             continue;
         }
@@ -389,13 +439,22 @@ pub fn apply_color_mixer(rgb: LinearRgb, mixer: ColorMixer) -> LinearRgb {
 
     if weight_total > 1.0e-7 {
         let inverse = 1.0 / weight_total;
-        lch.h_deg = (lch.h_deg + hue_delta * inverse).rem_euclid(360.0);
+        let explicit_hue_delta = hue_delta * inverse;
+        lch.h_deg = (original_hue + explicit_hue_delta).rem_euclid(360.0);
         lch.c *= 1.0 + chroma_delta * inverse * 0.75;
         lch.c = lch.c.max(0.0);
         lch.l += lightness_delta * inverse * 0.16;
     }
 
-    oklab_to_rec2020(oklch_to_oklab(lch))
+    let output = oklab_to_rec2020(oklch_to_oklab(lch));
+    if [output.r, output.g, output.b]
+        .into_iter()
+        .all(f32::is_finite)
+    {
+        output
+    } else {
+        rgb
+    }
 }
 
 /// Smoothly reduces OKLCh chroma until RGB fits a normalized display/output gamut. Starroom's
@@ -763,5 +822,93 @@ mod tests {
             delta(source.r, output.r) + delta(source.g, output.g) + delta(source.b, output.b)
                 > 1.0e-4
         );
+    }
+
+    #[test]
+    fn m7_hue_lock_preserves_hue_for_chroma_and_lightness_only_edits() {
+        let source = LinearRgb {
+            r: 0.62,
+            g: 0.22,
+            b: 0.08,
+        };
+        let before = oklab_to_oklch(rec2020_to_oklab(source));
+        let band = sample_color_band(source).expect("chromatic source");
+        let output = apply_color_mixer(
+            source,
+            ColorMixer::default().with_band(
+                band,
+                BandAdjustment {
+                    hue_degrees: 0.0,
+                    chroma: 0.7,
+                    lightness: -0.35,
+                },
+            ),
+        );
+        let after = oklab_to_oklch(rec2020_to_oklab(output));
+        assert!(circular_distance_degrees(before.h_deg, after.h_deg) < 0.02);
+        assert!(after.c > before.c);
+        assert!(after.l < before.l);
+    }
+
+    #[test]
+    fn m7_circular_red_wrap_has_smooth_overlap() {
+        let near_zero = oklab_to_rec2020(oklch_to_oklab(Oklch {
+            l: 0.65,
+            c: 0.16,
+            h_deg: 359.5,
+        }));
+        let near_wrap = oklab_to_rec2020(oklch_to_oklab(Oklch {
+            l: 0.65,
+            c: 0.16,
+            h_deg: 0.5,
+        }));
+        let mixer = ColorMixer::default().with_band(
+            ColorBand::Red,
+            BandAdjustment {
+                hue_degrees: 12.0,
+                ..Default::default()
+            },
+        );
+        let left = oklab_to_oklch(rec2020_to_oklab(apply_color_mixer(near_zero, mixer)));
+        let right = oklab_to_oklch(rec2020_to_oklab(apply_color_mixer(near_wrap, mixer)));
+        assert!(circular_distance_degrees(left.h_deg, right.h_deg) < 1.5);
+    }
+
+    #[test]
+    fn m7_achromatic_and_hdr_extremes_are_stable_and_finite() {
+        let mixer = ColorMixer::default().with_band(
+            ColorBand::Blue,
+            BandAdjustment {
+                hue_degrees: 30.0,
+                chroma: 1.0,
+                lightness: 1.0,
+            },
+        );
+        let gray = LinearRgb {
+            r: 0.18,
+            g: 0.18,
+            b: 0.18,
+        };
+        assert_eq!(apply_color_mixer(gray, mixer), gray);
+        assert_eq!(sample_color_band(gray), None);
+        for source in [
+            LinearRgb {
+                r: 4.0,
+                g: 0.02,
+                b: 1.7,
+            },
+            LinearRgb {
+                r: -0.05,
+                g: 0.4,
+                b: 2.0,
+            },
+        ] {
+            let output = apply_color_mixer(source, mixer);
+            assert!(
+                [output.r, output.g, output.b]
+                    .into_iter()
+                    .all(f32::is_finite)
+            );
+        }
     }
 }

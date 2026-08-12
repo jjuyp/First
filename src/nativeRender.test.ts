@@ -39,6 +39,7 @@ describe('native preview contract', () => {
     expect(settings.whiteBalanceMode).toBe('sourceDefault')
     expect(settings.whiteBalanceSample).toBeNull()
     expect(settings.curve).toEqual([{ x: 0, y: 0 }, { x: 1, y: 1 }])
+    expect(settings.colorMixer.bands).toHaveLength(8)
   })
 
   it('never silently ignores edits outside the M1C native slice', () => {
@@ -57,5 +58,13 @@ describe('native preview contract', () => {
     expect(settings.curves.master).toEqual([{ x: 0, y: 0 }, { x: 1, y: 1 }])
     expect(settings.curves.red[0]).toEqual({ x: 0, y: .1 })
     expect(settings.curves.blue[1]).toEqual({ x: 1, y: .9 })
+  })
+
+  it('serializes eight native OKLCh mixer bands without browser color math', () => {
+    const settings = toNativeSettings({
+      ...defaultAdjustments, mixerCyanHue: -12, mixerCyanChroma: 45, mixerCyanLightness: -20,
+    }, [])
+    expect(settings.colorMixer.bands[4]).toEqual({ hueDegrees: -12, chroma: .45, lightness: -.2 })
+    expect(settings.colorMixer.hueLock).toBe(true)
   })
 })

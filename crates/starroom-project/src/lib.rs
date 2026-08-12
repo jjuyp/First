@@ -29,6 +29,8 @@ pub struct Project {
     #[serde(default)]
     pub tone_curves: PersistedToneCurves,
     #[serde(default)]
+    pub color_mixer: PersistedColorMixer,
+    #[serde(default)]
     pub masks: Vec<MaskNode>,
     #[serde(default)]
     pub layers: Vec<AdjustmentLayer>,
@@ -87,6 +89,32 @@ pub struct PersistedToneCurves {
 pub struct PersistedCurvePoint {
     pub x: f32,
     pub y: f32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedColorBand {
+    pub hue: f32,
+    pub chroma: f32,
+    pub lightness: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedColorMixer {
+    pub bands: [PersistedColorBand; 8],
+    pub hue_lock: bool,
+    pub band_width_degrees: f32,
+}
+
+impl Default for PersistedColorMixer {
+    fn default() -> Self {
+        Self {
+            bands: [PersistedColorBand::default(); 8],
+            hue_lock: true,
+            band_width_degrees: 52.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +276,11 @@ mod tests {
                 blue: vec![],
                 preset: Some("identity".into()),
             },
+            color_mixer: PersistedColorMixer {
+                bands: [PersistedColorBand::default(); 8],
+                hue_lock: true,
+                band_width_degrees: 52.0,
+            },
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -269,6 +302,8 @@ mod tests {
         let restored: Project = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(restored.global_adjustments.exposure_ev, 0.75);
         assert_eq!(restored.source.content_hash, "abc");
+        assert!(restored.color_mixer.hue_lock);
+        assert_eq!(restored.color_mixer.bands.len(), 8);
         assert_eq!(
             restored.camera_profile.as_ref().unwrap().hash,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

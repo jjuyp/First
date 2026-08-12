@@ -22,6 +22,15 @@ export type AdjustmentKey =
   | 'rotation'
   | 'flipHorizontal'
   | 'flipVertical'
+  | 'mixerRedHue' | 'mixerRedChroma' | 'mixerRedLightness'
+  | 'mixerOrangeHue' | 'mixerOrangeChroma' | 'mixerOrangeLightness'
+  | 'mixerYellowHue' | 'mixerYellowChroma' | 'mixerYellowLightness'
+  | 'mixerGreenHue' | 'mixerGreenChroma' | 'mixerGreenLightness'
+  | 'mixerCyanHue' | 'mixerCyanChroma' | 'mixerCyanLightness'
+  | 'mixerBlueHue' | 'mixerBlueChroma' | 'mixerBlueLightness'
+  | 'mixerPurpleHue' | 'mixerPurpleChroma' | 'mixerPurpleLightness'
+  | 'mixerMagentaHue' | 'mixerMagentaChroma' | 'mixerMagentaLightness'
+  | 'mixerHueLock'
 
 export type Adjustments = Record<AdjustmentKey, number>
 
@@ -48,6 +57,15 @@ export const defaultAdjustments: Adjustments = {
   rotation: 0,
   flipHorizontal: 0,
   flipVertical: 0,
+  mixerRedHue: 0, mixerRedChroma: 0, mixerRedLightness: 0,
+  mixerOrangeHue: 0, mixerOrangeChroma: 0, mixerOrangeLightness: 0,
+  mixerYellowHue: 0, mixerYellowChroma: 0, mixerYellowLightness: 0,
+  mixerGreenHue: 0, mixerGreenChroma: 0, mixerGreenLightness: 0,
+  mixerCyanHue: 0, mixerCyanChroma: 0, mixerCyanLightness: 0,
+  mixerBlueHue: 0, mixerBlueChroma: 0, mixerBlueLightness: 0,
+  mixerPurpleHue: 0, mixerPurpleChroma: 0, mixerPurpleLightness: 0,
+  mixerMagentaHue: 0, mixerMagentaChroma: 0, mixerMagentaLightness: 0,
+  mixerHueLock: 1,
 }
 
 export interface EditorSnapshot {

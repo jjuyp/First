@@ -7,6 +7,9 @@ export type RenderBackend = 'native' | 'browserFallback'
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
 export interface NativeToneCurves { master: ToneCurvePoint[]; red: ToneCurvePoint[]; green: ToneCurvePoint[]; blue: ToneCurvePoint[] }
+export type NativeColorBand = 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'purple' | 'magenta'
+export interface NativeBandAdjustment { hueDegrees: number; chroma: number; lightness: number }
+export interface NativeColorMixer { bands: NativeBandAdjustment[]; hueLock: boolean; bandWidthDegrees: number }
 
 export interface NativeEditSettings {
   exposure: number
@@ -25,6 +28,7 @@ export interface NativeEditSettings {
   whiteBalanceSample: NativeWhiteBalanceSample | null
   curve: Array<{ x: number; y: number }>
   curves: { master: Array<{ x: number; y: number }>; red: Array<{ x: number; y: number }>; green: Array<{ x: number; y: number }>; blue: Array<{ x: number; y: number }> }
+  colorMixer: NativeColorMixer
 }
 
 export interface NativePreviewResult {
@@ -65,6 +69,8 @@ export function assertNativeSupported(adjustments: Adjustments, mask: RadialMask
 export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint[],
   whiteBalanceMode: NativeWhiteBalanceMode = 'sourceDefault', whiteBalanceSample: NativeWhiteBalanceSample | null = null,
   toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] }): NativeEditSettings {
+  const bands: NativeColorBand[] = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'magenta']
+  const title = (band: string) => `${band[0].toUpperCase()}${band.slice(1)}`
   return {
     exposure: adjustments.exposure,
     contrast: adjustments.contrast,
@@ -82,6 +88,15 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
     whiteBalanceSample,
     curve: [...curve].sort((left, right) => left.x - right.x).map(({ x, y }) => ({ x, y })),
     curves: Object.fromEntries(Object.entries(toneCurves).map(([channel, points]) => [channel, [...points].sort((left, right) => left.x - right.x).map(({ x, y }) => ({ x, y }))])) as NativeEditSettings['curves'],
+    colorMixer: {
+      bands: bands.map((band) => ({
+        hueDegrees: adjustments[`mixer${title(band)}Hue` as keyof Adjustments],
+        chroma: adjustments[`mixer${title(band)}Chroma` as keyof Adjustments] / 100,
+        lightness: adjustments[`mixer${title(band)}Lightness` as keyof Adjustments] / 100,
+      })),
+      hueLock: adjustments.mixerHueLock !== 0,
+      bandWidthDegrees: 52,
+    },
   }
 }
 
@@ -147,6 +162,14 @@ export async function renderNativePreview(
     request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves) },
   })
   return parseNativePreviewFrame(frame)
+}
+
+export async function sampleNativeColor(sourcePath: string, x: number, y: number, adjustments: Adjustments,
+  curve: ToneCurvePoint[], whiteBalanceMode: NativeWhiteBalanceMode, whiteBalanceSample: NativeWhiteBalanceSample | null,
+  toneCurves: NativeToneCurves): Promise<NativeColorBand | null> {
+  return invoke<NativeColorBand | null>('native_sample_color', {
+    request: { sourcePath, x, y, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves) },
+  })
 }
 
 export async function chooseNativeExportPath(sourceName: string) {

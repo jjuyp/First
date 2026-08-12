@@ -1,5 +1,14 @@
 # Complete Internal Build Plan
 
+## Continuous M7-M11 acceptance (2026-08-12 specification)
+
+- [x] M7: Native eight-band Red/Orange/Yellow/Green/Cyan/Blue/Purple/Magenta OKLCh Color Mixer; H/C/L controls, circular overlap, hue-lock state, Native targeted sample, undo/serialization, Preview/Export shared stage and finite/HDR regressions.
+- [ ] M8: Four-way Color Grading with Global/Shadows/Midtones/Highlights H/C/L, balance, blending and amount.
+- [ ] M9: production Detail Engine with distinct sharpen, denoise and local-detail semantics.
+- [ ] M10: actual Lensfun database/provider integration with explicit match status and shared Native optics stage.
+- [ ] M11: crop/geometry/perspective/upright production stage and coordinate-space contract.
+- [ ] Level 3 Full Acceptance, acceptance commits, Draft PR push and final GitHub Actions green.
+
 ## Product principle — Open-source Foundation First
 
 Before expanding advanced Starroom-specific features, baseline image quality must stand on mature open-source foundations wherever a proven implementation already exists.

@@ -2,18 +2,17 @@
 
 ## Current Milestone
 
-Development Acceleration Pass — final acceptance gate before M7. **M7 is not started.**
+M7 — OKLCh Color Mixer. Continuous batch continues automatically through M11.
 
 ## Goal
 
-Maintain fast, dependency-aware development loops without weakening Starroom's Native shared-graph, RAW, color, Golden or release gates.
+Ship an eight-band, hue-locked OKLCh mixer in the Native shared Preview/Export graph with typed sampling, persistence and UI transport.
 
 ## Relevant modules
 
-- `scripts/test-target*.mjs`, `scripts/select-golden-fixtures.mjs`
-- `scripts/ci-changed-paths.mjs`, `.github/workflows/blueprint-check.yml`
-- `fixtures/golden/manifest.json`
-- `docs/19_MODULE_DEPENDENCY_MAP.md`, `docs/20_OPEN_SOURCE_IMPLEMENTATION_MAP.md`
+- `crates/starroom-color`, `crates/starroom-pipeline`, `crates/starroom-project`
+- `src-tauri/src/lib.rs`, `src/nativeRender.ts`, editor state/UI
+- render graph and Golden color/portrait/skin/neon/landscape tests
 
 ## Required files
 
@@ -24,37 +23,35 @@ Maintain fast, dependency-aware development loops without weakening Starroom's N
 
 ## Open-source reference
 
-No new image algorithm is introduced by this pass. Future pinned references are recorded in `docs/20_OPEN_SOURCE_IMPLEMENTATION_MAP.md`; provenance remains authoritative for any integration or derivation.
+darktable `colorzones.c` at the pinned release-5.6.0 revision supplies mature zone-selection behavior as a studied reference. Starroom owns the OKLab/OKLCh math and typed adapter; no code is copied in M7.
 
 ## Files/modules not related to current task
 
-M2 RAW decode and M3 camera-profile internals, M4 tone math, M5 WB semantics and M6 curve math are accepted foundations and must not be rewritten during workflow optimization.
+M2–M6 internals are accepted and may only be touched at the shared settings/stage boundary required to insert M7.
 
 ## Acceptance criteria
 
-- Canonical Level 1/2/3 commands execute rather than merely document a plan.
-- Golden manifest has validated canonical tags and deterministic subset selection.
-- CI classifies paths, broadens shared changes, caches safely, reports timing and retains an explicit Full Check.
-- Full Acceptance passes; PR #2 stays Draft; `main` remains unmerged; M7 remains unstarted.
+- Eight bands each expose Hue/Chroma/Lightness with circular smooth overlap.
+- Hue lock, achromatic/near-zero stability, sampling and finite/gamut behavior are numerical contracts.
+- State serializes and UI undo/redo sends compact settings to identical Native Preview/Export stages.
+- M7 targeted, relevant Golden and Level 2 acceptance pass; then update this file to M8 without stopping.
 
 ## Targeted tests
 
-- `npm run test:infra`
-- `npm run test:web`
-- Representative Rust target: `npm run test:curve -- --rust-only`
-- Final gate: `npm run test:full`
+- `npm run test:color`
+- `npm run test:milestone -- color`
 
 ## Golden tags
 
-Infrastructure validation covers the complete tag registry and verifies the future M7 selection `color,portrait,skin,neon,landscape`. No M7 image processing is executed.
+`color,portrait,skin,neon,landscape`; only active assets execute as photographic Goldens while planned cases remain explicit contracts.
 
 ## Required documentation updates
 
-Update `TODO.md`, `docs/IMPLEMENTATION_NOTES.md`, Golden specification, acceleration guide, dependency map and implementation map in the acceptance commit. Provenance changes only when a dependency/source/derivation changes.
+Update milestone acceptance notes and TODO. Provenance changes only if upstream code/data is integrated or directly adapted.
 
 ## Stop conditions
 
-Stop after the acceleration acceptance commit and green Full CI. Do not start M7, merge `main`, make PR #2 ready, force-push, or weaken Full Acceptance.
+Do not stop after M7; continue to M8. Stop only after green M11 batch Full Acceptance. Never merge `main`, make PR #2 ready, force-push or start M12.
 
 ## Template for the next milestone
 

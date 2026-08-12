@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 use starroom_advisor::{AnalysisStats, Suggestion, advise};
-use starroom_color::{CurvePoint, ToneParameters};
+use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, SharpenParameters};
 use starroom_imageio::{decode_source, decode_source_preview, encode_jpeg_rgb8};
 use starroom_pipeline::{
     RelativeColorParameters, RenderSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
     WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_to_srgb8,
+    sample_source_color_band,
 };
 use starroom_render::RenderGraph;
 use std::path::{Path, PathBuf};
@@ -78,6 +79,8 @@ struct NativeEditSettings {
     curve: Vec<CurvePoint>,
     #[serde(default)]
     curves: ToneCurveSet,
+    #[serde(default)]
+    color_mixer: ColorMixer,
 }
 
 impl NativeEditSettings {
@@ -95,6 +98,7 @@ impl NativeEditSettings {
             self.saturation,
             self.sharpness,
             self.noise_reduction,
+            self.color_mixer.band_width_degrees,
         ]
         .into_iter()
         .all(f32::is_finite)
@@ -107,6 +111,18 @@ impl NativeEditSettings {
         }
         if self.curve.len() > 32 {
             return Err("native tone curve accepts at most 32 points".into());
+        }
+        if !(30.0..=80.0).contains(&self.color_mixer.band_width_degrees)
+            || self.color_mixer.bands.iter().any(|band| {
+                ![band.hue_degrees, band.chroma, band.lightness]
+                    .into_iter()
+                    .all(f32::is_finite)
+                    || !(-30.0..=30.0).contains(&band.hue_degrees)
+                    || !(-1.0..=1.0).contains(&band.chroma)
+                    || !(-1.0..=1.0).contains(&band.lightness)
+            })
+        {
+            return Err("native color mixer settings are outside supported ranges".into());
         }
 
         let unit = |value: f32| (value / 100.0).clamp(-1.0, 1.0);
@@ -139,6 +155,7 @@ impl NativeEditSettings {
             },
             curve,
             curves: self.curves,
+            color_mixer: self.color_mixer,
             denoise: DenoiseParameters {
                 luminance: unit(self.noise_reduction).max(0.0),
                 chroma: unit(self.noise_reduction).max(0.0),
@@ -168,6 +185,26 @@ struct NativeExportRequest {
     output_path: PathBuf,
     quality: u8,
     settings: NativeEditSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeColorSampleRequest {
+    source_path: PathBuf,
+    x: f32,
+    y: f32,
+    settings: NativeEditSettings,
+}
+
+#[tauri::command]
+fn native_sample_color(
+    request: NativeColorSampleRequest,
+) -> Result<Option<starroom_color::ColorBand>, String> {
+    let settings = request.settings.validated()?;
+    let decoded = decode_source_preview(&request.source_path, 1800)
+        .map_err(|error| format!("native color sample decode failed: {error}"))?;
+    sample_source_color_band(&decoded, &settings, request.x, request.y)
+        .map_err(|error| format!("native color sample failed: {error}"))
 }
 
 #[derive(Debug, Serialize)]
@@ -296,7 +333,8 @@ pub fn run() {
             engine_capabilities,
             advise_image,
             native_preview,
-            native_export_jpeg
+            native_export_jpeg,
+            native_sample_color
         ])
         .run(tauri::generate_context!())
         .expect("error while running Starroom");
@@ -324,6 +362,7 @@ mod tests {
             white_balance_sample: None,
             curve: vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 1.0 }],
             curves: ToneCurveSet::default(),
+            color_mixer: ColorMixer::default(),
         }
     }
 
@@ -337,6 +376,7 @@ mod tests {
         assert_eq!(settings.relative_color.temperature, 0.3);
         assert_eq!(settings.relative_color.tint, -0.1);
         assert_eq!(settings.curve.len(), 2);
+        assert_eq!(settings.color_mixer, ColorMixer::default());
     }
 
     #[test]

@@ -1,4 +1,12 @@
 # Implementation Notes
+## 2026-08-12 M7 Color Mixer acceptance candidate
+
+- The production Color Mixer is now an eight-band Rust Native stage in linear Rec.2020 D65 -> OKLab/OKLCh -> circular overlapping band weights -> independent Hue/Chroma/Lightness -> Rec.2020. Red wrap-around is circular, achromatic pixels remain identity, scene-linear HDR inputs remain finite, and display/output gamut compression stays at the existing final output boundary.
+- Red, Orange, Yellow, Green, Cyan, Blue, Purple and Magenta each expose typed numeric controls. The React editor only serializes controls; it performs no color-science math. Native Preview and Export already share `apply_creative_graph`, so both invoke the identical mixer stage.
+- The targeted tool sends only normalized coordinates and compact edit state to Rust. Rust decodes the source through the same RAW/encoded working graph and returns an enum band; neutral samples return no selection. Mixer state is covered by the existing non-destructive snapshot undo/redo and the project schema now persists all eight bands, hue-lock intent and band width.
+- Added numerical regressions for hue lock, chroma/lightness independence, red circular overlap, neutral identity, scene-linear extremes, finite output and project/IPC round-trip. No new third-party executable dependency was introduced: conversions use the already-recorded Bjorn Ottosson OKLab reference and Starroom's existing Rec.2020 matrices.
+- Local frontend acceptance passed (Vitest 22/22, ESLint, TypeScript and Vite production build). Rust formatting passed; local native linking remains unavailable because MSVC `link.exe` is not installed, so warning-denied Clippy/workspace tests remain gated by the Windows GitHub runner.
+
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
 ## 2026-08-12 Development Acceleration Pass

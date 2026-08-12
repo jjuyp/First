@@ -15,7 +15,7 @@ import {
 } from './imagePipeline'
 import {
   chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
-  nativeThumbnailUrl, renderNativePreview, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
+  nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -334,10 +334,11 @@ function MaskOverlay({ bounds, mask, onBeginEdit, onChange }: {
   </svg>
 }
 
-function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdit, onMaskChange, onWhiteBalancePick, onHistogram, onStatus, onDimensions, metric = true }: {
+function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdit, onMaskChange, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, metric = true }: {
   photo: PhotoItem; before: boolean; zoom: 'fit' | '100'
   maskActive?: boolean; onBeginMaskEdit?: () => void; onMaskChange?: (mask: RadialMask) => void
   onWhiteBalancePick?: (sample: NativeWhiteBalanceSample) => void
+  onColorSample?: (x: number, y: number) => void
   onHistogram: (values: number[]) => void
   onStatus: (status: string) => void
   onDimensions: (dimensions: string) => void
@@ -434,11 +435,15 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
   return <>
     <canvas ref={canvasRef} className={`photo-canvas zoom-${zoom}`} aria-label={`Edited preview of ${photo.name}`}
       onDoubleClick={(event) => {
-        if (before || photo.whiteBalanceMode !== 'neutralPicker' || !onWhiteBalancePick) return
+        if (before) return
         const bounds = event.currentTarget.getBoundingClientRect()
+        const pointX = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
+        const pointY = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))
+        if (onColorSample) { onColorSample(pointX, pointY); return }
+        if (photo.whiteBalanceMode !== 'neutralPicker' || !onWhiteBalancePick) return
         const size = .06
-        const x = Math.max(0, Math.min(1 - size, (event.clientX - bounds.left) / bounds.width - size / 2))
-        const y = Math.max(0, Math.min(1 - size, (event.clientY - bounds.top) / bounds.height - size / 2))
+        const x = Math.max(0, Math.min(1 - size, pointX - size / 2))
+        const y = Math.max(0, Math.min(1 - size, pointY - size / 2))
         onWhiteBalancePick({ x, y, width: size, height: size })
       }} />
     {maskActive && canvasBounds.width > 0 && onBeginMaskEdit && onMaskChange
@@ -447,7 +452,8 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
 }
 
 function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurveChannel, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, onAdjust, onBeginAdjustment, onReset,
-  onCurveSelect, onCurveBegin, onCurveChange, onCurvePresetSave, onCurvePresetLoad, canLoadCurvePreset, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance }: {
+  onCurveSelect, onCurveBegin, onCurveChange, onCurvePresetSave, onCurvePresetLoad, canLoadCurvePreset, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance,
+  mixerBand, onMixerBand, mixerPicking, onMixerPicking }: {
   tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; curveChannel: keyof NativeToneCurves; histogram: number[]; onCurveChannel: (channel: keyof NativeToneCurves) => void; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
   onBeginAdjustment: () => void
@@ -457,7 +463,9 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   onMaskBegin: () => void; onMaskChange: (mask: RadialMask) => void
   whiteBalanceMode: NativeWhiteBalanceMode; onWhiteBalanceMode: (mode: NativeWhiteBalanceMode) => void
   onCopyWhiteBalance: () => void; onPasteWhiteBalance: () => void
+  mixerBand: string; onMixerBand: (band: string) => void; mixerPicking: boolean; onMixerPicking: () => void
 }) {
+  const mixerBands = ['Red', 'Orange', 'Yellow', 'Green', 'Cyan', 'Blue', 'Purple', 'Magenta'] as const
   const sliders = sliderGroups[tool] ?? []
   const normalizeAngle = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
   return <section className="inspector-content" aria-label={`${tool} inspector`}>
@@ -473,6 +481,22 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
         <option value="neutralPicker">Neutral picker</option><option value="relative">Relative (encoded)</option>
       </select></label><div><button onClick={onCopyWhiteBalance}>Copy WB</button><button onClick={onPasteWhiteBalance}>Paste WB</button></div>
       <small>{whiteBalanceMode === 'neutralPicker' ? 'Double-click a neutral area in the preview to sample it.' : 'Mode is recorded with this non-destructive edit.'}</small></div>}
+      <div className="mixer-panel" aria-label="Eight-band Color Mixer">
+        <div className="mixer-heading"><strong>Color Mixer</strong><button className={mixerPicking ? 'active' : ''} onClick={onMixerPicking}>Target</button><label><input type="checkbox" checked={values.mixerHueLock !== 0}
+          onFocus={onBeginAdjustment} onChange={(event) => onAdjust('mixerHueLock', event.target.checked ? 1 : 0)} /> Hue lock</label></div>
+        <div className="mixer-tabs" role="tablist" aria-label="Color Mixer bands">
+          {mixerBands.map((band) => <button key={band} role="tab" aria-selected={band === mixerBand}
+            className={band === mixerBand ? `active band-${band.toLowerCase()}` : `band-${band.toLowerCase()}`}
+            onClick={() => onMixerBand(band)}>{band}</button>)}
+        </div>
+        {([['Hue', -30, 30, 1, '°'], ['Chroma', -100, 100, 1, ''], ['Lightness', -100, 100, 1, '']] as const)
+          .map(([control, min, max, step, suffix]) => {
+            const key = `mixer${mixerBand}${control}` as AdjustmentKey
+            return <Slider key={key} label={`${mixerBand} ${control}`} value={values[key]} min={min} max={max} step={step} suffix={suffix}
+              onBeginEdit={onBeginAdjustment} onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />
+          })}
+        <small>Targeted edits are calculated in native OKLCh with circular, overlapping hue bands.</small>
+      </div>
     </>}
     {tool === 'masks' && <div className="tool-note">Click the photo to place the mask. Drag inside to move; drag side handles to resize; drag the top handle to rotate.</div>}
     {tool === 'curve' && <><CurveChannelTabs value={curveChannel} onChange={onCurveChannel} /><ToneCurveEditor points={curvePoints} selectedId={selectedCurvePoint} onSelect={onCurveSelect}
@@ -546,6 +570,8 @@ export function App() {
   const [notice, setNotice] = useState('')
   const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<Pick<PhotoItem, 'whiteBalanceMode' | 'whiteBalanceSample'> | null>(null)
   const [savedCurvePreset, setSavedCurvePreset] = usePersistedValue<NativeToneCurves | null>('starroom-custom-curve-preset', null)
+  const [mixerBand, setMixerBand] = useState('Red')
+  const [mixerPicking, setMixerPicking] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -727,6 +753,23 @@ export function App() {
     setNotice('White balance pasted')
   }
 
+  async function pickMixerBand(x: number, y: number) {
+    if (!selected.sourcePath || selected.renderBackend !== 'native') {
+      setNotice('Color Mixer targeting requires a Native photo; no Browser color fallback was used.')
+      return
+    }
+    try {
+      const band = await sampleNativeColor(selected.sourcePath, x, y, selected.adjustments, selected.curvePoints,
+        selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels)
+      if (!band) { setNotice('The sampled area is neutral; no color band was selected.'); return }
+      setMixerBand(`${band[0].toUpperCase()}${band.slice(1)}`)
+      setMixerPicking(false)
+      setNotice(`${band} band selected from Native working color`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Native Color Mixer sampling failed')
+    }
+  }
+
   function updateMask(mask: RadialMask) {
     updateSelected((photo) => ({ ...photo, mask: { ...mask }, future: [] }))
     setBefore(false)
@@ -857,6 +900,7 @@ export function App() {
               <PreviewCanvas photo={selected} before={before} zoom={zoom} maskActive={tool === 'masks' && !before}
                 onBeginMaskEdit={beginInteractiveEdit} onMaskChange={updateMask}
                 onWhiteBalancePick={(sample) => updateWhiteBalance('neutralPicker', sample)}
+                onColorSample={tool === 'color' && mixerPicking ? pickMixerBand : undefined}
                 onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} />
               <span className="preview-badge">{selected.renderBackend === 'native' ? 'Native CPU' : 'Browser fallback'} · {before ? 'Original' : hasPhotoEdits(selected) ? `${countPhotoEdits(selected)} edits` : 'Original'}</span>
             </div>
@@ -885,7 +929,8 @@ export function App() {
             mask={selected.mask} onAdjust={adjust} onBeginAdjustment={beginInteractiveEdit} onReset={resetAdjustment} onCurveSelect={setSelectedCurvePoint}
             onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask}
             onCurvePresetSave={saveCurvePreset} onCurvePresetLoad={loadCurvePreset} canLoadCurvePreset={savedCurvePreset !== null}
-            onWhiteBalanceMode={(mode) => updateWhiteBalance(mode)} onCopyWhiteBalance={copyWhiteBalance} onPasteWhiteBalance={pasteWhiteBalance} />
+            onWhiteBalanceMode={(mode) => updateWhiteBalance(mode)} onCopyWhiteBalance={copyWhiteBalance} onPasteWhiteBalance={pasteWhiteBalance}
+            mixerBand={mixerBand} onMixerBand={setMixerBand} mixerPicking={mixerPicking} onMixerPicking={() => setMixerPicking(!mixerPicking)} />
         </div>
         <button className="reset-all" disabled={!hasPhotoEdits(selected)} onClick={resetAll}><RotateCcw size={14} /> Reset all edits</button>
       </aside>
