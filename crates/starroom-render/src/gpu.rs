@@ -7,8 +7,8 @@
 //! half-float quantisation errors.
 
 use bytemuck::{Pod, Zeroable};
-use std::{borrow::Cow, sync::Arc};
 use serde::Serialize;
+use std::{borrow::Cow, sync::Arc};
 use thiserror::Error;
 
 pub const GPU_WORKING_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -144,6 +144,7 @@ impl GpuRenderer {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
             .await
             .ok();
@@ -156,6 +157,7 @@ impl GpuRenderer {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
                     force_fallback_adapter: false,
+                    apply_limit_buckets: false,
                 })
                 .await
                 .map_err(|_| GpuError::NoCompatibleAdapter)?;
@@ -219,7 +221,7 @@ impl GpuRenderer {
             label: Some("starroom-m12-exposure-wgsl"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(EXPOSURE_WGSL)),
         });
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let validation_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let exposure_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("starroom-m12-exposure-pipeline"),
             layout: Some(&pipeline_layout),
@@ -228,7 +230,7 @@ impl GpuRenderer {
             compilation_options: Default::default(),
             cache: None,
         });
-        if let Some(error) = device.pop_error_scope().await {
+        if let Some(error) = validation_scope.pop().await {
             return Err(GpuError::Shader(error.to_string()));
         }
         Ok(Self {
@@ -274,7 +276,9 @@ impl GpuRenderer {
         };
         let texels = u64::from(width) * u64::from(height);
         if texels > u64::from(self.device.limits().max_texture_dimension_2d).pow(2) {
-            return Err(GpuError::Unsupported("texture exceeds adapter dimension limits".into()));
+            return Err(GpuError::Unsupported(
+                "texture exceeds adapter dimension limits".into(),
+            ));
         }
         let image = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("starroom-m12-linear-rec2020"),
@@ -410,7 +414,9 @@ impl GpuRenderer {
             .recv()
             .map_err(|error| GpuError::Readback(error.to_string()))?
             .map_err(|error| GpuError::Readback(error.to_string()))?;
-        let data = slice.get_mapped_range();
+        let data = slice
+            .get_mapped_range()
+            .map_err(|error| GpuError::Readback(error.to_string()))?;
         let result = bytemuck::cast_slice::<u8, [f32; 4]>(&data).to_vec();
         drop(data);
         staging.unmap();
@@ -489,12 +495,19 @@ mod tests {
     fn disabled_gpu_preference_never_probes_or_hides_cpu_status() {
         let status = probe_gpu_status(false);
         assert_eq!(status.backend, GpuBackendKind::CpuFallback);
-        assert_eq!(status.reason.as_deref(), Some("GPU preview is disabled by request"));
+        assert_eq!(
+            status.reason.as_deref(),
+            Some("GPU preview is disabled by request")
+        );
     }
 
     #[test]
     fn typed_failure_variants_remain_explicit_cpu_fallback_causes() {
-        for error in [GpuError::DeviceLost, GpuError::OutOfMemory, GpuError::Unsupported("R16Float storage texture".into())] {
+        for error in [
+            GpuError::DeviceLost,
+            GpuError::OutOfMemory,
+            GpuError::Unsupported("R16Float storage texture".into()),
+        ] {
             let status = resolve_preview_backend(true, Err(error));
             assert_eq!(status.backend, GpuBackendKind::CpuFallback);
             assert!(status.reason.is_some());
@@ -508,11 +521,11 @@ mod tests {
         // reach this node after their respective input transforms, so the node contract itself is
         // deliberately linear Rec.2020 rather than format-specific.
         let pixels = [
-            [0.18, 0.18, 0.18, 1.0], // neutral
-            [0.62, 0.31, 0.22, 1.0], // portrait / skin
-            [0.07, 0.28, 0.12, 1.0], // landscape shadow
-            [1.8, 0.04, 1.2, 1.0],  // neon / high saturation
-            [8.0, 2.0, 0.5, 0.8],   // scene-linear HDR highlight
+            [0.18, 0.18, 0.18, 1.0],    // neutral
+            [0.62, 0.31, 0.22, 1.0],    // portrait / skin
+            [0.07, 0.28, 0.12, 1.0],    // landscape shadow
+            [1.8, 0.04, 1.2, 1.0],      // neon / high saturation
+            [8.0, 2.0, 0.5, 0.8],       // scene-linear HDR highlight
             [0.002, 0.004, 0.008, 1.0], // deep shadow
         ];
         let expected = apply_exposure_reference(&pixels, -2.75).expect("CPU reference");
