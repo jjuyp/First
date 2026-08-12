@@ -865,7 +865,18 @@ mod tests {
             Ok(gpu) => {
                 let accelerated = render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu)
                     .expect("GPU graph");
-                assert_eq!(accelerated.data, cpu.data);
+                // The GPU node is compared before output quantisation in `starroom-render`.
+                // This integration guard permits at most one final 8-bit code value of rounding
+                // difference, rather than hiding a colour/tone drift with a broad visual metric.
+                assert!(
+                    accelerated
+                        .data
+                        .iter()
+                        .zip(&cpu.data)
+                        .all(
+                            |(gpu, reference)| i16::from(*gpu).abs_diff(i16::from(*reference)) <= 1
+                        )
+                );
                 assert_eq!(accelerated.width, cpu.width);
                 assert_eq!(accelerated.height, cpu.height);
             }
