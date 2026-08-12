@@ -9,6 +9,12 @@
 - [x] M11: Native crop (free/original/common/custom ratio), rotate/fine-rotate/flip/scale/offset, horizontal/vertical keystone, draggable four-point correction, image-derived Upright modes, overlays, project/undo state and explicit source/post-lens/post-geometry/viewport coordinate contract.
 - [x] Level 3 Full Acceptance: 123 Rust tests and 26 Vitest tests passed with warning-denied Clippy, rustfmt, JSON/Golden/RAW validation, lint and production build in push run `31613588937`; acceptance record remains on Draft PR #2 and `main` is unmerged.
 
+## M12 GPU Render Engine acceptance (2026-08-12)
+
+- [x] Integrated pinned wgpu 30.0.0 as a DX12-first, explicit Native Preview acceleration backend; CPU remains the reference oracle and Export remains the same CPU graph for deterministic output.
+- [x] Added linear Rec.2020 D65 RGBA16Float / R16Float resource contracts, WGSL exposure compute dispatch, buffer lifecycle, shader validation, device/unsupported/OOM/loss typed fallback and UI-visible backend/fallback status.
+- [x] Added strict CPU/GPU HDR/skin/neon/shadow parity corpus, shared Native Preview graph integration, GPU CI gate and relevant Golden selection. Push run `31620924649` passed all Web, GPU, RAW and dependent gates.
+
 ## Product principle — Open-source Foundation First
 
 Before expanding advanced Starroom-specific features, baseline image quality must stand on mature open-source foundations wherever a proven implementation already exists.

@@ -1,4 +1,10 @@
 # Implementation Notes
+## 2026-08-12 M12 GPU acceptance
+
+- `starroom-render::gpu` integrates official wgpu 30.0.0 as a Windows DX12-first adapter. `GpuRenderer` owns instance, adapter/device/queue, shader module, pipeline/bind-group layout, buffers and explicit RGBA16Float/R16Float resource allocation. The only migrated production node is scene-linear Exposure; the CPU Tone/Curve/Mixer/Grading/Detail sequence stays the reference implementation rather than introducing a second colour-science path.
+- Native Preview selects the parity-checked GPU Exposure path when available. DX12-unavailable, adapter/device, shader, unsupported-resource, OOM and device-loss states are typed and produce an explicit Native CPU-fallback flag/status; no browser fallback is selected. Export stays on the same shared CPU semantic graph for deterministic output.
+- GPU regressions cover neutral, portrait/skin, landscape shadow, neon/high saturation, HDR, deep shadow, finite guards and the Native shared preview parity boundary. Windows push run `31620924649` passed GPU Check plus Web, RAW, Color, Detail, Geometry, Optics and AI gates. The local machine passes format/metadata, lint, Vitest, Golden validation and build; it lacks `link.exe`, so CI remains the native compiler authority.
+
 ## 2026-08-12 M7-M11 final acceptance
 
 - M7 through M11 are production implementations in the Rust Native shared render graph. Preview, Before/After and Export share the same mixer, grading, detail, Lensfun optics and geometry stages; the TypeScript layer transports typed parameters and interaction state rather than image-processing math or full-frame JSON pixels.
