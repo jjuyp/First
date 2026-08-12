@@ -108,7 +108,7 @@ These milestone numbers supersede the older capability-group numbering below for
 - [x] Native Master and R/G/B monotone cubic-Hermite curves with endpoint/HDR-safe extrapolation and backward-compatible legacy Master curve migration.
 - [x] Channel-aware UI editing (tabs, add/drag/delete, numeric endpoint editing) and undo snapshots now serialize and send the full curve set to Native Preview/Export.
 - [x] Add named Identity/S-curve/Black-fade presets and live histogram curve background; preset application is undoable and uses the same Native curve contract.
-- [x] M6 acceptance implementation includes provider-backed M5 skin/mixed-light coverage plus M6 identity, S-curve, HDR extreme, RGB channel, real RAW shared-graph and portrait/gradient Golden vectors; final acceptance CI is recorded after the coverage commit.
+- [x] Final M4-M6 acceptance includes provider-backed M5 skin/mixed-light coverage plus M6 identity, S-curve, HDR extreme, RGB channel, real RAW shared-graph and portrait/gradient Golden vectors. Coverage push run `31597151940` and Draft PR run `31597154881` are green.
 
 ## M2 Tone / Color Foundation — use mature open-source behavior
 
