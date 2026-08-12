@@ -189,7 +189,7 @@ fn attribute(element: &BytesStart<'_>, key: &[u8]) -> Option<String> {
         .find(|attribute| attribute.key.as_ref() == key)
         .and_then(|attribute| {
             attribute
-                .normalized_value(XmlVersion::V10)
+                .normalized_value(XmlVersion::Implicit1_0)
                 .ok()
                 .map(|value| value.into_owned())
         })
