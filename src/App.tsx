@@ -15,7 +15,7 @@ import {
 } from './imagePipeline'
 import {
   chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
-  nativeThumbnailUrl, renderNativePreview, type RenderBackend,
+  nativeThumbnailUrl, renderNativePreview, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -31,6 +31,8 @@ interface PhotoItem {
   rating: number
   adjustments: Adjustments
   curvePoints: ToneCurvePoint[]
+  whiteBalanceMode: NativeWhiteBalanceMode
+  whiteBalanceSample: NativeWhiteBalanceSample | null
   mask: RadialMask
   history: EditSnapshot[]
   future: EditSnapshot[]
@@ -39,6 +41,8 @@ interface PhotoItem {
 interface EditSnapshot {
   adjustments: Adjustments
   curvePoints: ToneCurvePoint[]
+  whiteBalanceMode: NativeWhiteBalanceMode
+  whiteBalanceSample: NativeWhiteBalanceSample | null
   mask: RadialMask
 }
 
@@ -53,10 +57,12 @@ const defaultMask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotatio
 
 const copyCurve = (points: ToneCurvePoint[]) => points.map((point) => ({ ...point }))
 const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
-  adjustments: { ...photo.adjustments }, curvePoints: copyCurve(photo.curvePoints), mask: { ...photo.mask },
+  adjustments: { ...photo.adjustments }, curvePoints: copyCurve(photo.curvePoints), whiteBalanceMode: photo.whiteBalanceMode,
+  whiteBalanceSample: photo.whiteBalanceSample ? { ...photo.whiteBalanceSample } : null, mask: { ...photo.mask },
 })
 const applySnapshot = (photo: PhotoItem, snapshot: EditSnapshot) => ({
-  ...photo, adjustments: { ...snapshot.adjustments }, curvePoints: copyCurve(snapshot.curvePoints), mask: { ...snapshot.mask },
+  ...photo, adjustments: { ...snapshot.adjustments }, curvePoints: copyCurve(snapshot.curvePoints),
+  whiteBalanceMode: snapshot.whiteBalanceMode, whiteBalanceSample: snapshot.whiteBalanceSample ? { ...snapshot.whiteBalanceSample } : null, mask: { ...snapshot.mask },
 })
 const hasCurveEdits = (points: ToneCurvePoint[]) => points.length !== defaultCurvePoints.length
   || points.some((point, index) => Math.abs(point.x - defaultCurvePoints[index].x) > .0001 || Math.abs(point.y - defaultCurvePoints[index].y) > .0001)
@@ -76,6 +82,8 @@ const demoPhoto: PhotoItem = {
   rating: 0,
   adjustments: { ...defaultAdjustments },
   curvePoints: copyCurve(defaultCurvePoints),
+  whiteBalanceMode: 'sourceDefault',
+  whiteBalanceSample: null,
   mask: { ...defaultMask },
   history: [],
   future: [],
@@ -313,9 +321,10 @@ function MaskOverlay({ bounds, mask, onBeginEdit, onChange }: {
   </svg>
 }
 
-function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdit, onMaskChange, onHistogram, onStatus, onDimensions, metric = true }: {
+function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdit, onMaskChange, onWhiteBalancePick, onHistogram, onStatus, onDimensions, metric = true }: {
   photo: PhotoItem; before: boolean; zoom: 'fit' | '100'
   maskActive?: boolean; onBeginMaskEdit?: () => void; onMaskChange?: (mask: RadialMask) => void
+  onWhiteBalancePick?: (sample: NativeWhiteBalanceSample) => void
   onHistogram: (values: number[]) => void
   onStatus: (status: string) => void
   onDimensions: (dimensions: string) => void
@@ -339,7 +348,8 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
         let release: (() => void) | undefined
         if (photo.renderBackend === 'native') {
           if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
-          const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask)
+          const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
+            before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample)
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -397,7 +407,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints,
+  }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.whiteBalanceMode, photo.whiteBalanceSample,
     photo.mask, photo.renderBackend, photo.sourcePath, photo.src])
 
   useEffect(() => {
@@ -408,20 +418,30 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
   }, [])
 
   return <>
-    <canvas ref={canvasRef} className={`photo-canvas zoom-${zoom}`} aria-label={`Edited preview of ${photo.name}`} />
+    <canvas ref={canvasRef} className={`photo-canvas zoom-${zoom}`} aria-label={`Edited preview of ${photo.name}`}
+      onDoubleClick={(event) => {
+        if (before || photo.whiteBalanceMode !== 'neutralPicker' || !onWhiteBalancePick) return
+        const bounds = event.currentTarget.getBoundingClientRect()
+        const size = .06
+        const x = Math.max(0, Math.min(1 - size, (event.clientX - bounds.left) / bounds.width - size / 2))
+        const y = Math.max(0, Math.min(1 - size, (event.clientY - bounds.top) / bounds.height - size / 2))
+        onWhiteBalancePick({ x, y, width: size, height: size })
+      }} />
     {maskActive && canvasBounds.width > 0 && onBeginMaskEdit && onMaskChange
       ? <MaskOverlay bounds={canvasBounds} mask={photo.mask} onBeginEdit={onBeginMaskEdit} onChange={onMaskChange} /> : null}
   </>
 }
 
-function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, renderBackend, onAdjust, onBeginAdjustment, onReset,
-  onCurveSelect, onCurveBegin, onCurveChange, onMaskBegin, onMaskChange }: {
+function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, onAdjust, onBeginAdjustment, onReset,
+  onCurveSelect, onCurveBegin, onCurveChange, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance }: {
   tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
   onBeginAdjustment: () => void
   onReset: (key: AdjustmentKey) => void
   onCurveSelect: (id: string) => void; onCurveBegin: () => void; onCurveChange: (points: ToneCurvePoint[]) => void
   onMaskBegin: () => void; onMaskChange: (mask: RadialMask) => void
+  whiteBalanceMode: NativeWhiteBalanceMode; onWhiteBalanceMode: (mode: NativeWhiteBalanceMode) => void
+  onCopyWhiteBalance: () => void; onPasteWhiteBalance: () => void
 }) {
   const sliders = sliderGroups[tool] ?? []
   const normalizeAngle = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
@@ -429,7 +449,16 @@ function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, render
     <div className="inspector-head"><div><span className="eyebrow">Live CPU preview</span><h2>{tool}</h2></div><ChevronDown size={16} /></div>
     {renderBackend === 'native' && ['masks', 'optics', 'geometry'].includes(tool)
       && <div className="tool-note">This tool is outside the M1C Native slice. Applying it raises an explicit error; Starroom will not silently use Browser Canvas.</div>}
-    {tool === 'color' && <div className="tool-note">Encoded-image Temperature/Tint are relative corrections. Physical Kelvin will be available on the RAW pipeline.</div>}
+    {tool === 'color' && <>
+      <div className="tool-note">Encoded-image Temperature/Tint are relative corrections, not physical Kelvin. RAW Camera/As-Shot uses LibRaw metadata.</div>
+      {renderBackend === 'native' && <div className="wb-controls"><label>White balance mode<select value={whiteBalanceMode}
+        onFocus={onBeginAdjustment} onChange={(event) => onWhiteBalanceMode(event.target.value as NativeWhiteBalanceMode)}>
+        <option value="sourceDefault">Source default</option><option value="asShot">As Shot (RAW)</option>
+        <option value="camera">Camera (RAW)</option><option value="auto">Auto (gray world)</option>
+        <option value="neutralPicker">Neutral picker</option><option value="relative">Relative (encoded)</option>
+      </select></label><div><button onClick={onCopyWhiteBalance}>Copy WB</button><button onClick={onPasteWhiteBalance}>Paste WB</button></div>
+      <small>{whiteBalanceMode === 'neutralPicker' ? 'Double-click a neutral area in the preview to sample it.' : 'Mode is recorded with this non-destructive edit.'}</small></div>}
+    </>}
     {tool === 'masks' && <div className="tool-note">Click the photo to place the mask. Drag inside to move; drag side handles to resize; drag the top handle to rotate.</div>}
     {tool === 'curve' && <ToneCurveEditor points={curvePoints} selectedId={selectedCurvePoint} onSelect={onCurveSelect}
       onBeginEdit={onCurveBegin} onChange={onCurveChange} />}
@@ -499,6 +528,7 @@ export function App() {
   const [renderStatus, setRenderStatus] = useState('Ready')
   const [dimensions, setDimensions] = useState('—')
   const [notice, setNotice] = useState('')
+  const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<Pick<PhotoItem, 'whiteBalanceMode' | 'whiteBalanceSample'> | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -548,7 +578,7 @@ export function App() {
       const src = URL.createObjectURL(file)
       objectUrls.current.add(src)
       return { id: crypto.randomUUID(), name: file.name, src, renderBackend: 'browserFallback', imported: true, rating: 0,
-        adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), mask: { ...defaultMask }, history: [], future: [] }
+        adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null, mask: { ...defaultMask }, history: [], future: [] }
     })
     setPhotos((current) => [...imported, ...current])
     selectPhoto(imported[0].id)
@@ -576,6 +606,8 @@ export function App() {
         rating: 0,
         adjustments: { ...defaultAdjustments },
         curvePoints: copyCurve(defaultCurvePoints),
+        whiteBalanceMode: 'sourceDefault',
+        whiteBalanceSample: null,
         mask: { ...defaultMask },
         history: [],
         future: [],
@@ -644,6 +676,25 @@ export function App() {
     setBefore(false)
   }
 
+  function updateWhiteBalance(mode: NativeWhiteBalanceMode, sample: NativeWhiteBalanceSample | null = null) {
+    updateSelected((photo) => ({ ...photo, whiteBalanceMode: mode, whiteBalanceSample: sample,
+      history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    setBefore(false)
+  }
+
+  function copyWhiteBalance() {
+    setCopiedWhiteBalance({ whiteBalanceMode: selected.whiteBalanceMode,
+      whiteBalanceSample: selected.whiteBalanceSample ? { ...selected.whiteBalanceSample } : null })
+    setNotice('White balance copied')
+  }
+
+  function pasteWhiteBalance() {
+    if (!copiedWhiteBalance) { setNotice('Copy a white balance first'); return }
+    updateWhiteBalance(copiedWhiteBalance.whiteBalanceMode,
+      copiedWhiteBalance.whiteBalanceSample ? { ...copiedWhiteBalance.whiteBalanceSample } : null)
+    setNotice('White balance pasted')
+  }
+
   function updateMask(mask: RadialMask) {
     updateSelected((photo) => ({ ...photo, mask: { ...mask }, future: [] }))
     setBefore(false)
@@ -675,7 +726,7 @@ export function App() {
 
   function resetAll() {
     if (!hasPhotoEdits(selected)) return
-    updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), mask: { ...defaultMask },
+    updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null, mask: { ...defaultMask },
       history: [...photo.history, takeSnapshot(photo)], future: [] }))
   }
 
@@ -689,7 +740,8 @@ export function App() {
           setRenderStatus('Export cancelled')
           return
         }
-        const result = await exportNativeJpeg(selected.sourcePath, outputPath, selected.adjustments, selected.curvePoints, selected.mask)
+        const result = await exportNativeJpeg(selected.sourcePath, outputPath, selected.adjustments, selected.curvePoints, selected.mask,
+          selected.whiteBalanceMode, selected.whiteBalanceSample)
         setNotice(`Native JPEG exported · ${result.width} × ${result.height} · ${result.inputProfile}`)
         setRenderStatus(`Native CPU · ${result.workingSpace}`)
         return
@@ -772,6 +824,7 @@ export function App() {
             <div className="photo-frame" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoomScale})` }}>
               <PreviewCanvas photo={selected} before={before} zoom={zoom} maskActive={tool === 'masks' && !before}
                 onBeginMaskEdit={beginInteractiveEdit} onMaskChange={updateMask}
+                onWhiteBalancePick={(sample) => updateWhiteBalance('neutralPicker', sample)}
                 onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} />
               <span className="preview-badge">{selected.renderBackend === 'native' ? 'Native CPU' : 'Browser fallback'} · {before ? 'Original' : hasPhotoEdits(selected) ? `${countPhotoEdits(selected)} edits` : 'Original'}</span>
             </div>
@@ -796,8 +849,10 @@ export function App() {
             className={tool === id ? 'active' : ''} aria-label={label}
             title={label} onClick={() => setTool(id)}><Icon size={18} /><span>{label}</span></button>)}</nav>
           <Inspector tool={tool} values={selected.adjustments} curvePoints={selected.curvePoints} selectedCurvePoint={selectedCurvePoint} renderBackend={selected.renderBackend}
+            whiteBalanceMode={selected.whiteBalanceMode}
             mask={selected.mask} onAdjust={adjust} onBeginAdjustment={beginInteractiveEdit} onReset={resetAdjustment} onCurveSelect={setSelectedCurvePoint}
-            onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask} />
+            onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask}
+            onWhiteBalanceMode={(mode) => updateWhiteBalance(mode)} onCopyWhiteBalance={copyWhiteBalance} onPasteWhiteBalance={pasteWhiteBalance} />
         </div>
         <button className="reset-all" disabled={!hasPhotoEdits(selected)} onClick={resetAll}><RotateCcw size={14} /> Reset all edits</button>
       </aside>

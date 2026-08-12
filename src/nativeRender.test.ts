@@ -36,6 +36,8 @@ describe('native preview contract', () => {
     expect(settings.exposure).toBe(.75)
     expect(settings.temperature).toBe(25)
     expect(settings.shadows).toBe(30)
+    expect(settings.whiteBalanceMode).toBe('sourceDefault')
+    expect(settings.whiteBalanceSample).toBeNull()
     expect(settings.curve).toEqual([{ x: 0, y: 0 }, { x: 1, y: 1 }])
   })
 

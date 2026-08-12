@@ -98,8 +98,10 @@ These milestone numbers supersede the older capability-group numbering below for
 
 ### M5 Professional white balance / calibration
 
-- [ ] Separate camera/as-shot RAW WB from rendered-file relative Temperature/Tint.
-- [ ] Auto-WB provider, Gray/Neutral picker, sampling, serializable/undo/copy-paste state and regressions; CI green.
+- [x] Separate typed Camera/As-Shot RAW WB from rendered-file Relative Temperature/Tint in the Native shared graph; invalid source/mode combinations are typed errors, never silent fallbacks.
+- [x] Add an active deterministic gray-world Auto WB provider plus normalized Native Neutral Picker sampling; both operate before the shared creative graph.
+- [x] Persist WB mode, relative Temperature/Tint and optional picker ROI in project state with backward-compatible defaults; UI transport keeps the state small and pixel-free.
+- [x] Add neutral-gray, auto/extreme and semantic-error numerical regressions. M5 CI acceptance is recorded after the dedicated acceptance commit.
 
 ### M6 Professional tone curves
 

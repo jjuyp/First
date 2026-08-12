@@ -1,6 +1,13 @@
 # Implementation Notes
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
+## 2026-08-12 M5 white balance / calibration candidate
+
+- M5 introduces a typed `WhiteBalanceMode` in the Rust Native shared graph: `SourceDefault`, `AsShot`, `Camera`, `Auto`, `NeutralPicker` and `Relative`. LibRaw continues to apply the recorded Camera Neutral / As-Shot multipliers before its linear camera-RGB output reaches the M3 camera-profile stage. `AsShot` and `Camera` therefore retain real RAW semantics; encoded JPEG/PNG/TIFF only accepts `SourceDefault`/`Relative`, and asking it for a camera WB returns a typed error instead of silently inventing one.
+- Auto uses a bounded, deterministic gray-world provider that excludes near-black and clipped samples. Neutral Picker accepts a small normalized source-space ROI, estimates a green-referenced diagonal correction from finite pixels, and is executed before native creative colour/tone. The existing M3 Bradford D50/D65 adaptation remains the formal camera/profile chromatic-adaptation stage; picker/auto act in the resulting linear Rec.2020 D65 working space.
+- Relative Temperature/Tint retain their explicitly non-Kelvin encoded-image meaning. RAW values remain downstream fine corrections to the true LibRaw Camera/As-Shot basis, never a claim that an encoded image has physical camera Kelvin metadata. `Project.whiteBalance` serializes intent, controls and optional ROI with a backward-compatible `sourceDefault` default, ready for UI undo/copy-paste state.
+- Added Native graph numerical regressions for neutral gray picker, Auto WB with clipped/HDR extremes, typed RAW/encoded semantic rejection and invalid ROI rejection. The implementation uses existing LibRaw and the already-proven LittleCMS/Bradford working-space stage; no new third-party executable dependency was added. Acceptance/CI result will be added only after the M5 acceptance commit is green.
+
 ## 2026-08-12 M4 tone / light candidate
 
 - M4 selects a **direct GPL-derived / private-use adaptation** of darktable's stable generalized-loglogistic sigmoid response, rather than retaining the former simple highlight division. The source is `darktable-org/darktable` `release-5.6.0`, tag object `f89bf9231fb21db0a53b3c279ff164caef48cef8`, commit `3c17b2976793303c186a5f64e8c9635ecf8b15d3`, `src/iop/sigmoid.c`, GPL-3.0-or-later. The adapted function is isolated in `crates/starroom-color/src/lib.rs`, carries a source marker, and the project workspace now declares GPL-3.0-or-later. `NOTICE.md` and provenance identify the corresponding-source duty before any external binary release.

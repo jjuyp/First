@@ -6,6 +6,8 @@ The license-cleared RAW decoder matrix is active in `fixtures/raw/manifest.json`
 
 The ColorChecker case now has an active numerical oracle at `fixtures/colorchecker/babelcolor-average-v0.4.7.json`: 24 BabelColor Average xyY patches under ICC D50 from the pinned BSD-3-Clause `colour-science/colour` v0.4.7 dataset. CI retains and validates the upstream license and M3 tests exercise D50 -> D65 adaptation and finite profile transforms for every patch. The photographic ColorChecker case remains `planned` until a redistributable chart capture, ROIs and reviewed rendered baseline are accepted.
 
+M5 adds executable Native white-balance vectors while photographic Golden assets remain planned: neutral-gray picker must equalize its sampled cast, the active gray-world provider must remain finite with mixed/HDR samples, invalid picker ROI must fail explicitly, and encoded Camera/As-Shot requests must fail rather than substitute a Relative correction. The retained RAW fixture matrix continues to validate LibRaw Camera/As-Shot metadata and the shared RAW graph.
+
 ## Common capture and storage contract
 
 - Sources are immutable, redistributable files with creator/license/provenance, SHA-256, dimensions, bit depth, format, embedded ICC status, EXIF status and reference ROIs recorded in the manifest.

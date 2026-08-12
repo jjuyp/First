@@ -43,11 +43,57 @@ pub struct RelativeColorParameters {
     pub saturation: f32,
 }
 
+/// White-balance intent is persisted independently from the creative colour controls.
+/// `SourceDefault` means LibRaw camera WB for RAW and relative controls for encoded sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum WhiteBalanceMode {
+    #[default]
+    SourceDefault,
+    AsShot,
+    Camera,
+    Auto,
+    NeutralPicker,
+    Relative,
+}
+
+/// Normalized source-space rectangle used by the native Neutral Picker.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhiteBalanceSample {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl WhiteBalanceSample {
+    fn validated(self) -> bool {
+        [self.x, self.y, self.width, self.height]
+            .into_iter()
+            .all(f32::is_finite)
+            && self.x >= 0.0
+            && self.y >= 0.0
+            && self.width > 0.0
+            && self.height > 0.0
+            && self.x + self.width <= 1.0
+            && self.y + self.height <= 1.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WhiteBalanceSettings {
+    pub mode: WhiteBalanceMode,
+    pub sample: Option<WhiteBalanceSample>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderSettings {
     pub color_management: ColorManagementSettings,
     pub tone: ToneParameters,
     pub relative_color: RelativeColorParameters,
+    pub white_balance: WhiteBalanceSettings,
     pub curve: Vec<CurvePoint>,
     pub color_mixer: ColorMixer,
     pub grading: GradingParameters,
@@ -61,6 +107,7 @@ impl Default for RenderSettings {
             color_management: ColorManagementSettings::default(),
             tone: ToneParameters::default(),
             relative_color: RelativeColorParameters::default(),
+            white_balance: WhiteBalanceSettings::default(),
             curve: Vec::new(),
             color_mixer: ColorMixer::default(),
             grading: GradingParameters::default(),
@@ -79,8 +126,138 @@ pub enum PipelineError {
     InvalidDecodedBuffer,
     #[error("detail image buffer is invalid")]
     DetailBuffer,
+    #[error("white-balance mode {mode:?} is not valid for {source} input")]
+    WhiteBalanceSemantic {
+        mode: WhiteBalanceMode,
+        source: &'static str,
+    },
+    #[error("neutral-picker sample is missing or invalid")]
+    InvalidWhiteBalanceSample,
     #[error(transparent)]
     ColorManagement(#[from] ColorManagementError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceKind {
+    Raw,
+    Encoded,
+}
+
+fn neutral_scale(sum: [f32; 3], count: usize) -> Option<[f32; 3]> {
+    if count == 0 || !sum.into_iter().all(f32::is_finite) {
+        return None;
+    }
+    let mean = sum.map(|channel| channel / count as f32);
+    // Green is the stable reference used by common RAW pipelines; refuse black/non-finite
+    // samples instead of inventing a white point.
+    if mean.iter().any(|channel| *channel <= 1.0e-6) {
+        return None;
+    }
+    Some([mean[1] / mean[0], 1.0, mean[1] / mean[2]])
+}
+
+fn apply_diagonal_white_balance(pixels: &mut [[f32; 3]], scale: [f32; 3]) {
+    for pixel in pixels {
+        pixel[0] *= scale[0];
+        pixel[1] *= scale[1];
+        pixel[2] *= scale[2];
+    }
+}
+
+fn auto_white_balance_scale(pixels: &[[f32; 3]]) -> Option<[f32; 3]> {
+    // Deterministic grey-world provider: reject very dark and clipped samples so highlights
+    // and empty black borders do not define the estimated neutral. It is an active provider,
+    // not a fallback for Camera/As-Shot WB.
+    let mut sum = [0.0; 3];
+    let mut count = 0;
+    for pixel in pixels {
+        let y = pixel[0] * 0.2627 + pixel[1] * 0.6780 + pixel[2] * 0.0593;
+        if y.is_finite()
+            && (0.01..=0.85).contains(&y)
+            && pixel.iter().all(|v| v.is_finite() && *v > 0.0)
+        {
+            for (target, source) in sum.iter_mut().zip(pixel) {
+                *target += *source;
+            }
+            count += 1;
+        }
+    }
+    neutral_scale(sum, count)
+}
+
+fn picker_white_balance_scale(
+    pixels: &[[f32; 3]],
+    width: u32,
+    height: u32,
+    sample: WhiteBalanceSample,
+) -> Option<[f32; 3]> {
+    if !sample.validated() {
+        return None;
+    }
+    let left = (sample.x * width as f32).floor() as usize;
+    let top = (sample.y * height as f32).floor() as usize;
+    let right = ((sample.x + sample.width) * width as f32).ceil() as usize;
+    let bottom = ((sample.y + sample.height) * height as f32).ceil() as usize;
+    let mut sum = [0.0; 3];
+    let mut count = 0;
+    for y in top.min(height as usize)..bottom.min(height as usize) {
+        for x in left.min(width as usize)..right.min(width as usize) {
+            let pixel = pixels[y * width as usize + x];
+            if pixel.iter().all(|v| v.is_finite() && *v > 1.0e-6) {
+                for (target, source) in sum.iter_mut().zip(pixel) {
+                    *target += *source;
+                }
+                count += 1;
+            }
+        }
+    }
+    neutral_scale(sum, count)
+}
+
+fn apply_white_balance(
+    pixels: &mut [[f32; 3]],
+    width: u32,
+    height: u32,
+    source: SourceKind,
+    settings: WhiteBalanceSettings,
+) -> Result<(), PipelineError> {
+    match (source, settings.mode) {
+        // LibRaw has already applied the recorded Camera Neutral / As-Shot multipliers before
+        // the RAW data reaches the linear Rec.2020 graph. The modes stay explicit so projects
+        // preserve the photographer's intent and no encoded-image WB is silently substituted.
+        (
+            SourceKind::Raw,
+            WhiteBalanceMode::SourceDefault | WhiteBalanceMode::AsShot | WhiteBalanceMode::Camera,
+        ) => Ok(()),
+        (SourceKind::Encoded, WhiteBalanceMode::SourceDefault | WhiteBalanceMode::Relative) => {
+            Ok(())
+        }
+        (SourceKind::Encoded, WhiteBalanceMode::AsShot | WhiteBalanceMode::Camera) => {
+            Err(PipelineError::WhiteBalanceSemantic {
+                mode: settings.mode,
+                source: "encoded",
+            })
+        }
+        (_, WhiteBalanceMode::Auto) => {
+            let scale =
+                auto_white_balance_scale(pixels).ok_or(PipelineError::InvalidWhiteBalanceSample)?;
+            apply_diagonal_white_balance(pixels, scale);
+            Ok(())
+        }
+        (_, WhiteBalanceMode::NeutralPicker) => {
+            let sample = settings
+                .sample
+                .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
+            let scale = picker_white_balance_scale(pixels, width, height, sample)
+                .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
+            apply_diagonal_white_balance(pixels, scale);
+            Ok(())
+        }
+        (SourceKind::Raw, WhiteBalanceMode::Relative) => Err(PipelineError::WhiteBalanceSemantic {
+            mode: settings.mode,
+            source: "RAW",
+        }),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +307,30 @@ fn apply_curve(rgb: LinearRgb, curve: &[CurvePoint]) -> LinearRgb {
     }
 }
 
+fn apply_creative_graph(
+    pixels: Vec<[f32; 3]>,
+    settings: &RenderSettings,
+) -> Result<Vec<f32>, PipelineError> {
+    let mut data = Vec::with_capacity(pixels.len() * 3);
+    for pixel in pixels {
+        let mut rgb = LinearRgb {
+            r: pixel[0],
+            g: pixel[1],
+            b: pixel[2],
+        };
+        rgb = apply_relative_color(rgb, settings.relative_color);
+        rgb = apply_tone(rgb, settings.tone);
+        rgb = apply_curve(rgb, &settings.curve);
+        rgb = apply_color_mixer(rgb, settings.color_mixer);
+        rgb = apply_grading(rgb, settings.grading);
+        if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
+            return Err(PipelineError::InvalidDecodedBuffer);
+        }
+        data.extend_from_slice(&[rgb.r, rgb.g, rgb.b]);
+    }
+    Ok(data)
+}
+
 fn to_working_image(
     decoded: &DecodedRenderedImage,
     settings: &RenderSettings,
@@ -151,20 +352,14 @@ fn to_working_image(
         settings.color_management.black_point_compensation,
     )?;
 
-    let mut data = Vec::with_capacity(pixels.len() * 3);
-    for pixel in pixels {
-        let mut rgb = LinearRgb {
-            r: pixel[0],
-            g: pixel[1],
-            b: pixel[2],
-        };
-        rgb = apply_relative_color(rgb, settings.relative_color);
-        rgb = apply_tone(rgb, settings.tone);
-        rgb = apply_curve(rgb, &settings.curve);
-        rgb = apply_color_mixer(rgb, settings.color_mixer);
-        rgb = apply_grading(rgb, settings.grading);
-        data.extend_from_slice(&[rgb.r, rgb.g, rgb.b]);
-    }
+    apply_white_balance(
+        &mut pixels,
+        decoded.width,
+        decoded.height,
+        SourceKind::Encoded,
+        settings.white_balance,
+    )?;
+    let data = apply_creative_graph(pixels, settings)?;
 
     let image = LinearImage::new(decoded.width as usize, decoded.height as usize, data)
         .map_err(|_| PipelineError::DetailBuffer)?;
@@ -179,25 +374,19 @@ fn to_working_raw(
     if decoded.rgb.len() != expected {
         return Err(PipelineError::InvalidDecodedBuffer);
     }
-    let mut data = Vec::with_capacity(decoded.rgb.len());
-    for pixel in decoded.rgb.chunks_exact(3) {
-        let mut rgb = LinearRgb {
-            r: pixel[0],
-            g: pixel[1],
-            b: pixel[2],
-        };
-        // RAW already enters in linear Rec.2020/D65 from the native LibRaw provider. Relative
-        // creative color is intentionally downstream of the camera/as-shot WB stage.
-        rgb = apply_relative_color(rgb, settings.relative_color);
-        rgb = apply_tone(rgb, settings.tone);
-        rgb = apply_curve(rgb, &settings.curve);
-        rgb = apply_color_mixer(rgb, settings.color_mixer);
-        rgb = apply_grading(rgb, settings.grading);
-        if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
-            return Err(PipelineError::InvalidDecodedBuffer);
-        }
-        data.extend_from_slice(&[rgb.r, rgb.g, rgb.b]);
-    }
+    let mut pixels: Vec<[f32; 3]> = decoded
+        .rgb
+        .chunks_exact(3)
+        .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+        .collect();
+    apply_white_balance(
+        &mut pixels,
+        decoded.width,
+        decoded.height,
+        SourceKind::Raw,
+        settings.white_balance,
+    )?;
+    let data = apply_creative_graph(pixels, settings)?;
     LinearImage::new(decoded.width as usize, decoded.height as usize, data)
         .map_err(|_| PipelineError::DetailBuffer)
 }
@@ -422,6 +611,97 @@ mod tests {
         };
         let output = render_to_srgb8(&decoded, &settings).expect("render");
         assert!(output.data[0] > output.data[2]);
+    }
+
+    #[test]
+    fn neutral_picker_removes_a_measured_encoded_colour_cast() {
+        let decoded = fixture(&[[0.48, 0.36, 0.24, 1.0], [0.48, 0.36, 0.24, 1.0]]);
+        let output = render_to_srgb8(
+            &decoded,
+            &RenderSettings {
+                white_balance: WhiteBalanceSettings {
+                    mode: WhiteBalanceMode::NeutralPicker,
+                    sample: Some(WhiteBalanceSample {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 1.0,
+                        height: 1.0,
+                    }),
+                },
+                ..Default::default()
+            },
+        )
+        .expect("picker render");
+        assert!((i16::from(output.data[0]) - i16::from(output.data[1])).abs() <= 1);
+        assert!((i16::from(output.data[1]) - i16::from(output.data[2])).abs() <= 1);
+    }
+
+    #[test]
+    fn auto_white_balance_is_active_and_extreme_pixels_stay_finite() {
+        let decoded = fixture(&[
+            [0.9, 0.6, 0.3, 1.0],
+            [0.72, 0.48, 0.24, 1.0],
+            [4.0, 1.0, 0.1, 1.0],
+            [0.001, 0.001, 0.001, 1.0],
+        ]);
+        let output = render_to_srgb8(
+            &decoded,
+            &RenderSettings {
+                white_balance: WhiteBalanceSettings {
+                    mode: WhiteBalanceMode::Auto,
+                    sample: None,
+                },
+                ..Default::default()
+            },
+        )
+        .expect("auto render");
+        assert!(output.data.iter().any(|value| *value > 0));
+    }
+
+    #[test]
+    fn encoded_camera_white_balance_is_a_typed_error_not_a_silent_fallback() {
+        let decoded = fixture(&[[0.4, 0.4, 0.4, 1.0]]);
+        let result = render_to_srgb8(
+            &decoded,
+            &RenderSettings {
+                white_balance: WhiteBalanceSettings {
+                    mode: WhiteBalanceMode::Camera,
+                    sample: None,
+                },
+                ..Default::default()
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(PipelineError::WhiteBalanceSemantic {
+                mode: WhiteBalanceMode::Camera,
+                source: "encoded"
+            })
+        ));
+    }
+
+    #[test]
+    fn invalid_picker_sample_is_rejected_before_rendering() {
+        let decoded = fixture(&[[0.4, 0.4, 0.4, 1.0]]);
+        let result = render_to_srgb8(
+            &decoded,
+            &RenderSettings {
+                white_balance: WhiteBalanceSettings {
+                    mode: WhiteBalanceMode::NeutralPicker,
+                    sample: Some(WhiteBalanceSample {
+                        x: 0.8,
+                        y: 0.0,
+                        width: 0.4,
+                        height: 1.0,
+                    }),
+                },
+                ..Default::default()
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(PipelineError::InvalidWhiteBalanceSample)
+        ));
     }
 
     #[test]

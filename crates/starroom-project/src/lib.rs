@@ -22,6 +22,10 @@ pub struct Project {
     pub global_adjustments: GlobalAdjustments,
     #[serde(default)]
     pub camera_profile: Option<PersistedCameraProfile>,
+    /// M5 white-balance intent is stored independently from slider values so RAW Camera/As-Shot
+    /// and encoded Relative semantics cannot change silently when a project is reopened.
+    #[serde(default)]
+    pub white_balance: PersistedWhiteBalance,
     #[serde(default)]
     pub masks: Vec<MaskNode>,
     #[serde(default)]
@@ -36,6 +40,35 @@ pub struct PersistedCameraProfile {
     pub hash: String,
     /// `resolved` or `generic`; stored explicitly so reopening never silently changes policy.
     pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedWhiteBalance {
+    pub mode: String,
+    pub temperature: f32,
+    pub tint: f32,
+    pub sample: Option<PersistedWhiteBalanceSample>,
+}
+
+impl Default for PersistedWhiteBalance {
+    fn default() -> Self {
+        Self {
+            mode: "sourceDefault".into(),
+            temperature: 0.0,
+            tint: 0.0,
+            sample: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedWhiteBalanceSample {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +209,17 @@ mod tests {
                 hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
                 status: "resolved".into(),
             }),
+            white_balance: PersistedWhiteBalance {
+                mode: "asShot".into(),
+                temperature: 0.0,
+                tint: 0.0,
+                sample: Some(PersistedWhiteBalanceSample {
+                    x: 0.4,
+                    y: 0.4,
+                    width: 0.1,
+                    height: 0.1,
+                }),
+            },
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -201,6 +245,7 @@ mod tests {
             restored.camera_profile.as_ref().unwrap().hash,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         );
+        assert_eq!(restored.white_balance.mode, "asShot");
         assert_eq!(restored.layers.len(), 1);
         assert_eq!(restored.layers[0].adjustments.get("exposure"), Some(&0.35));
     }

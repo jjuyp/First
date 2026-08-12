@@ -4,8 +4,8 @@ use starroom_color::{CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, SharpenParameters};
 use starroom_imageio::{decode_source, decode_source_preview, encode_jpeg_rgb8};
 use starroom_pipeline::{
-    RelativeColorParameters, RenderSettings, render_source_export_to_srgb8,
-    render_source_preview_to_srgb8,
+    RelativeColorParameters, RenderSettings, WhiteBalanceMode, WhiteBalanceSample,
+    WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_to_srgb8,
 };
 use starroom_render::RenderGraph;
 use std::path::{Path, PathBuf};
@@ -71,6 +71,10 @@ struct NativeEditSettings {
     saturation: f32,
     sharpness: f32,
     noise_reduction: f32,
+    #[serde(default)]
+    white_balance_mode: WhiteBalanceMode,
+    #[serde(default)]
+    white_balance_sample: Option<WhiteBalanceSample>,
     curve: Vec<CurvePoint>,
 }
 
@@ -126,6 +130,10 @@ impl NativeEditSettings {
                 tint: unit(self.tint),
                 vibrance: unit(self.vibrance),
                 saturation: unit(self.saturation),
+            },
+            white_balance: WhiteBalanceSettings {
+                mode: self.white_balance_mode,
+                sample: self.white_balance_sample,
             },
             curve,
             denoise: DenoiseParameters {
@@ -309,6 +317,8 @@ mod tests {
             saturation: 0.0,
             sharpness: 0.0,
             noise_reduction: 0.0,
+            white_balance_mode: WhiteBalanceMode::SourceDefault,
+            white_balance_sample: None,
             curve: vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 1.0 }],
         }
     }
