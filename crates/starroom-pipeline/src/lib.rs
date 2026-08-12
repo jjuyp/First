@@ -180,25 +180,34 @@ fn apply_diagonal_white_balance(pixels: &mut [[f32; 3]], scale: [f32; 3]) {
     }
 }
 
-fn auto_white_balance_scale(pixels: &[[f32; 3]]) -> Option<[f32; 3]> {
-    // Deterministic grey-world provider: reject very dark and clipped samples so highlights
-    // and empty black borders do not define the estimated neutral. It is an active provider,
-    // not a fallback for Camera/As-Shot WB.
-    let mut sum = [0.0; 3];
-    let mut count = 0;
-    for pixel in pixels {
-        let y = pixel[0] * 0.2627 + pixel[1] * 0.6780 + pixel[2] * 0.0593;
-        if y.is_finite()
-            && (0.01..=0.85).contains(&y)
-            && pixel.iter().all(|v| v.is_finite() && *v > 0.0)
-        {
-            for (target, source) in sum.iter_mut().zip(pixel) {
-                *target += *source;
+pub trait AutoWhiteBalanceProvider {
+    fn estimate_scale(&self, pixels: &[[f32; 3]]) -> Option<[f32; 3]>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GrayWorldAutoWhiteBalance;
+
+impl AutoWhiteBalanceProvider for GrayWorldAutoWhiteBalance {
+    fn estimate_scale(&self, pixels: &[[f32; 3]]) -> Option<[f32; 3]> {
+        // Deterministic grey-world provider: reject very dark and clipped samples so highlights
+        // and empty black borders do not define the estimated neutral. It is an active provider,
+        // not a fallback for Camera/As-Shot WB.
+        let mut sum = [0.0; 3];
+        let mut count = 0;
+        for pixel in pixels {
+            let y = pixel[0] * 0.2627 + pixel[1] * 0.6780 + pixel[2] * 0.0593;
+            if y.is_finite()
+                && (0.01..=0.85).contains(&y)
+                && pixel.iter().all(|v| v.is_finite() && *v > 0.0)
+            {
+                for (target, source) in sum.iter_mut().zip(pixel) {
+                    *target += *source;
+                }
+                count += 1;
             }
-            count += 1;
         }
+        neutral_scale(sum, count)
     }
-    neutral_scale(sum, count)
 }
 
 fn picker_white_balance_scale(
@@ -255,8 +264,9 @@ fn apply_white_balance(
             })
         }
         (_, WhiteBalanceMode::Auto) => {
-            let scale =
-                auto_white_balance_scale(pixels).ok_or(PipelineError::InvalidWhiteBalanceSample)?;
+            let scale = GrayWorldAutoWhiteBalance
+                .estimate_scale(pixels)
+                .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
             apply_diagonal_white_balance(pixels, scale);
             Ok(())
         }
@@ -660,6 +670,89 @@ mod tests {
     }
 
     #[test]
+    fn master_identity_curve_preserves_portrait_and_gradient_golden_vector() {
+        let decoded = fixture(&[
+            [0.62, 0.35, 0.24, 1.0],
+            [0.05, 0.05, 0.05, 1.0],
+            [0.25, 0.25, 0.25, 1.0],
+            [0.75, 0.75, 0.75, 1.0],
+        ]);
+        let identity = vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 1.0 }];
+        let baseline = render_to_srgb8(&decoded, &RenderSettings::default()).expect("baseline");
+        let curved = render_to_srgb8(
+            &decoded,
+            &RenderSettings {
+                curves: ToneCurveSet {
+                    master: identity,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .expect("identity");
+        assert_eq!(baseline.data, curved.data);
+    }
+
+    #[test]
+    fn s_curve_changes_gradient_ends_while_preserving_midpoint() {
+        let decoded = fixture(&[
+            [0.2, 0.2, 0.2, 1.0],
+            [0.5, 0.5, 0.5, 1.0],
+            [0.8, 0.8, 0.8, 1.0],
+        ]);
+        let settings = RenderSettings {
+            curves: ToneCurveSet {
+                master: vec![
+                    CurvePoint { x: 0.0, y: 0.0 },
+                    CurvePoint { x: 0.25, y: 0.16 },
+                    CurvePoint { x: 0.5, y: 0.5 },
+                    CurvePoint { x: 0.75, y: 0.86 },
+                    CurvePoint { x: 1.0, y: 1.0 },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let baseline = render_to_srgb8(&decoded, &RenderSettings::default()).expect("baseline");
+        let output = render_to_srgb8(&decoded, &settings).expect("s curve");
+        assert!(output.data[0] < baseline.data[0]);
+        assert!((i16::from(output.data[3]) - i16::from(baseline.data[3])).abs() <= 1);
+        assert!(output.data[6] > baseline.data[6]);
+    }
+
+    #[test]
+    fn extreme_curves_remain_finite_for_hdr_working_values() {
+        let curves = ToneCurveSet {
+            master: vec![
+                CurvePoint { x: 0.0, y: 0.2 },
+                CurvePoint { x: 0.5, y: 0.95 },
+                CurvePoint { x: 1.0, y: 1.0 },
+            ],
+            red: vec![CurvePoint { x: 0.0, y: 1.0 }, CurvePoint { x: 1.0, y: 0.0 }],
+            ..Default::default()
+        };
+        for rgb in [
+            LinearRgb {
+                r: -0.25,
+                g: 0.0,
+                b: 0.2,
+            },
+            LinearRgb {
+                r: 1.5,
+                g: 4.0,
+                b: 12.0,
+            },
+        ] {
+            let result = apply_curve(rgb, &[], &curves);
+            assert!(
+                [result.r, result.g, result.b]
+                    .into_iter()
+                    .all(f32::is_finite)
+            );
+        }
+    }
+
+    #[test]
     fn neutral_picker_removes_a_measured_encoded_colour_cast() {
         let decoded = fixture(&[[0.48, 0.36, 0.24, 1.0], [0.48, 0.36, 0.24, 1.0]]);
         let output = render_to_srgb8(
@@ -702,6 +795,32 @@ mod tests {
         )
         .expect("auto render");
         assert!(output.data.iter().any(|value| *value > 0));
+    }
+
+    #[test]
+    fn skin_and_mixed_lighting_white_balance_regression_stays_warm_and_finite() {
+        let decoded = fixture(&[
+            [0.68, 0.42, 0.30, 1.0],
+            [0.55, 0.37, 0.29, 1.0],
+            [0.22, 0.31, 0.58, 1.0],
+            [0.62, 0.48, 0.25, 1.0],
+        ]);
+        let output = render_to_srgb8(
+            &decoded,
+            &RenderSettings {
+                white_balance: WhiteBalanceSettings {
+                    mode: WhiteBalanceMode::Auto,
+                    sample: None,
+                },
+                ..Default::default()
+            },
+        )
+        .expect("mixed-light Auto WB");
+        assert!(
+            output.data[0] > output.data[2],
+            "skin sample must retain warm ordering"
+        );
+        assert_eq!(output.data.len(), 12);
     }
 
     #[test]

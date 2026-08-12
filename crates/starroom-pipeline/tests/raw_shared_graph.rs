@@ -1,13 +1,33 @@
-use starroom_color::ToneParameters;
+use starroom_color::{CurvePoint, ToneParameters};
 use starroom_color_management::InputProfileSource;
 use starroom_imageio::{DecodedSourceImage, decode_source_preview};
 use starroom_pipeline::{
-    RenderSettings, render_source_export_to_srgb8, render_source_preview_to_srgb8,
+    RenderSettings, ToneCurveSet, render_source_export_to_srgb8, render_source_preview_to_srgb8,
 };
 use std::{path::PathBuf, time::Instant};
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/raw/sources/nikon-d1.nef")
+}
+
+#[test]
+fn raw_curve_preview_and_export_share_the_four_channel_stage() {
+    let decoded = decode_source_preview(fixture(), 512).expect("LibRaw preview decode");
+    let settings = RenderSettings {
+        curves: ToneCurveSet {
+            master: vec![
+                CurvePoint { x: 0.0, y: 0.04 },
+                CurvePoint { x: 0.5, y: 0.55 },
+                CurvePoint { x: 1.0, y: 1.0 },
+            ],
+            blue: vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 0.9 }],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let preview = render_source_preview_to_srgb8(&decoded, &settings).expect("RAW curve preview");
+    let export = render_source_export_to_srgb8(&decoded, &settings).expect("RAW curve export");
+    assert_eq!(preview, export);
 }
 
 #[test]

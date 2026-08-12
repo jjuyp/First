@@ -45,4 +45,17 @@ describe('native preview contract', () => {
     expect(() => assertNativeSupported({ ...defaultAdjustments, clarity: 10 }, defaultMask))
       .toThrow(/Browser fallback was not used/)
   })
+
+  it('serializes all four curve channels as a compact native contract', () => {
+    const identity = [{ id: 'black', x: 0, y: 0 }, { id: 'white', x: 1, y: 1 }]
+    const settings = toNativeSettings(defaultAdjustments, identity, 'sourceDefault', null, {
+      master: identity,
+      red: [{ id: 'r0', x: 0, y: .1 }, { id: 'r1', x: 1, y: 1 }],
+      green: [],
+      blue: [{ id: 'b0', x: 0, y: 0 }, { id: 'b1', x: 1, y: .9 }],
+    })
+    expect(settings.curves.master).toEqual([{ x: 0, y: 0 }, { x: 1, y: 1 }])
+    expect(settings.curves.red[0]).toEqual({ x: 0, y: .1 })
+    expect(settings.curves.blue[1]).toEqual({ x: 1, y: .9 })
+  })
 })

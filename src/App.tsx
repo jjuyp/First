@@ -447,12 +447,13 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
 }
 
 function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurveChannel, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, onAdjust, onBeginAdjustment, onReset,
-  onCurveSelect, onCurveBegin, onCurveChange, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance }: {
+  onCurveSelect, onCurveBegin, onCurveChange, onCurvePresetSave, onCurvePresetLoad, canLoadCurvePreset, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance }: {
   tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; curveChannel: keyof NativeToneCurves; histogram: number[]; onCurveChannel: (channel: keyof NativeToneCurves) => void; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
   onBeginAdjustment: () => void
   onReset: (key: AdjustmentKey) => void
   onCurveSelect: (id: string) => void; onCurveBegin: () => void; onCurveChange: (points: ToneCurvePoint[]) => void
+  onCurvePresetSave: () => void; onCurvePresetLoad: () => void; canLoadCurvePreset: boolean
   onMaskBegin: () => void; onMaskChange: (mask: RadialMask) => void
   whiteBalanceMode: NativeWhiteBalanceMode; onWhiteBalanceMode: (mode: NativeWhiteBalanceMode) => void
   onCopyWhiteBalance: () => void; onPasteWhiteBalance: () => void
@@ -475,7 +476,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
     </>}
     {tool === 'masks' && <div className="tool-note">Click the photo to place the mask. Drag inside to move; drag side handles to resize; drag the top handle to rotate.</div>}
     {tool === 'curve' && <><CurveChannelTabs value={curveChannel} onChange={onCurveChannel} /><ToneCurveEditor points={curvePoints} selectedId={selectedCurvePoint} onSelect={onCurveSelect}
-      histogram={histogram} onBeginEdit={onCurveBegin} onChange={onCurveChange} /></>}
+      histogram={histogram} onBeginEdit={onCurveBegin} onChange={onCurveChange} /><div className="curve-presets"><button onClick={onCurvePresetSave}>Save custom</button><button disabled={!canLoadCurvePreset} onClick={onCurvePresetLoad}>Load custom</button></div></>}
     {sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]} onBeginEdit={onBeginAdjustment}
       onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
     {tool === 'masks' && <div className="mask-values">
@@ -544,6 +545,7 @@ export function App() {
   const [dimensions, setDimensions] = useState('—')
   const [notice, setNotice] = useState('')
   const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<Pick<PhotoItem, 'whiteBalanceMode' | 'whiteBalanceSample'> | null>(null)
+  const [savedCurvePreset, setSavedCurvePreset] = usePersistedValue<NativeToneCurves | null>('starroom-custom-curve-preset', null)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -691,6 +693,19 @@ export function App() {
     updateSelected((photo) => ({ ...photo, curvePoints: curveChannel === 'master' ? copyCurve(points) : photo.curvePoints,
       curveChannels: { ...photo.curveChannels, [curveChannel]: copyCurve(points) }, future: [] }))
     setBefore(false)
+  }
+
+  function saveCurvePreset() {
+    setSavedCurvePreset(copyCurveChannels(selected.curveChannels))
+    setNotice('Custom curve preset saved')
+  }
+
+  function loadCurvePreset() {
+    if (!savedCurvePreset) return
+    updateSelected((photo) => ({ ...photo, curvePoints: copyCurve(savedCurvePreset.master), curveChannels: copyCurveChannels(savedCurvePreset),
+      history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    setBefore(false)
+    setNotice('Custom curve preset loaded')
   }
 
   function updateWhiteBalance(mode: NativeWhiteBalanceMode, sample: NativeWhiteBalanceSample | null = null) {
@@ -869,6 +884,7 @@ export function App() {
             whiteBalanceMode={selected.whiteBalanceMode}
             mask={selected.mask} onAdjust={adjust} onBeginAdjustment={beginInteractiveEdit} onReset={resetAdjustment} onCurveSelect={setSelectedCurvePoint}
             onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask}
+            onCurvePresetSave={saveCurvePreset} onCurvePresetLoad={loadCurvePreset} canLoadCurvePreset={savedCurvePreset !== null}
             onWhiteBalanceMode={(mode) => updateWhiteBalance(mode)} onCopyWhiteBalance={copyWhiteBalance} onPasteWhiteBalance={pasteWhiteBalance} />
         </div>
         <button className="reset-all" disabled={!hasPhotoEdits(selected)} onClick={resetAll}><RotateCcw size={14} /> Reset all edits</button>
