@@ -27,7 +27,10 @@ struct Parameters {
 @group(0) @binding(2) var<uniform> parameters: Parameters;
 
 fn finite_or_zero(value: f32) -> f32 {
-  return select(0.0, value, isFinite(value));
+  // WGSL deliberately has no isFinite builtin. NaN is the only value unequal to itself, and
+  // |value| above the largest finite f32 catches both infinity signs without clamping HDR data.
+  if (value != value || abs(value) > 3.4028234e38) { return 0.0; }
+  return value;
 }
 
 @compute @workgroup_size(64)
