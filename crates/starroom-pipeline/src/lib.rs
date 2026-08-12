@@ -494,8 +494,6 @@ pub fn sample_source_color_band(
 
 fn render_working_graph(
     working: LinearImage,
-    _source_width: u32,
-    _source_height: u32,
     input_source: InputProfileSource,
     camera_profile: Option<&CameraProfileDescriptor>,
     settings: &RenderSettings,
@@ -604,8 +602,6 @@ fn render_shared_graph(
     };
     render_working_graph(
         working,
-        decoded.width,
-        decoded.height,
         input_source,
         None,
         settings,
@@ -629,8 +625,6 @@ fn render_shared_source_graph(
             let (working, input_source) = to_working_image(image, settings)?;
             render_working_graph(
                 working,
-                image.width,
-                image.height,
                 input_source,
                 None,
                 settings,
@@ -645,8 +639,6 @@ fn render_shared_source_graph(
             };
             render_working_graph(
                 to_working_raw(image, settings)?,
-                image.width,
-                image.height,
                 input_source,
                 Some(&image.metadata.camera_profile),
                 settings,
