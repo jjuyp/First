@@ -31,6 +31,11 @@ export type AdjustmentKey =
   | 'mixerPurpleHue' | 'mixerPurpleChroma' | 'mixerPurpleLightness'
   | 'mixerMagentaHue' | 'mixerMagentaChroma' | 'mixerMagentaLightness'
   | 'mixerHueLock'
+  | 'gradeGlobalHue' | 'gradeGlobalChroma' | 'gradeGlobalLightness'
+  | 'gradeShadowsHue' | 'gradeShadowsChroma' | 'gradeShadowsLightness'
+  | 'gradeMidtonesHue' | 'gradeMidtonesChroma' | 'gradeMidtonesLightness'
+  | 'gradeHighlightsHue' | 'gradeHighlightsChroma' | 'gradeHighlightsLightness'
+  | 'gradeBalance' | 'gradeBlending' | 'gradeAmount'
 
 export type Adjustments = Record<AdjustmentKey, number>
 
@@ -66,6 +71,11 @@ export const defaultAdjustments: Adjustments = {
   mixerPurpleHue: 0, mixerPurpleChroma: 0, mixerPurpleLightness: 0,
   mixerMagentaHue: 0, mixerMagentaChroma: 0, mixerMagentaLightness: 0,
   mixerHueLock: 1,
+  gradeGlobalHue: 0, gradeGlobalChroma: 0, gradeGlobalLightness: 0,
+  gradeShadowsHue: 0, gradeShadowsChroma: 0, gradeShadowsLightness: 0,
+  gradeMidtonesHue: 0, gradeMidtonesChroma: 0, gradeMidtonesLightness: 0,
+  gradeHighlightsHue: 0, gradeHighlightsChroma: 0, gradeHighlightsLightness: 0,
+  gradeBalance: 0, gradeBlending: 50, gradeAmount: 100,
 }
 
 export interface EditorSnapshot {

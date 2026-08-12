@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use starroom_advisor::{AnalysisStats, Suggestion, advise};
 use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, SharpenParameters};
+use starroom_grading::GradingParameters;
 use starroom_imageio::{decode_source, decode_source_preview, encode_jpeg_rgb8};
 use starroom_pipeline::{
     RelativeColorParameters, RenderSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
@@ -81,6 +82,8 @@ struct NativeEditSettings {
     curves: ToneCurveSet,
     #[serde(default)]
     color_mixer: ColorMixer,
+    #[serde(default)]
+    grading: GradingParameters,
 }
 
 impl NativeEditSettings {
@@ -99,6 +102,9 @@ impl NativeEditSettings {
             self.sharpness,
             self.noise_reduction,
             self.color_mixer.band_width_degrees,
+            self.grading.balance,
+            self.grading.blending,
+            self.grading.amount,
         ]
         .into_iter()
         .all(f32::is_finite)
@@ -123,6 +129,25 @@ impl NativeEditSettings {
             })
         {
             return Err("native color mixer settings are outside supported ranges".into());
+        }
+        let grading_wheels = [
+            self.grading.shadows,
+            self.grading.midtones,
+            self.grading.highlights,
+            self.grading.global,
+        ];
+        if grading_wheels.iter().any(|wheel| {
+            ![wheel.hue_degrees, wheel.chroma, wheel.lightness]
+                .into_iter()
+                .all(f32::is_finite)
+                || !(-360.0..=360.0).contains(&wheel.hue_degrees)
+                || !(-1.0..=1.0).contains(&wheel.chroma)
+                || !(-1.0..=1.0).contains(&wheel.lightness)
+        }) || !(-1.0..=1.0).contains(&self.grading.balance)
+            || !(0.0..=1.0).contains(&self.grading.blending)
+            || !(0.0..=1.0).contains(&self.grading.amount)
+        {
+            return Err("native color grading settings are outside supported ranges".into());
         }
 
         let unit = |value: f32| (value / 100.0).clamp(-1.0, 1.0);
@@ -156,6 +181,7 @@ impl NativeEditSettings {
             curve,
             curves: self.curves,
             color_mixer: self.color_mixer,
+            grading: self.grading,
             denoise: DenoiseParameters {
                 luminance: unit(self.noise_reduction).max(0.0),
                 chroma: unit(self.noise_reduction).max(0.0),
@@ -363,6 +389,7 @@ mod tests {
             curve: vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 1.0 }],
             curves: ToneCurveSet::default(),
             color_mixer: ColorMixer::default(),
+            grading: GradingParameters::default(),
         }
     }
 

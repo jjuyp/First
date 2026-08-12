@@ -31,6 +31,8 @@ pub struct Project {
     #[serde(default)]
     pub color_mixer: PersistedColorMixer,
     #[serde(default)]
+    pub color_grading: PersistedColorGrading,
+    #[serde(default)]
     pub masks: Vec<MaskNode>,
     #[serde(default)]
     pub layers: Vec<AdjustmentLayer>,
@@ -113,6 +115,40 @@ impl Default for PersistedColorMixer {
             bands: [PersistedColorBand::default(); 8],
             hue_lock: true,
             band_width_degrees: 52.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedColorWheel {
+    pub hue_degrees: f32,
+    pub chroma: f32,
+    pub lightness: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedColorGrading {
+    pub shadows: PersistedColorWheel,
+    pub midtones: PersistedColorWheel,
+    pub highlights: PersistedColorWheel,
+    pub global: PersistedColorWheel,
+    pub balance: f32,
+    pub blending: f32,
+    pub amount: f32,
+}
+
+impl Default for PersistedColorGrading {
+    fn default() -> Self {
+        Self {
+            shadows: PersistedColorWheel::default(),
+            midtones: PersistedColorWheel::default(),
+            highlights: PersistedColorWheel::default(),
+            global: PersistedColorWheel::default(),
+            balance: 0.0,
+            blending: 0.5,
+            amount: 1.0,
         }
     }
 }
@@ -281,6 +317,7 @@ mod tests {
                 hue_lock: true,
                 band_width_degrees: 52.0,
             },
+            color_grading: PersistedColorGrading::default(),
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -304,6 +341,7 @@ mod tests {
         assert_eq!(restored.source.content_hash, "abc");
         assert!(restored.color_mixer.hue_lock);
         assert_eq!(restored.color_mixer.bands.len(), 8);
+        assert_eq!(restored.color_grading.amount, 1.0);
         assert_eq!(
             restored.camera_profile.as_ref().unwrap().hash,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

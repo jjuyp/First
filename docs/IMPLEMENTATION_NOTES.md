@@ -1,4 +1,11 @@
 # Implementation Notes
+## 2026-08-12 M8 Color Grading acceptance candidate
+
+- `starroom-grading` now owns four independent Global/Shadows/Midtones/Highlights Hue/Chroma/Lightness vectors plus Balance, Blending and master Amount. Smooth normalized tonal masks and crossover semantics follow the established design principles of darktable Color Balance RGB; the compact OKLab implementation is Starroom-authored and runs in the existing linear Rec.2020 D65 Native graph.
+- Default controls return exact identity before conversion. Zone edits are finite for negative/wide-gamut and scene-linear HDR samples; no intermediate 0..1 clamp was added. Preview and Export invoke the identical grading call immediately after the M7 mixer.
+- React exposes numeric four-zone controls and transports typed state only. Existing photo snapshots provide undo/redo; project schema now persists all four wheels and crossover controls with backward-compatible defaults. IPC validation rejects non-finite/out-of-range values rather than silently substituting them.
+- Added shadow-vs-highlight isolation, balance/blending distribution, neutral identity, skin/neutral/neon/wide-gamut vectors and Preview/Export parity regressions. Local frontend acceptance passed with Vitest 23/23, ESLint and production build; Rust formatting passed, with authoritative native compile/tests reserved for Windows CI because this workstation lacks `link.exe`.
+
 ## 2026-08-12 M7 Color Mixer acceptance candidate
 
 - The production Color Mixer is now an eight-band Rust Native stage in linear Rec.2020 D65 -> OKLab/OKLCh -> circular overlapping band weights -> independent Hue/Chroma/Lightness -> Rec.2020. Red wrap-around is circular, achromatic pixels remain identity, scene-linear HDR inputs remain finite, and display/output gamut compression stays at the existing final output boundary.

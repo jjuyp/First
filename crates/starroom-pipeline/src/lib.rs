@@ -610,6 +610,7 @@ pub fn render_to_srgb8(
 mod tests {
     use super::*;
     use starroom_color::{BandAdjustment, ColorBand};
+    use starroom_grading::ColorWheel;
     use starroom_imageio::RenderedFormat;
 
     fn fixture(values: &[[f32; 4]]) -> DecodedRenderedImage {
@@ -671,6 +672,52 @@ mod tests {
         };
         let adjusted = render_to_srgb8(&decoded, &settings).expect("adjusted");
         assert_ne!(baseline.data, adjusted.data);
+    }
+
+    #[test]
+    fn m8_four_way_grading_preview_export_share_native_stage() {
+        let decoded = fixture(&[
+            [0.62, 0.35, 0.24, 1.0],
+            [0.08, 0.1, 0.18, 1.0],
+            [1.4, 0.1, 0.9, 1.0],
+        ]);
+        let settings = RenderSettings {
+            grading: GradingParameters {
+                shadows: ColorWheel {
+                    hue_degrees: 225.0,
+                    chroma: 0.35,
+                    lightness: -0.08,
+                },
+                midtones: ColorWheel {
+                    hue_degrees: 35.0,
+                    chroma: 0.2,
+                    lightness: 0.04,
+                },
+                highlights: ColorWheel {
+                    hue_degrees: 55.0,
+                    chroma: 0.12,
+                    lightness: -0.02,
+                },
+                global: ColorWheel {
+                    hue_degrees: 310.0,
+                    chroma: 0.04,
+                    lightness: 0.0,
+                },
+                balance: 0.1,
+                blending: 0.7,
+                amount: 0.85,
+            },
+            ..Default::default()
+        };
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("preview");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("export");
+        assert_eq!(preview, export);
+        assert_ne!(
+            preview.data,
+            render_to_srgb8(&decoded, &RenderSettings::default())
+                .expect("baseline")
+                .data
+        );
     }
 
     #[test]

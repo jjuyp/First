@@ -108,6 +108,7 @@ impl ColorBand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct BandAdjustment {
     /// Relative hue rotation in degrees. UI target range: -30..30.
     pub hue_degrees: f32,
@@ -118,6 +119,7 @@ pub struct BandAdjustment {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ColorMixer {
     pub bands: [BandAdjustment; 8],
     /// Hue lock means chroma/lightness controls preserve the source hue exactly; only the

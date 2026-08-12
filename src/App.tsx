@@ -466,6 +466,8 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   mixerBand: string; onMixerBand: (band: string) => void; mixerPicking: boolean; onMixerPicking: () => void
 }) {
   const mixerBands = ['Red', 'Orange', 'Yellow', 'Green', 'Cyan', 'Blue', 'Purple', 'Magenta'] as const
+  const gradingZones = ['Global', 'Shadows', 'Midtones', 'Highlights'] as const
+  const [gradingZone, setGradingZone] = useState<(typeof gradingZones)[number]>('Global')
   const sliders = sliderGroups[tool] ?? []
   const normalizeAngle = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
   return <section className="inspector-content" aria-label={`${tool} inspector`}>
@@ -496,6 +498,22 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
               onBeginEdit={onBeginAdjustment} onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />
           })}
         <small>Targeted edits are calculated in native OKLCh with circular, overlapping hue bands.</small>
+      </div>
+      <div className="grading-panel" aria-label="Four-way Color Grading">
+        <div className="mixer-heading"><strong>Color Grading</strong><small>Native OKLab</small></div>
+        <div className="grading-tabs" role="tablist" aria-label="Color grading tonal zones">
+          {gradingZones.map((zone) => <button key={zone} role="tab" aria-selected={zone === gradingZone}
+            className={zone === gradingZone ? 'active' : ''} onClick={() => setGradingZone(zone)}>{zone}</button>)}
+        </div>
+        {([['Hue', -180, 180, 1, '°'], ['Chroma', -100, 100, 1, ''], ['Lightness', -100, 100, 1, '']] as const)
+          .map(([control, min, max, step, suffix]) => {
+            const key = `grade${gradingZone}${control}` as AdjustmentKey
+            return <Slider key={key} label={`${gradingZone} ${control}`} value={values[key]} min={min} max={max} step={step} suffix={suffix}
+              onBeginEdit={onBeginAdjustment} onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />
+          })}
+        {([['Balance', 'gradeBalance'], ['Blending', 'gradeBlending'], ['Amount', 'gradeAmount']] as const)
+          .map(([label, key]) => <Slider key={key} label={label} value={values[key]} min={label === 'Balance' ? -100 : 0} max={100} step={1}
+            onBeginEdit={onBeginAdjustment} onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
       </div>
     </>}
     {tool === 'masks' && <div className="tool-note">Click the photo to place the mask. Drag inside to move; drag side handles to resize; drag the top handle to rotate.</div>}

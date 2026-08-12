@@ -67,4 +67,12 @@ describe('native preview contract', () => {
     expect(settings.colorMixer.bands[4]).toEqual({ hueDegrees: -12, chroma: .45, lightness: -.2 })
     expect(settings.colorMixer.hueLock).toBe(true)
   })
+
+  it('serializes all four grading vectors and crossover controls', () => {
+    const settings = toNativeSettings({ ...defaultAdjustments, gradeShadowsHue: -140,
+      gradeShadowsChroma: 35, gradeHighlightsLightness: -12, gradeBalance: 20, gradeBlending: 75, gradeAmount: 80 }, [])
+    expect(settings.grading.shadows).toEqual({ hueDegrees: -140, chroma: .35, lightness: 0 })
+    expect(settings.grading.highlights.lightness).toBe(-.12)
+    expect(settings.grading).toMatchObject({ balance: .2, blending: .75, amount: .8 })
+  })
 })

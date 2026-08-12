@@ -10,6 +10,8 @@ export interface NativeToneCurves { master: ToneCurvePoint[]; red: ToneCurvePoin
 export type NativeColorBand = 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'purple' | 'magenta'
 export interface NativeBandAdjustment { hueDegrees: number; chroma: number; lightness: number }
 export interface NativeColorMixer { bands: NativeBandAdjustment[]; hueLock: boolean; bandWidthDegrees: number }
+export interface NativeColorWheel { hueDegrees: number; chroma: number; lightness: number }
+export interface NativeGrading { shadows: NativeColorWheel; midtones: NativeColorWheel; highlights: NativeColorWheel; global: NativeColorWheel; balance: number; blending: number; amount: number }
 
 export interface NativeEditSettings {
   exposure: number
@@ -29,6 +31,7 @@ export interface NativeEditSettings {
   curve: Array<{ x: number; y: number }>
   curves: { master: Array<{ x: number; y: number }>; red: Array<{ x: number; y: number }>; green: Array<{ x: number; y: number }>; blue: Array<{ x: number; y: number }> }
   colorMixer: NativeColorMixer
+  grading: NativeGrading
 }
 
 export interface NativePreviewResult {
@@ -71,6 +74,11 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
   toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] }): NativeEditSettings {
   const bands: NativeColorBand[] = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'magenta']
   const title = (band: string) => `${band[0].toUpperCase()}${band.slice(1)}`
+  const wheel = (zone: 'Global' | 'Shadows' | 'Midtones' | 'Highlights'): NativeColorWheel => ({
+    hueDegrees: adjustments[`grade${zone}Hue`],
+    chroma: adjustments[`grade${zone}Chroma`] / 100,
+    lightness: adjustments[`grade${zone}Lightness`] / 100,
+  })
   return {
     exposure: adjustments.exposure,
     contrast: adjustments.contrast,
@@ -96,6 +104,10 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
       })),
       hueLock: adjustments.mixerHueLock !== 0,
       bandWidthDegrees: 52,
+    },
+    grading: {
+      global: wheel('Global'), shadows: wheel('Shadows'), midtones: wheel('Midtones'), highlights: wheel('Highlights'),
+      balance: adjustments.gradeBalance / 100, blending: adjustments.gradeBlending / 100, amount: adjustments.gradeAmount / 100,
     },
   }
 }
