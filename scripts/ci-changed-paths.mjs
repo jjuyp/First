@@ -56,7 +56,8 @@ function main() {
   const releaseTag = (process.env.GITHUB_REF ?? '').startsWith('refs/tags/')
   let acceptanceCommit = false
   try {
-    acceptanceCommit = execFileSync('git', ['log', '-1', '--pretty=%B'], { encoding: 'utf8' }).includes('[full-acceptance]')
+    const commit = process.env.STARROOM_HEAD_SHA || 'HEAD'
+    acceptanceCommit = execFileSync('git', ['log', '-1', '--pretty=%B', commit], { encoding: 'utf8' }).includes('[full-acceptance]')
   } catch {
     // A shallow/non-git validation context simply cannot opt into Full Acceptance.
   }

@@ -17,7 +17,7 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## CI-only tooling
 
-The acceleration workflow pins CI actions by immutable commit: `actions/checkout` v4 `11d5960a326750d5838078e36cf38b85af677262`, `actions/setup-node` v4 `49933ea5288caeca8642d1e84afbd3f7d6820020`, `actions/cache` v4 `0057852bfaa89a56745cba8c7296529d2fc39830`, `actions/upload-artifact` v4 `ea165f8d65b6e75b540449e92b4886f43607fa02`, and `dtolnay/rust-toolchain` stable snapshot `24360b52568e2003a75bf9bc1d59f33a8e3fc893c`. These execute only in GitHub-hosted CI and do not enter Starroom source/binaries. Their source/licenses and GitHub Actions terms must be reviewed when pins change.
+The acceleration workflow pins CI actions by immutable commit: `actions/checkout` v4 `11d5960a326750d5838078e36cf38b85af677262`, `actions/setup-node` v4 `49933ea5288caeca8642d1e84afbd3f7d6820020`, `actions/cache` v4 `0057852bfaa89a56745cba8c7296529d2fc39830`, `actions/upload-artifact` v4 `ea165f8d65b6e75b540449e92b4886f43607fa02`, and `dtolnay/rust-toolchain` stable snapshot `4360b52568e2003a75bf9bc1d59f33a8e3fc893c`. These execute only in GitHub-hosted CI and do not enter Starroom source/binaries. Their source/licenses and GitHub Actions terms must be reviewed when pins change.
 
 ## Public RAW fixture assets
 
