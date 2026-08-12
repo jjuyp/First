@@ -15,7 +15,7 @@ import {
 } from './imagePipeline'
 import {
   chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
-  nativeThumbnailUrl, renderNativePreview, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
+  nativeThumbnailUrl, renderNativePreview, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -31,6 +31,7 @@ interface PhotoItem {
   rating: number
   adjustments: Adjustments
   curvePoints: ToneCurvePoint[]
+  curveChannels: NativeToneCurves
   whiteBalanceMode: NativeWhiteBalanceMode
   whiteBalanceSample: NativeWhiteBalanceSample | null
   mask: RadialMask
@@ -41,6 +42,7 @@ interface PhotoItem {
 interface EditSnapshot {
   adjustments: Adjustments
   curvePoints: ToneCurvePoint[]
+  curveChannels: NativeToneCurves
   whiteBalanceMode: NativeWhiteBalanceMode
   whiteBalanceSample: NativeWhiteBalanceSample | null
   mask: RadialMask
@@ -56,12 +58,14 @@ const defaultCurvePoints: ToneCurvePoint[] = [
 const defaultMask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }
 
 const copyCurve = (points: ToneCurvePoint[]) => points.map((point) => ({ ...point }))
+const defaultCurveChannels = (): NativeToneCurves => ({ master: copyCurve(defaultCurvePoints), red: [], green: [], blue: [] })
+const copyCurveChannels = (curves: NativeToneCurves): NativeToneCurves => ({ master: copyCurve(curves.master), red: copyCurve(curves.red), green: copyCurve(curves.green), blue: copyCurve(curves.blue) })
 const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
-  adjustments: { ...photo.adjustments }, curvePoints: copyCurve(photo.curvePoints), whiteBalanceMode: photo.whiteBalanceMode,
+  adjustments: { ...photo.adjustments }, curvePoints: copyCurve(photo.curvePoints), curveChannels: copyCurveChannels(photo.curveChannels), whiteBalanceMode: photo.whiteBalanceMode,
   whiteBalanceSample: photo.whiteBalanceSample ? { ...photo.whiteBalanceSample } : null, mask: { ...photo.mask },
 })
 const applySnapshot = (photo: PhotoItem, snapshot: EditSnapshot) => ({
-  ...photo, adjustments: { ...snapshot.adjustments }, curvePoints: copyCurve(snapshot.curvePoints),
+  ...photo, adjustments: { ...snapshot.adjustments }, curvePoints: copyCurve(snapshot.curvePoints), curveChannels: copyCurveChannels(snapshot.curveChannels),
   whiteBalanceMode: snapshot.whiteBalanceMode, whiteBalanceSample: snapshot.whiteBalanceSample ? { ...snapshot.whiteBalanceSample } : null, mask: { ...snapshot.mask },
 })
 const hasCurveEdits = (points: ToneCurvePoint[]) => points.length !== defaultCurvePoints.length
@@ -82,6 +86,7 @@ const demoPhoto: PhotoItem = {
   rating: 0,
   adjustments: { ...defaultAdjustments },
   curvePoints: copyCurve(defaultCurvePoints),
+  curveChannels: defaultCurveChannels(),
   whiteBalanceMode: 'sourceDefault',
   whiteBalanceSample: null,
   mask: { ...defaultMask },
@@ -259,6 +264,11 @@ function ToneCurveEditor({ points, selectedId, onSelect, onBeginEdit, onChange }
   </>
 }
 
+function CurveChannelTabs({ value, onChange }: { value: keyof NativeToneCurves; onChange: (value: keyof NativeToneCurves) => void }) {
+  return <div className="curve-tabs" aria-label="Tone curve channel">{(['master', 'red', 'green', 'blue'] as const).map((channel) => <button key={channel}
+    className={value === channel ? 'active' : ''} onClick={() => onChange(channel)}>{channel === 'master' ? 'Master' : channel[0].toUpperCase() + channel.slice(1)}</button>)}</div>
+}
+
 type MaskDragMode = 'move' | 'width' | 'height' | 'rotate' | null
 
 function MaskOverlay({ bounds, mask, onBeginEdit, onChange }: {
@@ -349,7 +359,8 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
         if (photo.renderBackend === 'native') {
           if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
-            before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample)
+            before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
+            before ? defaultCurveChannels() : photo.curveChannels)
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -432,9 +443,9 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
   </>
 }
 
-function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, onAdjust, onBeginAdjustment, onReset,
+function Inspector({ tool, values, curvePoints, curveChannel, onCurveChannel, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, onAdjust, onBeginAdjustment, onReset,
   onCurveSelect, onCurveBegin, onCurveChange, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance }: {
-  tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
+  tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; curveChannel: keyof NativeToneCurves; onCurveChannel: (channel: keyof NativeToneCurves) => void; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
   onBeginAdjustment: () => void
   onReset: (key: AdjustmentKey) => void
@@ -460,8 +471,8 @@ function Inspector({ tool, values, curvePoints, selectedCurvePoint, mask, render
       <small>{whiteBalanceMode === 'neutralPicker' ? 'Double-click a neutral area in the preview to sample it.' : 'Mode is recorded with this non-destructive edit.'}</small></div>}
     </>}
     {tool === 'masks' && <div className="tool-note">Click the photo to place the mask. Drag inside to move; drag side handles to resize; drag the top handle to rotate.</div>}
-    {tool === 'curve' && <ToneCurveEditor points={curvePoints} selectedId={selectedCurvePoint} onSelect={onCurveSelect}
-      onBeginEdit={onCurveBegin} onChange={onCurveChange} />}
+    {tool === 'curve' && <><CurveChannelTabs value={curveChannel} onChange={onCurveChannel} /><ToneCurveEditor points={curvePoints} selectedId={selectedCurvePoint} onSelect={onCurveSelect}
+      onBeginEdit={onCurveBegin} onChange={onCurveChange} /></>}
     {sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]} onBeginEdit={onBeginAdjustment}
       onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
     {tool === 'masks' && <div className="mask-values">
@@ -519,6 +530,7 @@ export function App() {
   const [view, setView] = useState<WorkspaceView>('edit')
   const [tool, setTool] = useState<Tool>('light')
   const [selectedCurvePoint, setSelectedCurvePoint] = useState<string | null>('midtone')
+  const [curveChannel, setCurveChannel] = useState<keyof NativeToneCurves>('master')
   const [before, setBefore] = useState(false)
   const [zoom, setZoom] = useState<'fit' | '100'>('fit')
   const [zoomScale, setZoomScale] = useState(1)
@@ -578,7 +590,7 @@ export function App() {
       const src = URL.createObjectURL(file)
       objectUrls.current.add(src)
       return { id: crypto.randomUUID(), name: file.name, src, renderBackend: 'browserFallback', imported: true, rating: 0,
-        adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null, mask: { ...defaultMask }, history: [], future: [] }
+        adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null, mask: { ...defaultMask }, history: [], future: [] }
     })
     setPhotos((current) => [...imported, ...current])
     selectPhoto(imported[0].id)
@@ -606,6 +618,7 @@ export function App() {
         rating: 0,
         adjustments: { ...defaultAdjustments },
         curvePoints: copyCurve(defaultCurvePoints),
+        curveChannels: defaultCurveChannels(),
         whiteBalanceMode: 'sourceDefault',
         whiteBalanceSample: null,
         mask: { ...defaultMask },
@@ -672,7 +685,8 @@ export function App() {
   }
 
   function updateCurve(points: ToneCurvePoint[]) {
-    updateSelected((photo) => ({ ...photo, curvePoints: copyCurve(points), future: [] }))
+    updateSelected((photo) => ({ ...photo, curvePoints: curveChannel === 'master' ? copyCurve(points) : photo.curvePoints,
+      curveChannels: { ...photo.curveChannels, [curveChannel]: copyCurve(points) }, future: [] }))
     setBefore(false)
   }
 
@@ -726,7 +740,7 @@ export function App() {
 
   function resetAll() {
     if (!hasPhotoEdits(selected)) return
-    updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null, mask: { ...defaultMask },
+    updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null, mask: { ...defaultMask },
       history: [...photo.history, takeSnapshot(photo)], future: [] }))
   }
 
@@ -741,7 +755,7 @@ export function App() {
           return
         }
         const result = await exportNativeJpeg(selected.sourcePath, outputPath, selected.adjustments, selected.curvePoints, selected.mask,
-          selected.whiteBalanceMode, selected.whiteBalanceSample)
+          selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels)
         setNotice(`Native JPEG exported · ${result.width} × ${result.height} · ${result.inputProfile}`)
         setRenderStatus(`Native CPU · ${result.workingSpace}`)
         return
@@ -848,7 +862,7 @@ export function App() {
           <nav className="tool-rail" aria-label="Editing tools">{toolItems.map(({ id, label, icon: Icon }) => <button key={id}
             className={tool === id ? 'active' : ''} aria-label={label}
             title={label} onClick={() => setTool(id)}><Icon size={18} /><span>{label}</span></button>)}</nav>
-          <Inspector tool={tool} values={selected.adjustments} curvePoints={selected.curvePoints} selectedCurvePoint={selectedCurvePoint} renderBackend={selected.renderBackend}
+          <Inspector tool={tool} values={selected.adjustments} curvePoints={selected.curveChannels[curveChannel]} curveChannel={curveChannel} onCurveChannel={(channel) => { setCurveChannel(channel); setSelectedCurvePoint(null) }} selectedCurvePoint={selectedCurvePoint} renderBackend={selected.renderBackend}
             whiteBalanceMode={selected.whiteBalanceMode}
             mask={selected.mask} onAdjust={adjust} onBeginAdjustment={beginInteractiveEdit} onReset={resetAdjustment} onCurveSelect={setSelectedCurvePoint}
             onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask}

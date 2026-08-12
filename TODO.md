@@ -106,7 +106,8 @@ These milestone numbers supersede the older capability-group numbering below for
 ### M6 Professional tone curves
 
 - [x] Native Master and R/G/B monotone cubic-Hermite curves with endpoint/HDR-safe extrapolation and backward-compatible legacy Master curve migration.
-- [ ] Complete channel-aware UI editing, presets, histogram background, project serialization/undo and acceptance CI.
+- [x] Channel-aware UI editing (tabs, add/drag/delete, numeric endpoint editing) and undo snapshots now serialize and send the full curve set to Native Preview/Export.
+- [ ] Add named presets/histogram curve background and complete acceptance CI.
 
 ## M2 Tone / Color Foundation — use mature open-source behavior
 

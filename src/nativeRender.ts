@@ -6,6 +6,7 @@ import type { RadialMask, ToneCurvePoint } from './imagePipeline'
 export type RenderBackend = 'native' | 'browserFallback'
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
+export interface NativeToneCurves { master: ToneCurvePoint[]; red: ToneCurvePoint[]; green: ToneCurvePoint[]; blue: ToneCurvePoint[] }
 
 export interface NativeEditSettings {
   exposure: number
@@ -62,7 +63,8 @@ export function assertNativeSupported(adjustments: Adjustments, mask: RadialMask
 }
 
 export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint[],
-  whiteBalanceMode: NativeWhiteBalanceMode = 'sourceDefault', whiteBalanceSample: NativeWhiteBalanceSample | null = null): NativeEditSettings {
+  whiteBalanceMode: NativeWhiteBalanceMode = 'sourceDefault', whiteBalanceSample: NativeWhiteBalanceSample | null = null,
+  toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] }): NativeEditSettings {
   return {
     exposure: adjustments.exposure,
     contrast: adjustments.contrast,
@@ -79,7 +81,7 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
     whiteBalanceMode,
     whiteBalanceSample,
     curve: [...curve].sort((left, right) => left.x - right.x).map(({ x, y }) => ({ x, y })),
-    curves: { master: [...curve].sort((left, right) => left.x - right.x).map(({ x, y }) => ({ x, y })), red: [], green: [], blue: [] },
+    curves: Object.fromEntries(Object.entries(toneCurves).map(([channel, points]) => [channel, [...points].sort((left, right) => left.x - right.x).map(({ x, y }) => ({ x, y }))])) as NativeEditSettings['curves'],
   }
 }
 
@@ -137,11 +139,12 @@ export async function renderNativePreview(
   mask: RadialMask,
   whiteBalanceMode: NativeWhiteBalanceMode = 'sourceDefault',
   whiteBalanceSample: NativeWhiteBalanceSample | null = null,
+  toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] },
   maxEdge = 1800,
 ) {
   assertNativeSupported(adjustments, mask)
   const frame = await invoke<ArrayBuffer | Uint8Array>('native_preview', {
-    request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample) },
+    request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves) },
   })
   return parseNativePreviewFrame(frame)
 }
@@ -163,9 +166,10 @@ export async function exportNativeJpeg(
   mask: RadialMask,
   whiteBalanceMode: NativeWhiteBalanceMode = 'sourceDefault',
   whiteBalanceSample: NativeWhiteBalanceSample | null = null,
+  toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] },
 ) {
   assertNativeSupported(adjustments, mask)
   return invoke<NativeExportResult>('native_export_jpeg', {
-    request: { sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample) },
+    request: { sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves) },
   })
 }
