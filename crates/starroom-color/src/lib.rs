@@ -449,12 +449,6 @@ pub fn map_monotone_curve(value: f32, points: &[CurvePoint]) -> f32 {
     if points.len() < 2 {
         return value;
     }
-    if value <= points[0].x {
-        return points[0].y;
-    }
-    if value >= points[points.len() - 1].x {
-        return points[points.len() - 1].y;
-    }
 
     let segment_count = points.len() - 1;
     let mut slopes = vec![0.0_f32; segment_count];
@@ -474,6 +468,16 @@ pub fn map_monotone_curve(value: f32, points: &[CurvePoint]) -> f32 {
         } else {
             2.0 * left * right / (left + right)
         };
+    }
+
+    // Preserve scene-linear HDR values by extrapolating endpoint tangents rather than
+    // clamping to 0..1 before the output transform.
+    if value <= points[0].x {
+        return points[0].y + (value - points[0].x) * tangents[0];
+    }
+    if value >= points[points.len() - 1].x {
+        let last = points.len() - 1;
+        return points[last].y + (value - points[last].x) * tangents[last];
     }
 
     for index in 0..segment_count {

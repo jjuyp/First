@@ -4,7 +4,7 @@ use starroom_color::{CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, SharpenParameters};
 use starroom_imageio::{decode_source, decode_source_preview, encode_jpeg_rgb8};
 use starroom_pipeline::{
-    RelativeColorParameters, RenderSettings, WhiteBalanceMode, WhiteBalanceSample,
+    RelativeColorParameters, RenderSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
     WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_to_srgb8,
 };
 use starroom_render::RenderGraph;
@@ -76,6 +76,8 @@ struct NativeEditSettings {
     #[serde(default)]
     white_balance_sample: Option<WhiteBalanceSample>,
     curve: Vec<CurvePoint>,
+    #[serde(default)]
+    curves: ToneCurveSet,
 }
 
 impl NativeEditSettings {
@@ -136,6 +138,7 @@ impl NativeEditSettings {
                 sample: self.white_balance_sample,
             },
             curve,
+            curves: self.curves,
             denoise: DenoiseParameters {
                 luminance: unit(self.noise_reduction).max(0.0),
                 chroma: unit(self.noise_reduction).max(0.0),
@@ -320,6 +323,7 @@ mod tests {
             white_balance_mode: WhiteBalanceMode::SourceDefault,
             white_balance_sample: None,
             curve: vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 1.0 }],
+            curves: ToneCurveSet::default(),
         }
     }
 

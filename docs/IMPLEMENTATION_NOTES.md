@@ -1,6 +1,11 @@
 # Implementation Notes
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
+## 2026-08-12 M6 tone curve candidate
+
+- The Native shared graph now owns `ToneCurveSet` with Master, Red, Green and Blue curves. Every curve uses the existing tested monotone cubic Hermite mapper; endpoint tangents extrapolate scene-linear values outside 0..1 instead of clipping HDR data. The legacy single curve remains a backward-compatible Master fallback.
+- Preview and Export invoke exactly the same curve stage. Added native channel-curve parity regression; UI transport serializes the curve set without transmitting pixels. Remaining UI channel controls and project-side persistence are tracked until acceptance.
+
 ## 2026-08-12 M5 white balance / calibration candidate
 
 - M5 introduces a typed `WhiteBalanceMode` in the Rust Native shared graph: `SourceDefault`, `AsShot`, `Camera`, `Auto`, `NeutralPicker` and `Relative`. LibRaw continues to apply the recorded Camera Neutral / As-Shot multipliers before its linear camera-RGB output reaches the M3 camera-profile stage. `AsShot` and `Camera` therefore retain real RAW semantics; encoded JPEG/PNG/TIFF only accepts `SourceDefault`/`Relative`, and asking it for a camera WB returns a typed error instead of silently inventing one.

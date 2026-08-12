@@ -27,6 +27,8 @@ pub struct Project {
     #[serde(default)]
     pub white_balance: PersistedWhiteBalance,
     #[serde(default)]
+    pub tone_curves: PersistedToneCurves,
+    #[serde(default)]
     pub masks: Vec<MaskNode>,
     #[serde(default)]
     pub layers: Vec<AdjustmentLayer>,
@@ -69,6 +71,22 @@ pub struct PersistedWhiteBalanceSample {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedToneCurves {
+    pub master: Vec<PersistedCurvePoint>,
+    pub red: Vec<PersistedCurvePoint>,
+    pub green: Vec<PersistedCurvePoint>,
+    pub blue: Vec<PersistedCurvePoint>,
+    pub preset: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct PersistedCurvePoint {
+    pub x: f32,
+    pub y: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,6 +238,16 @@ mod tests {
                     height: 0.1,
                 }),
             },
+            tone_curves: PersistedToneCurves {
+                master: vec![
+                    PersistedCurvePoint { x: 0.0, y: 0.0 },
+                    PersistedCurvePoint { x: 1.0, y: 1.0 },
+                ],
+                red: vec![],
+                green: vec![],
+                blue: vec![],
+                preset: Some("identity".into()),
+            },
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -246,6 +274,7 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         );
         assert_eq!(restored.white_balance.mode, "asShot");
+        assert_eq!(restored.tone_curves.preset.as_deref(), Some("identity"));
         assert_eq!(restored.layers.len(), 1);
         assert_eq!(restored.layers[0].adjustments.get("exposure"), Some(&0.35));
     }

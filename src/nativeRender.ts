@@ -23,6 +23,7 @@ export interface NativeEditSettings {
   whiteBalanceMode: NativeWhiteBalanceMode
   whiteBalanceSample: NativeWhiteBalanceSample | null
   curve: Array<{ x: number; y: number }>
+  curves: { master: Array<{ x: number; y: number }>; red: Array<{ x: number; y: number }>; green: Array<{ x: number; y: number }>; blue: Array<{ x: number; y: number }> }
 }
 
 export interface NativePreviewResult {
@@ -78,6 +79,7 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
     whiteBalanceMode,
     whiteBalanceSample,
     curve: [...curve].sort((left, right) => left.x - right.x).map(({ x, y }) => ({ x, y })),
+    curves: { master: [...curve].sort((left, right) => left.x - right.x).map(({ x, y }) => ({ x, y })), red: [], green: [], blue: [] },
   }
 }
 

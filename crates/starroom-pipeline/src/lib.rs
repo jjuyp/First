@@ -88,6 +88,19 @@ pub struct WhiteBalanceSettings {
     pub sample: Option<WhiteBalanceSample>,
 }
 
+/// M6 native tone curves.  Each curve uses the tested monotone cubic Hermite mapper.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ToneCurveSet {
+    #[serde(default)]
+    pub master: Vec<CurvePoint>,
+    #[serde(default)]
+    pub red: Vec<CurvePoint>,
+    #[serde(default)]
+    pub green: Vec<CurvePoint>,
+    #[serde(default)]
+    pub blue: Vec<CurvePoint>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderSettings {
     pub color_management: ColorManagementSettings,
@@ -95,6 +108,8 @@ pub struct RenderSettings {
     pub relative_color: RelativeColorParameters,
     pub white_balance: WhiteBalanceSettings,
     pub curve: Vec<CurvePoint>,
+    #[serde(default)]
+    pub curves: ToneCurveSet,
     pub color_mixer: ColorMixer,
     pub grading: GradingParameters,
     pub denoise: DenoiseParameters,
@@ -109,6 +124,7 @@ impl Default for RenderSettings {
             relative_color: RelativeColorParameters::default(),
             white_balance: WhiteBalanceSettings::default(),
             curve: Vec::new(),
+            curves: ToneCurveSet::default(),
             color_mixer: ColorMixer::default(),
             grading: GradingParameters::default(),
             denoise: DenoiseParameters::default(),
@@ -296,14 +312,28 @@ fn apply_relative_color(rgb: LinearRgb, parameters: RelativeColorParameters) -> 
     oklab_to_rec2020(oklch_to_oklab(lch))
 }
 
-fn apply_curve(rgb: LinearRgb, curve: &[CurvePoint]) -> LinearRgb {
+fn apply_one_curve(value: f32, curve: &[CurvePoint]) -> f32 {
     if curve.len() < 2 {
-        return rgb;
+        value
+    } else {
+        map_monotone_curve(value, curve)
     }
+}
+fn apply_curve(rgb: LinearRgb, legacy: &[CurvePoint], curves: &ToneCurveSet) -> LinearRgb {
+    let master = if curves.master.len() >= 2 {
+        &curves.master
+    } else {
+        legacy
+    };
+    let rgb = LinearRgb {
+        r: apply_one_curve(rgb.r, master),
+        g: apply_one_curve(rgb.g, master),
+        b: apply_one_curve(rgb.b, master),
+    };
     LinearRgb {
-        r: map_monotone_curve(rgb.r, curve),
-        g: map_monotone_curve(rgb.g, curve),
-        b: map_monotone_curve(rgb.b, curve),
+        r: apply_one_curve(rgb.r, &curves.red),
+        g: apply_one_curve(rgb.g, &curves.green),
+        b: apply_one_curve(rgb.b, &curves.blue),
     }
 }
 
@@ -320,7 +350,7 @@ fn apply_creative_graph(
         };
         rgb = apply_relative_color(rgb, settings.relative_color);
         rgb = apply_tone(rgb, settings.tone);
-        rgb = apply_curve(rgb, &settings.curve);
+        rgb = apply_curve(rgb, &settings.curve, &settings.curves);
         rgb = apply_color_mixer(rgb, settings.color_mixer);
         rgb = apply_grading(rgb, settings.grading);
         if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
@@ -611,6 +641,22 @@ mod tests {
         };
         let output = render_to_srgb8(&decoded, &settings).expect("render");
         assert!(output.data[0] > output.data[2]);
+    }
+
+    #[test]
+    fn native_rgb_curves_are_channel_specific_and_preview_export_match() {
+        let decoded = fixture(&[[0.5, 0.5, 0.5, 1.0]]);
+        let settings = RenderSettings {
+            curves: ToneCurveSet {
+                red: vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 0.7 }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("preview");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("export");
+        assert_eq!(preview, export);
+        assert!(preview.data[0] < preview.data[1]);
     }
 
     #[test]
