@@ -86,7 +86,7 @@ These milestone numbers supersede the older capability-group numbering below for
 - [x] Production Camera Profile Resolver with DNG ColorMatrix1/2, ForwardMatrix1/2, CameraCalibration, CalibrationIlluminant and Camera Neutral metadata.
 - [x] Explicit camera RGB -> XYZ -> linear Rec.2020/D65 stage with DNG D50 -> working D65 Bradford adaptation in the shared RAW path.
 - [x] Extensible Nikon/Canon/Sony/Fujifilm families and explicit Generic Profile state; profile ID/version/SHA-256 is serializable in project state and the active ID is visible in Native UI/export results.
-- [x] Add a retained-license colour-science v0.4.7 ColorChecker oracle plus identity/dual-illuminant/finite/round-trip and real RAW profile regressions.
+- [x] Add a retained-license colour-science v0.4.7 ColorChecker oracle plus identity/dual-illuminant/finite/round-trip and real RAW profile regressions; the CC0 Apple DNG fixture has no valid embedded profile and is asserted as visibly `Generic`, never silently substituted.
 - [ ] GitHub Actions and M3 color regressions green; M4 remains blocked until this is checked.
 
 ### M4 Professional Tone / Light

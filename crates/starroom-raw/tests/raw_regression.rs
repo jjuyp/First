@@ -102,12 +102,6 @@ fn all_public_raw_fixtures_decode_from_sensor_through_libraw() {
             fixture.id
         );
         assert_eq!(
-            decoded.metadata.camera_profile.status,
-            CameraProfileStatus::Resolved,
-            "{} must resolve a real camera or embedded DNG profile",
-            fixture.id
-        );
-        assert_eq!(
             decoded.metadata.camera_profile.hash.len(),
             64,
             "{}",
@@ -125,23 +119,40 @@ fn all_public_raw_fixtures_decode_from_sensor_through_libraw() {
             fixture.id
         );
         if decoded.metadata.format == RawFormat::Dng {
-            assert!(
-                matches!(
+            match decoded.metadata.camera_profile.status {
+                CameraProfileStatus::Resolved => {
+                    assert!(
+                        matches!(
+                            decoded.metadata.camera_profile.source,
+                            CameraProfileSource::DngForwardMatrix
+                                | CameraProfileSource::DngColorMatrix
+                                | CameraProfileSource::DngForwardAndColorMatrix
+                        ),
+                        "resolved DNG must use its embedded matrix: {}",
+                        fixture.id
+                    );
+                    assert!(
+                        !decoded
+                            .metadata
+                            .camera_profile
+                            .calibration_illuminants
+                            .is_empty(),
+                        "resolved DNG must expose CalibrationIlluminant: {}",
+                        fixture.id
+                    );
+                }
+                CameraProfileStatus::Generic => assert_eq!(
                     decoded.metadata.camera_profile.source,
-                    CameraProfileSource::DngForwardMatrix
-                        | CameraProfileSource::DngColorMatrix
-                        | CameraProfileSource::DngForwardAndColorMatrix
+                    CameraProfileSource::GenericLinearSrgb,
+                    "DNG without a valid embedded profile must be explicitly generic: {}",
+                    fixture.id
                 ),
-                "native DNG must use its embedded matrix: {}",
-                fixture.id
-            );
-            assert!(
-                !decoded
-                    .metadata
-                    .camera_profile
-                    .calibration_illuminants
-                    .is_empty(),
-                "native DNG must expose CalibrationIlluminant: {}",
+            }
+        } else {
+            assert_eq!(
+                decoded.metadata.camera_profile.status,
+                CameraProfileStatus::Resolved,
+                "{} must resolve LibRaw's identified camera profile",
                 fixture.id
             );
         }
