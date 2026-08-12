@@ -32,6 +32,9 @@ export interface NativeEditSettings {
   curves: { master: Array<{ x: number; y: number }>; red: Array<{ x: number; y: number }>; green: Array<{ x: number; y: number }>; blue: Array<{ x: number; y: number }> }
   colorMixer: NativeColorMixer
   grading: NativeGrading
+  sharpenSettings: { amount: number; radius: number; detail: number; masking: number; haloProtection: number; threshold: number }
+  denoiseSettings: { luminance: number; chroma: number; radius: number; detailProtection: number; highIso: number }
+  localDetail: { texture: number; clarity: number; dehaze: number }
 }
 
 export interface NativePreviewResult {
@@ -57,9 +60,6 @@ export const nativeRuntimeAvailable = () => isTauri()
 
 export function assertNativeSupported(adjustments: Adjustments, mask: RadialMask) {
   const unsupported: string[] = []
-  if (adjustments.clarity !== 0) unsupported.push('Clarity')
-  if (adjustments.sharpness < 0) unsupported.push('negative Sharpness')
-  if (adjustments.noiseReduction < 0) unsupported.push('negative Noise reduction')
   if (adjustments.maskExposure !== 0 || mask.x !== .5 || mask.y !== .5 || mask.width !== .42
     || mask.height !== .42 || mask.rotation !== 0) unsupported.push('Masks')
   if (adjustments.vignette !== 0 || adjustments.lensBrightness !== 0) unsupported.push('Optics')
@@ -109,6 +109,18 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
       global: wheel('Global'), shadows: wheel('Shadows'), midtones: wheel('Midtones'), highlights: wheel('Highlights'),
       balance: adjustments.gradeBalance / 100, blending: adjustments.gradeBlending / 100, amount: adjustments.gradeAmount / 100,
     },
+    sharpenSettings: {
+      amount: Math.max(0, adjustments.sharpness / 50), radius: adjustments.sharpenRadius,
+      detail: adjustments.sharpenDetail / 100, masking: adjustments.sharpenMasking / 100,
+      haloProtection: adjustments.sharpenHaloProtection / 100, threshold: .002,
+    },
+    denoiseSettings: {
+      luminance: Math.max(adjustments.noiseReduction, adjustments.denoiseLuminance) / 100,
+      chroma: Math.max(adjustments.noiseReduction, adjustments.denoiseChroma) / 100,
+      radius: adjustments.denoiseRadius, detailProtection: adjustments.denoiseDetailProtection / 100,
+      highIso: adjustments.denoiseHighIso / 100,
+    },
+    localDetail: { texture: adjustments.texture / 100, clarity: adjustments.clarity / 100, dehaze: adjustments.dehaze / 100 },
   }
 }
 

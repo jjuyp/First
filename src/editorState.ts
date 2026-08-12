@@ -36,6 +36,9 @@ export type AdjustmentKey =
   | 'gradeMidtonesHue' | 'gradeMidtonesChroma' | 'gradeMidtonesLightness'
   | 'gradeHighlightsHue' | 'gradeHighlightsChroma' | 'gradeHighlightsLightness'
   | 'gradeBalance' | 'gradeBlending' | 'gradeAmount'
+  | 'sharpenRadius' | 'sharpenDetail' | 'sharpenMasking' | 'sharpenHaloProtection'
+  | 'denoiseLuminance' | 'denoiseChroma' | 'denoiseRadius' | 'denoiseDetailProtection' | 'denoiseHighIso'
+  | 'texture' | 'dehaze'
 
 export type Adjustments = Record<AdjustmentKey, number>
 
@@ -76,6 +79,9 @@ export const defaultAdjustments: Adjustments = {
   gradeMidtonesHue: 0, gradeMidtonesChroma: 0, gradeMidtonesLightness: 0,
   gradeHighlightsHue: 0, gradeHighlightsChroma: 0, gradeHighlightsLightness: 0,
   gradeBalance: 0, gradeBlending: 50, gradeAmount: 100,
+  sharpenRadius: 1, sharpenDetail: 50, sharpenMasking: 0, sharpenHaloProtection: 75,
+  denoiseLuminance: 0, denoiseChroma: 0, denoiseRadius: 1.25, denoiseDetailProtection: 50, denoiseHighIso: 0,
+  texture: 0, dehaze: 0,
 }
 
 export interface EditorSnapshot {

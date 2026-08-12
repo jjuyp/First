@@ -43,7 +43,7 @@ describe('native preview contract', () => {
   })
 
   it('never silently ignores edits outside the M1C native slice', () => {
-    expect(() => assertNativeSupported({ ...defaultAdjustments, clarity: 10 }, defaultMask))
+    expect(() => assertNativeSupported({ ...defaultAdjustments, vignette: 10 }, defaultMask))
       .toThrow(/Browser fallback was not used/)
   })
 
@@ -74,5 +74,14 @@ describe('native preview contract', () => {
     expect(settings.grading.shadows).toEqual({ hueDegrees: -140, chroma: .35, lightness: 0 })
     expect(settings.grading.highlights.lightness).toBe(-.12)
     expect(settings.grading).toMatchObject({ balance: .2, blending: .75, amount: .8 })
+  })
+
+  it('serializes distinct sharpen denoise and local-detail controls', () => {
+    const settings = toNativeSettings({ ...defaultAdjustments, sharpness: 40, sharpenRadius: 1.8,
+      sharpenMasking: 65, denoiseLuminance: 30, denoiseChroma: 60, denoiseHighIso: 80,
+      texture: 25, clarity: -15, dehaze: 20 }, [])
+    expect(settings.sharpenSettings).toMatchObject({ amount: .8, radius: 1.8, masking: .65 })
+    expect(settings.denoiseSettings).toMatchObject({ luminance: .3, chroma: .6, highIso: .8 })
+    expect(settings.localDetail).toEqual({ texture: .25, clarity: -.15, dehaze: .2 })
   })
 })

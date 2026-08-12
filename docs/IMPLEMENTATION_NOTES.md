@@ -1,4 +1,12 @@
 # Implementation Notes
+## 2026-08-12 M9 Detail Engine acceptance candidate
+
+- Replaced the prototype one-radius Gaussian behavior with three distinct Native operators. Sharpen combines fine/coarse residuals with Amount/Radius/Detail, edge Masking and local-range Halo Protection. Denoise is an edge-aware range/spatial filter with separate Luminance/Chroma, Detail Protection and High ISO strength. Local Detail separates Texture (fine residual), Clarity (mid-frequency residual) and Dehaze (broad veil/local contrast); these are not aliases for one filter.
+- The detail graph is ordered denoise -> local detail -> sharpen after Native creative color/tone and before the existing final output-gamut/display transform. Broad Dehaze support uses a summed-area O(n) blur rather than an impractical large separable kernel. No stage clamps scene-linear RGB to 0..1.
+- Parameters have typed IPC range/finite validation, direct numeric UI, non-destructive snapshot undo/redo and project persistence. Browser Canvas is no longer used as a detail reference or silent fallback. Preview and Export share the same `render_working_graph` calls.
+- Regression coverage includes sharpen identity/edge gain/masking/halo bounds, chroma/luma/high-ISO denoise and step-edge preservation, non-alias Texture/Clarity/Dehaze behavior, finite output and Native Preview/Export parity. Algorithm families and control semantics are compared against the already-pinned darktable quality foundation; no new third-party runtime was added in M9.
+- Local frontend acceptance passed with Vitest 24/24, ESLint and production build; Rust formatting passed. Native warning-denied compile/tests remain authoritative in Windows CI because local MSVC `link.exe` is unavailable.
+
 ## 2026-08-12 M8 Color Grading acceptance candidate
 
 - `starroom-grading` now owns four independent Global/Shadows/Midtones/Highlights Hue/Chroma/Lightness vectors plus Balance, Blending and master Amount. Smooth normalized tonal masks and crossover semantics follow the established design principles of darktable Color Balance RGB; the compact OKLab implementation is Starroom-authored and runs in the existing linear Rec.2020 D65 Native graph.

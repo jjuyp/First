@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use starroom_advisor::{AnalysisStats, Suggestion, advise};
 use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
-use starroom_detail::{DenoiseParameters, SharpenParameters};
+use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
 use starroom_grading::GradingParameters;
 use starroom_imageio::{decode_source, decode_source_preview, encode_jpeg_rgb8};
 use starroom_pipeline::{
@@ -84,6 +84,12 @@ struct NativeEditSettings {
     color_mixer: ColorMixer,
     #[serde(default)]
     grading: GradingParameters,
+    #[serde(default)]
+    sharpen_settings: SharpenParameters,
+    #[serde(default)]
+    denoise_settings: DenoiseParameters,
+    #[serde(default)]
+    local_detail: LocalDetailParameters,
 }
 
 impl NativeEditSettings {
@@ -149,6 +155,43 @@ impl NativeEditSettings {
         {
             return Err("native color grading settings are outside supported ranges".into());
         }
+        let detail_values = [
+            self.sharpen_settings.amount,
+            self.sharpen_settings.radius,
+            self.sharpen_settings.detail,
+            self.sharpen_settings.masking,
+            self.sharpen_settings.halo_protection,
+            self.sharpen_settings.threshold,
+            self.denoise_settings.luminance,
+            self.denoise_settings.chroma,
+            self.denoise_settings.radius,
+            self.denoise_settings.detail_protection,
+            self.denoise_settings.high_iso,
+            self.local_detail.texture,
+            self.local_detail.clarity,
+            self.local_detail.dehaze,
+        ];
+        if !detail_values.into_iter().all(f32::is_finite)
+            || !(0.0..=2.0).contains(&self.sharpen_settings.amount)
+            || !(0.3..=4.0).contains(&self.sharpen_settings.radius)
+            || !(0.0..=1.0).contains(&self.sharpen_settings.detail)
+            || !(0.0..=1.0).contains(&self.sharpen_settings.masking)
+            || !(0.0..=1.0).contains(&self.sharpen_settings.halo_protection)
+            || !(0.0..=1.0).contains(&self.denoise_settings.luminance)
+            || !(0.0..=1.0).contains(&self.denoise_settings.chroma)
+            || !(0.6..=4.0).contains(&self.denoise_settings.radius)
+            || !(0.0..=1.0).contains(&self.denoise_settings.detail_protection)
+            || !(0.0..=1.0).contains(&self.denoise_settings.high_iso)
+            || [
+                self.local_detail.texture,
+                self.local_detail.clarity,
+                self.local_detail.dehaze,
+            ]
+            .into_iter()
+            .any(|value| !(-1.0..=1.0).contains(&value))
+        {
+            return Err("native detail settings are outside supported ranges".into());
+        }
 
         let unit = |value: f32| (value / 100.0).clamp(-1.0, 1.0);
         let mut curve = self.curve;
@@ -182,15 +225,9 @@ impl NativeEditSettings {
             curves: self.curves,
             color_mixer: self.color_mixer,
             grading: self.grading,
-            denoise: DenoiseParameters {
-                luminance: unit(self.noise_reduction).max(0.0),
-                chroma: unit(self.noise_reduction).max(0.0),
-                ..Default::default()
-            },
-            sharpen: SharpenParameters {
-                amount: unit(self.sharpness).max(0.0) * 2.0,
-                ..Default::default()
-            },
+            denoise: self.denoise_settings,
+            local_detail: self.local_detail,
+            sharpen: self.sharpen_settings,
             ..Default::default()
         })
     }
@@ -390,6 +427,12 @@ mod tests {
             curves: ToneCurveSet::default(),
             color_mixer: ColorMixer::default(),
             grading: GradingParameters::default(),
+            sharpen_settings: SharpenParameters {
+                amount: 0.0,
+                ..Default::default()
+            },
+            denoise_settings: DenoiseParameters::default(),
+            local_detail: LocalDetailParameters::default(),
         }
     }
 

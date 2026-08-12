@@ -12,7 +12,10 @@ use starroom_color_management::{
     ColorManagementError, InputProfileSource, LittleCmsProvider, OutputProfileSource,
     RenderingIntent,
 };
-use starroom_detail::{DenoiseParameters, LinearImage, SharpenParameters, denoise, sharpen};
+use starroom_detail::{
+    DenoiseParameters, LinearImage, LocalDetailParameters, SharpenParameters, denoise,
+    local_detail, sharpen,
+};
 use starroom_grading::{GradingParameters, apply_grading};
 use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage};
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
@@ -113,6 +116,8 @@ pub struct RenderSettings {
     pub color_mixer: ColorMixer,
     pub grading: GradingParameters,
     pub denoise: DenoiseParameters,
+    #[serde(default)]
+    pub local_detail: LocalDetailParameters,
     pub sharpen: SharpenParameters,
 }
 
@@ -128,6 +133,7 @@ impl Default for RenderSettings {
             color_mixer: ColorMixer::default(),
             grading: GradingParameters::default(),
             denoise: DenoiseParameters::default(),
+            local_detail: LocalDetailParameters::default(),
             sharpen: SharpenParameters {
                 amount: 0.0,
                 ..Default::default()
@@ -475,7 +481,8 @@ fn render_working_graph(
     output_icc: Option<&[u8]>,
 ) -> Result<RenderedRgb8, PipelineError> {
     let denoised = denoise(&working, settings.denoise);
-    let detailed = sharpen(&denoised, settings.sharpen);
+    let locally_adjusted = local_detail(&denoised, settings.local_detail);
+    let detailed = sharpen(&locally_adjusted, settings.sharpen);
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
     for pixel in detailed.data.chunks_exact(3) {
         let working_rgb = compress_to_unit_gamut(LinearRgb {
@@ -718,6 +725,51 @@ mod tests {
                 .expect("baseline")
                 .data
         );
+    }
+
+    #[test]
+    fn m9_detail_engine_preview_export_share_spatial_pipeline() {
+        let decoded = DecodedRenderedImage {
+            width: 5,
+            height: 3,
+            format: RenderedFormat::Png,
+            rgba: (0..15)
+                .flat_map(|index| {
+                    let edge = if index % 5 < 2 { 0.12 } else { 0.68 };
+                    let noise = if index % 2 == 0 { 0.025 } else { -0.02 };
+                    [edge + noise, edge, edge - noise, 1.0]
+                })
+                .collect(),
+            embedded_icc: None,
+            exif: None,
+        };
+        let settings = RenderSettings {
+            denoise: DenoiseParameters {
+                luminance: 0.45,
+                chroma: 0.7,
+                radius: 1.2,
+                detail_protection: 0.65,
+                high_iso: 0.5,
+            },
+            local_detail: LocalDetailParameters {
+                texture: 0.25,
+                clarity: 0.2,
+                dehaze: 0.1,
+            },
+            sharpen: SharpenParameters {
+                amount: 0.7,
+                radius: 1.0,
+                detail: 0.65,
+                masking: 0.4,
+                halo_protection: 0.8,
+                threshold: 0.002,
+            },
+            ..Default::default()
+        };
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("preview");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("export");
+        assert_eq!(preview, export);
+        assert_eq!(preview.data.len(), 45);
     }
 
     #[test]

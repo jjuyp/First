@@ -33,6 +33,8 @@ pub struct Project {
     #[serde(default)]
     pub color_grading: PersistedColorGrading,
     #[serde(default)]
+    pub detail: PersistedDetail,
+    #[serde(default)]
     pub masks: Vec<MaskNode>,
     #[serde(default)]
     pub layers: Vec<AdjustmentLayer>,
@@ -149,6 +151,44 @@ impl Default for PersistedColorGrading {
             balance: 0.0,
             blending: 0.5,
             amount: 1.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedDetail {
+    pub sharpen_amount: f32,
+    pub sharpen_radius: f32,
+    pub sharpen_detail: f32,
+    pub sharpen_masking: f32,
+    pub halo_protection: f32,
+    pub denoise_luminance: f32,
+    pub denoise_chroma: f32,
+    pub denoise_radius: f32,
+    pub detail_protection: f32,
+    pub high_iso: f32,
+    pub texture: f32,
+    pub clarity: f32,
+    pub dehaze: f32,
+}
+
+impl Default for PersistedDetail {
+    fn default() -> Self {
+        Self {
+            sharpen_amount: 0.0,
+            sharpen_radius: 1.0,
+            sharpen_detail: 0.5,
+            sharpen_masking: 0.0,
+            halo_protection: 0.75,
+            denoise_luminance: 0.0,
+            denoise_chroma: 0.0,
+            denoise_radius: 1.25,
+            detail_protection: 0.5,
+            high_iso: 0.0,
+            texture: 0.0,
+            clarity: 0.0,
+            dehaze: 0.0,
         }
     }
 }
@@ -318,6 +358,7 @@ mod tests {
                 band_width_degrees: 52.0,
             },
             color_grading: PersistedColorGrading::default(),
+            detail: PersistedDetail::default(),
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -342,6 +383,7 @@ mod tests {
         assert!(restored.color_mixer.hue_lock);
         assert_eq!(restored.color_mixer.bands.len(), 8);
         assert_eq!(restored.color_grading.amount, 1.0);
+        assert_eq!(restored.detail.sharpen_radius, 1.0);
         assert_eq!(
             restored.camera_profile.as_ref().unwrap().hash,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
