@@ -25,6 +25,7 @@ jobs:
       detail: ${{ steps.paths.outputs.detail }}
       optics: ${{ steps.paths.outputs.optics }}
       geometry: ${{ steps.paths.outputs.geometry }}
+      gpu: ${{ steps.paths.outputs.gpu }}
       ai: ${{ steps.paths.outputs.ai }}
       full: ${{ steps.paths.outputs.full }}
       rust_any: ${{ steps.paths.outputs.rust_any }}

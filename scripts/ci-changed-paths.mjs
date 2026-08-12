@@ -2,10 +2,11 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const categories = ['web', 'color', 'raw', 'detail', 'optics', 'geometry', 'ai']
+const categories = ['web', 'color', 'raw', 'detail', 'optics', 'geometry', 'gpu', 'ai']
 const rustLabels = {
   color: 'Color Check', raw: 'RAW Check', detail: 'Detail Check', optics: 'Optics Check',
   geometry: 'Geometry Check', ai: 'AI Check',
+  gpu: 'GPU Check',
 }
 
 const rules = {
@@ -15,6 +16,7 @@ const rules = {
   detail: [/^crates\/starroom-(?:detail|heal|portrait)\//],
   optics: [/^crates\/starroom-optics\//],
   geometry: [/^crates\/starroom-geometry\//],
+  gpu: [/^crates\/starroom-render\//],
   ai: [/^crates\/starroom-advisor\//, /^models\//],
 }
 
