@@ -101,6 +101,7 @@ jobs:
         with:
           name: timing-${{ matrix.target }}-${{ github.run_id }}
           path: .starroom-reports/*.json
+          include-hidden-files: true
 
   full-check-rust:
     name: Full Check / Rust
@@ -139,6 +140,7 @@ jobs:
         with:
           name: timing-full-rust-${{ github.run_id }}
           path: .starroom-reports/*.json
+          include-hidden-files: true
 
   full-check-web:
     name: Full Check / Web
@@ -158,3 +160,4 @@ jobs:
         with:
           name: timing-full-web-${{ github.run_id }}
           path: .starroom-reports/*.json
+          include-hidden-files: true
