@@ -165,7 +165,8 @@ struct NativeExportResult {
     output_path: PathBuf,
     width: u32,
     height: u32,
-    input_profile: &'static str,
+    input_profile: String,
+    camera_profile_hash: Option<String>,
     working_space: &'static str,
 }
 
@@ -174,18 +175,29 @@ fn profile_flag(source: starroom_color_management::InputProfileSource) -> u16 {
         starroom_color_management::InputProfileSource::EmbeddedIcc => 1,
         starroom_color_management::InputProfileSource::AssumedSrgb => 0,
         starroom_color_management::InputProfileSource::RawCameraMatrix => 2,
+        starroom_color_management::InputProfileSource::RawGenericProfile => 4,
     }
 }
 
-fn preview_frame(width: u32, height: u32, flags: u16, jpeg: Vec<u8>) -> Result<Vec<u8>, String> {
+fn preview_frame(
+    width: u32,
+    height: u32,
+    flags: u16,
+    profile_id: &str,
+    jpeg: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let profile_len = u16::try_from(profile_id.len()).map_err(|_| "profile ID is too long")?;
     let payload_len = u32::try_from(jpeg.len()).map_err(|_| "native preview is too large")?;
-    let mut frame = Vec::with_capacity(20 + jpeg.len());
-    frame.extend_from_slice(b"SRP1");
-    frame.extend_from_slice(&1_u16.to_le_bytes());
+    let mut frame = Vec::with_capacity(24 + profile_id.len() + jpeg.len());
+    frame.extend_from_slice(b"SRP2");
+    frame.extend_from_slice(&2_u16.to_le_bytes());
     frame.extend_from_slice(&flags.to_le_bytes());
     frame.extend_from_slice(&width.to_le_bytes());
     frame.extend_from_slice(&height.to_le_bytes());
+    frame.extend_from_slice(&profile_len.to_le_bytes());
+    frame.extend_from_slice(&0_u16.to_le_bytes());
     frame.extend_from_slice(&payload_len.to_le_bytes());
+    frame.extend_from_slice(profile_id.as_bytes());
     frame.extend_from_slice(&jpeg);
     Ok(frame)
 }
@@ -198,12 +210,14 @@ fn native_preview(request: NativePreviewRequest) -> Result<Response, String> {
     let rendered = render_source_preview_to_srgb8(&decoded, &settings)
         .map_err(|error| format!("native preview graph failed: {error}"))?;
     let flags = profile_flag(rendered.color.input);
+    let profile_id = rendered.color.camera_profile_id.as_deref().unwrap_or("");
     let jpeg = encode_jpeg_rgb8(&rendered.data, rendered.width, rendered.height, 91, None)
         .map_err(|error| format!("native preview encode failed: {error}"))?;
     Ok(Response::new(preview_frame(
         rendered.width,
         rendered.height,
         flags,
+        profile_id,
         jpeg,
     )?))
 }
@@ -228,11 +242,20 @@ fn native_export_jpeg(request: NativeExportRequest) -> Result<NativeExportResult
         .map_err(|error| format!("native export decode failed: {error}"))?;
     let rendered = render_source_export_to_srgb8(&decoded, &settings)
         .map_err(|error| format!("native export graph failed: {error}"))?;
-    let input_profile = match rendered.color.input {
-        starroom_color_management::InputProfileSource::EmbeddedIcc => "embedded ICC",
-        starroom_color_management::InputProfileSource::AssumedSrgb => "assumed sRGB",
-        starroom_color_management::InputProfileSource::RawCameraMatrix => "LibRaw camera matrix",
-    };
+    let input_profile = rendered
+        .color
+        .camera_profile_id
+        .clone()
+        .unwrap_or_else(|| match rendered.color.input {
+            starroom_color_management::InputProfileSource::EmbeddedIcc => "embedded ICC".into(),
+            starroom_color_management::InputProfileSource::AssumedSrgb => "assumed sRGB".into(),
+            starroom_color_management::InputProfileSource::RawCameraMatrix => {
+                "resolved RAW camera profile".into()
+            }
+            starroom_color_management::InputProfileSource::RawGenericProfile => {
+                "Generic RAW Profile".into()
+            }
+        });
     let jpeg = encode_jpeg_rgb8(
         &rendered.data,
         rendered.width,
@@ -248,6 +271,7 @@ fn native_export_jpeg(request: NativeExportRequest) -> Result<NativeExportResult
         width: rendered.width,
         height: rendered.height,
         input_profile,
+        camera_profile_hash: rendered.color.camera_profile_hash,
         working_space: rendered.color.working_space,
     })
 }
@@ -303,12 +327,18 @@ mod tests {
 
     #[test]
     fn binary_preview_contract_has_fixed_header_and_payload_length() {
-        let frame = preview_frame(640, 480, 1, vec![0xff, 0xd8, 0xff]).expect("frame");
-        assert_eq!(&frame[0..4], b"SRP1");
+        let profile = "dng-forward-matrix:test:camera";
+        let frame = preview_frame(640, 480, 2, profile, vec![0xff, 0xd8, 0xff]).expect("frame");
+        assert_eq!(&frame[0..4], b"SRP2");
         assert_eq!(u32::from_le_bytes(frame[8..12].try_into().unwrap()), 640);
         assert_eq!(u32::from_le_bytes(frame[12..16].try_into().unwrap()), 480);
-        assert_eq!(u32::from_le_bytes(frame[16..20].try_into().unwrap()), 3);
-        assert_eq!(&frame[20..], &[0xff, 0xd8, 0xff]);
+        assert_eq!(
+            u16::from_le_bytes(frame[16..18].try_into().unwrap()) as usize,
+            profile.len()
+        );
+        assert_eq!(u32::from_le_bytes(frame[20..24].try_into().unwrap()), 3);
+        assert_eq!(&frame[24..24 + profile.len()], profile.as_bytes());
+        assert_eq!(&frame[24 + profile.len()..], &[0xff, 0xd8, 0xff]);
     }
 
     #[test]

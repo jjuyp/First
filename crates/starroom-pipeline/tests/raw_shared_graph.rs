@@ -28,6 +28,17 @@ fn raw_preview_and_export_use_the_same_native_graph() {
         .expect("same shared graph");
     assert_eq!(preview, export);
     assert_eq!(preview.color.input, InputProfileSource::RawCameraMatrix);
+    assert!(
+        preview
+            .color
+            .camera_profile_id
+            .as_deref()
+            .is_some_and(|id| id.contains("nikon"))
+    );
+    assert_eq!(
+        preview.color.camera_profile_hash.as_deref().map(str::len),
+        Some(64)
+    );
 
     let slider_settings = RenderSettings {
         tone: ToneParameters {

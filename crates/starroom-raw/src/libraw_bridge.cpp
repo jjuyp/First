@@ -1,5 +1,8 @@
 #include <libraw/libraw.h>
 
+// This product includes DNG technology under license by Adobe.
+// See NOTICE.md and docs/17_THIRD_PARTY_PROVENANCE.md.
+
 #include <chrono>
 #include <cstdio>
 #include <cstdint>
@@ -26,6 +29,12 @@ struct SrRawResult {
   uint32_t cblack[4];
   float camera_multipliers[4];
   float pre_multipliers[4];
+  float cam_xyz[12];
+  uint32_t dng_parsed_fields[2];
+  uint16_t dng_illuminants[2];
+  float dng_calibration[32];
+  float dng_color_matrix[24];
+  float dng_forward_matrix[24];
   uint8_t xtrans[36];
   uint8_t sensor_layout;
   uint8_t used_half_size;
@@ -104,6 +113,30 @@ int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
     result->cblack[index] = data.color.cblack[index];
     result->camera_multipliers[index] = data.color.cam_mul[index];
     result->pre_multipliers[index] = data.color.pre_mul[index];
+    for (size_t xyz = 0; xyz < 3; ++xyz) {
+      result->cam_xyz[index * 3 + xyz] = data.color.cam_xyz[index][xyz];
+    }
+  }
+  for (size_t set = 0; set < 2; ++set) {
+    const libraw_dng_color_t &dng = data.color.dng_color[set];
+    result->dng_parsed_fields[set] = dng.parsedfields;
+    result->dng_illuminants[set] = dng.illuminant;
+    for (size_t row = 0; row < 4; ++row) {
+      for (size_t column = 0; column < 4; ++column) {
+        result->dng_calibration[set * 16 + row * 4 + column] =
+            dng.calibration[row][column];
+      }
+      for (size_t xyz = 0; xyz < 3; ++xyz) {
+        result->dng_color_matrix[set * 12 + row * 3 + xyz] =
+            dng.colormatrix[row][xyz];
+      }
+    }
+    for (size_t xyz = 0; xyz < 3; ++xyz) {
+      for (size_t channel = 0; channel < 4; ++channel) {
+        result->dng_forward_matrix[set * 12 + xyz * 4 + channel] =
+            dng.forwardmatrix[xyz][channel];
+      }
+    }
   }
   for (size_t row = 0; row < 6; ++row) {
     for (size_t column = 0; column < 6; ++column) {
@@ -126,7 +159,10 @@ int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
   }
 
   processor.imgdata.params.output_bps = 16;
-  processor.imgdata.params.output_color = 8; // Linear Rec.2020 / D65.
+  // Preserve linear camera RGB after LibRaw's mature sensor scaling, As-Shot WB
+  // and demosaic. Starroom's Rust CameraProfileResolver owns the explicit
+  // camera RGB -> XYZ -> Rec.2020/D65 color stage shared by Preview and Export.
+  processor.imgdata.params.output_color = 0;
   processor.imgdata.params.gamm[0] = 1.0;
   processor.imgdata.params.gamm[1] = 1.0;
   processor.imgdata.params.no_auto_bright = 1;
@@ -135,6 +171,11 @@ int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
   processor.imgdata.params.user_qual = 3; // AHD; X-Trans selects LibRaw's mature path.
   processor.imgdata.params.half_size = half_size ? 1 : 0;
   processor.imgdata.params.user_flip = -1;
+  for (size_t row = 0; row < 3; ++row) {
+    for (size_t column = 0; column < 4; ++column) {
+      processor.imgdata.color.rgb_cam[row][column] = row == column ? 1.0f : 0.0f;
+    }
+  }
 
   const auto process_start = std::chrono::steady_clock::now();
   status = processor.dcraw_process();

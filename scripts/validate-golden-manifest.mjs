@@ -22,6 +22,17 @@ for (const entry of manifest.cases ?? []) {
   required.delete(entry.id)
 }
 if (required.size) throw new Error(`Missing required Golden cases: ${[...required].join(', ')}`)
+const colorchecker = manifest.cases.find((entry) => entry.id === 'colorchecker')
+if (colorchecker?.referenceOracle?.status !== 'active' || colorchecker.referenceOracle.license !== 'BSD-3-Clause') {
+  throw new Error('ColorChecker reference oracle is missing or has an unexpected license')
+}
+const colorcheckerUrl = new URL(colorchecker.referenceOracle.path, new URL('../fixtures/golden/manifest.json', import.meta.url))
+const colorcheckerFixture = JSON.parse(readFileSync(colorcheckerUrl, 'utf8'))
+if (colorcheckerFixture.license !== 'BSD-3-Clause'
+  || colorcheckerFixture.patches?.length !== colorchecker.referenceOracle.patches
+  || !existsSync(new URL(colorcheckerFixture.licenseFile, colorcheckerUrl))) {
+  throw new Error('ColorChecker oracle data or retained BSD-3-Clause license is invalid')
+}
 console.log(`OK fixtures/golden/manifest.json (${manifest.cases.length} required cases)`)
 
 const rawManifestUrl = new URL('../fixtures/raw/manifest.json', import.meta.url)

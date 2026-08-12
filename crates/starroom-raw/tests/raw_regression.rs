@@ -1,6 +1,9 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use starroom_raw::{LIBRAW_PINNED_VERSION, RawDevelopSource, SensorLayout, decode_raw};
+use starroom_raw::{
+    CameraProfileSource, CameraProfileStatus, LIBRAW_PINNED_VERSION, RawDevelopSource, RawFormat,
+    SensorLayout, decode_raw,
+};
 use std::{fs, path::PathBuf};
 
 #[derive(Deserialize)]
@@ -98,6 +101,50 @@ fn all_public_raw_fixtures_decode_from_sensor_through_libraw() {
             "{}",
             fixture.id
         );
+        assert_eq!(
+            decoded.metadata.camera_profile.status,
+            CameraProfileStatus::Resolved,
+            "{} must resolve a real camera or embedded DNG profile",
+            fixture.id
+        );
+        assert_eq!(
+            decoded.metadata.camera_profile.hash.len(),
+            64,
+            "{}",
+            fixture.id
+        );
+        assert!(
+            decoded
+                .metadata
+                .camera_profile
+                .camera_to_xyz_d65
+                .iter()
+                .flatten()
+                .all(|value| value.is_finite()),
+            "{}",
+            fixture.id
+        );
+        if decoded.metadata.format == RawFormat::Dng {
+            assert!(
+                matches!(
+                    decoded.metadata.camera_profile.source,
+                    CameraProfileSource::DngForwardMatrix
+                        | CameraProfileSource::DngColorMatrix
+                        | CameraProfileSource::DngForwardAndColorMatrix
+                ),
+                "native DNG must use its embedded matrix: {}",
+                fixture.id
+            );
+            assert!(
+                !decoded
+                    .metadata
+                    .camera_profile
+                    .calibration_illuminants
+                    .is_empty(),
+                "native DNG must expose CalibrationIlluminant: {}",
+                fixture.id
+            );
+        }
         assert!(
             decoded.metadata.make.to_ascii_lowercase().contains(
                 fixture

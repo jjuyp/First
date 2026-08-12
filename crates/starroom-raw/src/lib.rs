@@ -4,7 +4,16 @@
 //! CDDL-1.0 license path. The bridge always calls sensor `unpack()` followed by
 //! LibRaw's demosaic path; embedded thumbnails are never used for Develop.
 
+mod profile;
+
+pub use profile::{
+    CAMERA_PROFILE_RESOLVER_VERSION, CalibrationIlluminant, CameraFamily, CameraProfileDescriptor,
+    CameraProfileInput, CameraProfileResolver, CameraProfileSource, CameraProfileStatus,
+    DngMatrixSet,
+};
+
 use serde::{Deserialize, Serialize};
+use starroom_color_management::{Xyz, xyz_d65_to_rec2020_linear};
 use std::{ffi::CStr, fs, os::raw::c_char, path::Path, slice};
 use thiserror::Error;
 
@@ -26,6 +35,8 @@ pub enum RawDecodeError {
     InvalidRgbBuffer,
     #[error("RAW decoder returned a non-finite sample")]
     NonFiniteSample,
+    #[error("camera profile transform returned a non-finite sample")]
+    NonFiniteCameraTransform,
     #[error("RAW format is not enabled for Develop: {extension}")]
     UnsupportedExtension { extension: String },
 }
@@ -101,6 +112,8 @@ pub struct RawMetadata {
     pub as_shot_multipliers: [f32; 4],
     pub camera_neutral: [f32; 4],
     pub pre_multipliers: [f32; 4],
+    pub dng_color: [DngMatrixSet; 2],
+    pub camera_profile: CameraProfileDescriptor,
     pub output_space: String,
     pub demosaic_provider: String,
     pub libraw_version: String,
@@ -119,7 +132,7 @@ pub struct RawDecodeTimings {
 pub struct DecodedRawImage {
     pub width: u32,
     pub height: u32,
-    /// Unbounded f32 linear Rec.2020/D65 samples produced from 16-bit LibRaw output.
+    /// Unbounded f32 linear Rec.2020/D65 samples produced by the explicit camera-profile stage.
     pub rgb: Vec<f32>,
     pub metadata: RawMetadata,
     pub timings: RawDecodeTimings,
@@ -145,6 +158,12 @@ struct BridgeResult {
     cblack: [u32; 4],
     camera_multipliers: [f32; 4],
     pre_multipliers: [f32; 4],
+    cam_xyz: [f32; 12],
+    dng_parsed_fields: [u32; 2],
+    dng_illuminants: [u16; 2],
+    dng_calibration: [f32; 32],
+    dng_color_matrix: [f32; 24],
+    dng_forward_matrix: [f32; 24],
     xtrans: [u8; 36],
     sensor_layout: u8,
     used_half_size: u8,
@@ -219,6 +238,39 @@ fn decode_error(code: i32, detail: String) -> RawDecodeError {
     }
 }
 
+fn bridge_dng_set(bridge: &BridgeResult, set: usize) -> DngMatrixSet {
+    let mut result = DngMatrixSet {
+        parsed_fields: bridge.dng_parsed_fields[set],
+        illuminant: bridge.dng_illuminants[set],
+        ..DngMatrixSet::default()
+    };
+    for row in 0..4 {
+        for column in 0..4 {
+            result.calibration[row][column] = bridge.dng_calibration[set * 16 + row * 4 + column];
+        }
+        for xyz in 0..3 {
+            result.color_matrix[row][xyz] = bridge.dng_color_matrix[set * 12 + row * 3 + xyz];
+        }
+    }
+    for xyz in 0..3 {
+        for channel in 0..4 {
+            result.forward_matrix[xyz][channel] =
+                bridge.dng_forward_matrix[set * 12 + xyz * 4 + channel];
+        }
+    }
+    result
+}
+
+fn bridge_cam_xyz(bridge: &BridgeResult) -> [[f32; 3]; 4] {
+    let mut result = [[0.0; 3]; 4];
+    for (channel, values) in result.iter_mut().enumerate() {
+        for (xyz, value) in values.iter_mut().enumerate() {
+            *value = bridge.cam_xyz[channel * 3 + xyz];
+        }
+    }
+    result
+}
+
 fn decode_inner(
     path: impl AsRef<Path>,
     half_size: bool,
@@ -253,13 +305,6 @@ fn decode_inner(
         return Err(RawDecodeError::InvalidRgbBuffer);
     }
     let source = unsafe { slice::from_raw_parts(owned.0, bridge.rgb16_length) };
-    let rgb: Vec<f32> = source
-        .iter()
-        .map(|value| f32::from(*value) / 65_535.0)
-        .collect();
-    if rgb.iter().any(|value| !value.is_finite()) {
-        return Err(RawDecodeError::NonFiniteSample);
-    }
 
     let sensor_layout = match bridge.sensor_layout {
         1 => SensorLayout::Bayer,
@@ -284,6 +329,35 @@ fn decode_inner(
             ),
         });
     }
+    let make = bridge_text(&bridge.make);
+    let model = bridge_text(&bridge.model);
+    let neutral = camera_neutral(bridge.camera_multipliers);
+    let dng_color = [bridge_dng_set(&bridge, 0), bridge_dng_set(&bridge, 1)];
+    let camera_profile = CameraProfileResolver::resolve(&CameraProfileInput {
+        make: make.clone(),
+        model: model.clone(),
+        dng_version: bridge.dng_version,
+        libraw_cam_xyz: bridge_cam_xyz(&bridge),
+        camera_neutral: neutral,
+        dng: dng_color.clone(),
+    });
+    let mut rgb = Vec::with_capacity(source.len());
+    for camera in source.chunks_exact(3) {
+        let xyz = camera_profile.camera_rgb_to_xyz_d65([
+            f32::from(camera[0]) / 65_535.0,
+            f32::from(camera[1]) / 65_535.0,
+            f32::from(camera[2]) / 65_535.0,
+        ]);
+        let working = xyz_d65_to_rec2020_linear(Xyz {
+            x: xyz[0],
+            y: xyz[1],
+            z: xyz[2],
+        });
+        if !working.r.is_finite() || !working.g.is_finite() || !working.b.is_finite() {
+            return Err(RawDecodeError::NonFiniteCameraTransform);
+        }
+        rgb.extend_from_slice(&[working.r, working.g, working.b]);
+    }
     let demosaic_provider = match sensor_layout {
         SensorLayout::Bayer => "LibRaw AHD".to_owned(),
         SensorLayout::XTrans => "LibRaw X-Trans 3-pass".to_owned(),
@@ -297,8 +371,8 @@ fn decode_inner(
         metadata: RawMetadata {
             develop_source: RawDevelopSource::Sensor,
             format,
-            make: bridge_text(&bridge.make),
-            model: bridge_text(&bridge.model),
+            make,
+            model,
             decoder: bridge_text(&bridge.decoder),
             raw_width: bridge.raw_width,
             raw_height: bridge.raw_height,
@@ -316,8 +390,10 @@ fn decode_inner(
             channel_black_levels: bridge.cblack,
             white_level: bridge.maximum,
             as_shot_multipliers: bridge.camera_multipliers,
-            camera_neutral: camera_neutral(bridge.camera_multipliers),
+            camera_neutral: neutral,
             pre_multipliers: bridge.pre_multipliers,
+            dng_color,
+            camera_profile,
             output_space: "linear Rec.2020 D65".to_owned(),
             demosaic_provider,
             libraw_version,

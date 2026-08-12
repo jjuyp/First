@@ -4,6 +4,8 @@ Status: F0 executable specification. The fixture manifest is `fixtures/golden/ma
 
 The license-cleared RAW decoder matrix is active in `fixtures/raw/manifest.json`. It is deliberately separate from the scene-quality Golden set: the six CC0 files prove real sensor decode/metadata/CFA/WB/demosaic coverage, but they are not relabeled as portrait, HDR, night or ColorChecker scenes without matching visual evidence.
 
+The ColorChecker case now has an active numerical oracle at `fixtures/colorchecker/babelcolor-average-v0.4.7.json`: 24 BabelColor Average xyY patches under ICC D50 from the pinned BSD-3-Clause `colour-science/colour` v0.4.7 dataset. CI retains and validates the upstream license and M3 tests exercise D50 -> D65 adaptation and finite profile transforms for every patch. The photographic ColorChecker case remains `planned` until a redistributable chart capture, ROIs and reviewed rendered baseline are accepted.
+
 ## Common capture and storage contract
 
 - Sources are immutable, redistributable files with creator/license/provenance, SHA-256, dimensions, bit depth, format, embedded ICC status, EXIF status and reference ROIs recorded in the manifest.

@@ -355,7 +355,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
           rendered = image
           renderedWidth = result.width
           renderedHeight = result.height
-          nativeProfile = result.inputProfile
+          nativeProfile = result.cameraProfileId ?? result.inputProfile
         } else {
           const fallback = await renderImageSource(photo.src, adjustments, 1800, curvePoints, mask)
           rendered = fallback

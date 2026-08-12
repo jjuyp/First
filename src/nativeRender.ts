@@ -24,7 +24,8 @@ export interface NativeEditSettings {
 export interface NativePreviewResult {
   width: number
   height: number
-  inputProfile: 'embedded ICC' | 'assumed sRGB' | 'LibRaw camera matrix'
+  inputProfile: 'embedded ICC' | 'assumed sRGB' | 'resolved RAW camera profile' | 'Generic RAW Profile'
+  cameraProfileId: string | null
   jpeg: Uint8Array
 }
 
@@ -34,9 +35,10 @@ export interface NativeExportResult {
   height: number
   inputProfile: string
   workingSpace: string
+  cameraProfileHash: string | null
 }
 
-const HEADER_BYTES = 20
+const HEADER_BYTES = 24
 
 export const nativeRuntimeAvailable = () => isTauri()
 
@@ -74,24 +76,33 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
 
 export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): NativePreviewResult {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value)
-  if (bytes.byteLength < HEADER_BYTES || String.fromCharCode(...bytes.subarray(0, 4)) !== 'SRP1') {
+  if (bytes.byteLength < HEADER_BYTES || String.fromCharCode(...bytes.subarray(0, 4)) !== 'SRP2') {
     throw new Error('Native preview returned an invalid binary frame.')
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const version = view.getUint16(4, true)
-  if (version !== 1) throw new Error(`Unsupported native preview contract version ${version}.`)
+  if (version !== 2) throw new Error(`Unsupported native preview contract version ${version}.`)
   const flags = view.getUint16(6, true)
   const width = view.getUint32(8, true)
   const height = view.getUint32(12, true)
-  const payloadLength = view.getUint32(16, true)
-  if (!width || !height || HEADER_BYTES + payloadLength !== bytes.byteLength) {
+  const profileLength = view.getUint16(16, true)
+  const payloadLength = view.getUint32(20, true)
+  if (!width || !height || HEADER_BYTES + profileLength + payloadLength !== bytes.byteLength) {
     throw new Error('Native preview returned inconsistent dimensions or payload length.')
   }
+  const profileStart = HEADER_BYTES
+  const payloadStart = profileStart + profileLength
+  const cameraProfileId = profileLength
+    ? new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(profileStart, payloadStart))
+    : null
   return {
     width,
     height,
-    inputProfile: flags & 2 ? 'LibRaw camera matrix' : flags & 1 ? 'embedded ICC' : 'assumed sRGB',
-    jpeg: bytes.slice(HEADER_BYTES),
+    inputProfile: flags & 4 ? 'Generic RAW Profile'
+      : flags & 2 ? 'resolved RAW camera profile'
+        : flags & 1 ? 'embedded ICC' : 'assumed sRGB',
+    cameraProfileId,
+    jpeg: bytes.slice(payloadStart),
   }
 }
 

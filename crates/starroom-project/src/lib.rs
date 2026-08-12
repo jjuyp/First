@@ -21,9 +21,21 @@ pub struct Project {
     pub source: SourceIdentity,
     pub global_adjustments: GlobalAdjustments,
     #[serde(default)]
+    pub camera_profile: Option<PersistedCameraProfile>,
+    #[serde(default)]
     pub masks: Vec<MaskNode>,
     #[serde(default)]
     pub layers: Vec<AdjustmentLayer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedCameraProfile {
+    pub id: String,
+    pub version: String,
+    pub hash: String,
+    /// `resolved` or `generic`; stored explicitly so reopening never silently changes policy.
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +170,12 @@ mod tests {
                 exposure_ev: 0.75,
                 ..Default::default()
             },
+            camera_profile: Some(PersistedCameraProfile {
+                id: "dng-forward-matrix:test:camera".into(),
+                version: "starroom-camera-profile-v1".into(),
+                hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                status: "resolved".into(),
+            }),
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -179,6 +197,10 @@ mod tests {
         let restored: Project = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(restored.global_adjustments.exposure_ev, 0.75);
         assert_eq!(restored.source.content_hash, "abc");
+        assert_eq!(
+            restored.camera_profile.as_ref().unwrap().hash,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
         assert_eq!(restored.layers.len(), 1);
         assert_eq!(restored.layers[0].adjustments.get("exposure"), Some(&0.35));
     }
@@ -242,5 +264,6 @@ mod tests {
         let json = r#"{"schemaVersion":1,"engineVersion":"0.1.0","source":{"path":"photo.jpg","contentHash":"abc","byteLength":42},"globalAdjustments":{"exposureEv":0.0,"contrast":0.0,"highlights":0.0,"shadows":0.0,"whites":0.0,"blacks":0.0,"temperature":0.0,"tint":0.0,"vibrance":0.0,"saturation":0.0},"masks":[]}"#;
         let restored: Project = serde_json::from_str(json).expect("deserialize old project");
         assert!(restored.layers.is_empty());
+        assert!(restored.camera_profile.is_none());
     }
 }

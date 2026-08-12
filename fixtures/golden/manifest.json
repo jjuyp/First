@@ -13,7 +13,7 @@
     {"id":"neon","scene":"neon","status":"planned","extremeControls":["saturation","vibrance","color-mixer"],"rois":["cyan","magenta","red","neutral-border"]},
     {"id":"high-iso","scene":"high ISO","status":"planned","extremeControls":["denoise","sharpen"],"rois":["flat-patch","edge-mtf","chroma-noise"]},
     {"id":"white-black-clothing","scene":"white and black clothing","status":"planned","extremeControls":["whites","blacks","highlights","shadows"],"rois":["white-weave","black-weave","neutral-reference"]},
-    {"id":"colorchecker","scene":"ColorChecker","status":"planned","extremeControls":["temperature","tint","saturation","rendering-intent"],"rois":["all-patches","neutral-patches"]},
+    {"id":"colorchecker","scene":"ColorChecker","status":"planned","referenceOracle":{"status":"active","path":"../colorchecker/babelcolor-average-v0.4.7.json","license":"BSD-3-Clause","patches":24},"extremeControls":["temperature","tint","saturation","rendering-intent"],"rois":["all-patches","neutral-patches"]},
     {"id":"fine-texture","scene":"detail texture","status":"planned","extremeControls":["clarity","sharpen","denoise"],"rois":["flat-field","fine-texture","contrast-edge"]},
     {"id":"mixed-temperature","scene":"mixed color temperature","status":"planned","extremeControls":["temperature","tint"],"rois":["warm-neutral","cool-neutral","skin-or-object"]}
   ]

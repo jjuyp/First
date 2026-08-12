@@ -124,6 +124,23 @@ pub fn adapt_xyz(value: Xyz, source_white: Xyz, destination_white: Xyz) -> Xyz {
     bradford_adaptation(source_white, destination_white).multiply_vec(value)
 }
 
+pub fn xyz_d65_to_rec2020_linear(value: Xyz) -> LinearRgb {
+    let rec = XYZ_TO_REC2020_D65.multiply_vec(value);
+    LinearRgb {
+        r: rec.x,
+        g: rec.y,
+        b: rec.z,
+    }
+}
+
+pub fn rec2020_linear_to_xyz_d65(value: LinearRgb) -> Xyz {
+    REC2020_TO_XYZ_D65.multiply_vec(Xyz {
+        x: value.r,
+        y: value.g,
+        z: value.b,
+    })
+}
+
 fn srgb_eotf(value: f32) -> f32 {
     if value <= 0.04045 {
         value / 12.92
@@ -256,6 +273,9 @@ pub enum InputProfileSource {
     /// RAW sensor data was decoded, white-balanced, demosaiced and converted by the pinned
     /// camera-matrix provider before entering the linear Rec.2020/D65 working graph.
     RawCameraMatrix,
+    /// RAW camera identity was not recognized and no valid embedded DNG matrix was present.
+    /// The explicitly reported Generic Profile is used; this is never a silent substitution.
+    RawGenericProfile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

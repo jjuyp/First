@@ -3178,6 +3178,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "starroom-color-management",
  "thiserror 2.0.20",
 ]
 

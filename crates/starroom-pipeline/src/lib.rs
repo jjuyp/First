@@ -15,7 +15,7 @@ use starroom_color_management::{
 use starroom_detail::{DenoiseParameters, LinearImage, SharpenParameters, denoise, sharpen};
 use starroom_grading::{GradingParameters, apply_grading};
 use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage};
-use starroom_raw::DecodedRawImage;
+use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,11 +83,13 @@ pub enum PipelineError {
     ColorManagement(#[from] ColorManagementError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColorTransformReport {
     pub input: InputProfileSource,
     pub output: OutputProfileSource,
     pub working_space: &'static str,
+    pub camera_profile_id: Option<String>,
+    pub camera_profile_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -205,6 +207,7 @@ fn render_working_graph(
     width: u32,
     height: u32,
     input_source: InputProfileSource,
+    camera_profile: Option<&CameraProfileDescriptor>,
     settings: &RenderSettings,
     output_icc: Option<&[u8]>,
 ) -> Result<RenderedRgb8, PipelineError> {
@@ -239,6 +242,8 @@ fn render_working_graph(
             input: input_source,
             output: output_source,
             working_space: "linear Rec.2020 D65",
+            camera_profile_id: camera_profile.map(|profile| profile.id.clone()),
+            camera_profile_hash: camera_profile.map(|profile| profile.hash.clone()),
         },
     })
 }
@@ -254,6 +259,7 @@ fn render_shared_graph(
         decoded.width,
         decoded.height,
         input_source,
+        None,
         settings,
         output_icc,
     )
@@ -266,14 +272,21 @@ fn render_shared_source_graph(
 ) -> Result<RenderedRgb8, PipelineError> {
     match decoded {
         DecodedSourceImage::Rendered(image) => render_shared_graph(image, settings, output_icc),
-        DecodedSourceImage::Raw(image) => render_working_graph(
-            to_working_raw(image, settings)?,
-            image.width,
-            image.height,
-            InputProfileSource::RawCameraMatrix,
-            settings,
-            output_icc,
-        ),
+        DecodedSourceImage::Raw(image) => {
+            let input_source = match image.metadata.camera_profile.status {
+                CameraProfileStatus::Resolved => InputProfileSource::RawCameraMatrix,
+                CameraProfileStatus::Generic => InputProfileSource::RawGenericProfile,
+            };
+            render_working_graph(
+                to_working_raw(image, settings)?,
+                image.width,
+                image.height,
+                input_source,
+                Some(&image.metadata.camera_profile),
+                settings,
+                output_icc,
+            )
+        }
     }
 }
 

@@ -1,6 +1,15 @@
 # Implementation Notes
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
+## 2026-08-12 — M3 camera profile / RAW color candidate
+
+- The LibRaw bridge still owns sensor parsing, black/white normalization, As-Shot WB and mature demosaic, but no longer performs the final camera-to-working transform. It emits 16-bit linear, white-balanced camera RGB with an identity `rgb_cam`; Rust converts to authoritative `f32`, resolves a typed camera profile, executes camera RGB -> XYZ D65 -> linear Rec.2020 D65, and only then enters the shared creative graph. Preview, Before/After and Export therefore use the same explicit profile stage.
+- `CameraProfileResolver` consumes LibRaw's public `cam_xyz` plus both public `dng_color` records. Embedded DNG ForwardMatrix is preferred; ColorMatrix is combined with CameraCalibration and inverted when ForwardMatrix is absent. Two calibration sets are selected/interpolated in reciprocal-temperature (mired) space using the As-Shot neutral estimate, and DNG's D50 PCS result is adapted to D65 with the tested Bradford stage.
+- Native Nikon, Canon, Sony and Fujifilm inputs use LibRaw's identified camera matrix through an extensible family resolver. A DNG with valid embedded matrices is resolved independently of make. An unknown camera or invalid/missing matrix enters a visibly reported `Generic RAW Profile` using the documented linear-sRGB generic basis; it is never labeled as a known profile or silently substituted.
+- Every descriptor carries stable ID, resolver version and SHA-256 over the exact matrix/policy fields. `Project.cameraProfile` persists ID/version/hash/status with backward-compatible optional deserialization. Native SRP2 preview transport appends only the small UTF-8 profile ID before the JPEG payload; pixels remain binary, and export reports the profile ID/hash.
+- Added the `colour-science/colour` v0.4.7 `DATA_BABELCOLOR_AVERAGE` 24-patch xyY reference under its retained BSD-3-Clause license. Its source URL, tag object, source blob SHA-1, illuminant, observer and published precision are recorded. The Golden image scene remains `planned` because no chart photograph/baseline has been accepted; only the numerical oracle is active.
+- M3 limitations: the current production bridge supports three-channel camera RGB, which covers the active NEF/ARW/CR2/CR3/DNG/RAF fixtures. Unusual four-channel sensors must receive an explicit matrix/demosaic contract before being claimed. No proprietary DCP profiles or silent make/model substitutions are bundled. GPU parity remains a later milestone.
+
 ## 2026-08-12 — M2 LibRaw sensor pipeline candidate
 
 - Integrated the real LibRaw 0.22.2 source at peeled commit `b93f6e45c194f5df9b02a43b1af9a54b4f41f33f` (annotated tag object `24fa7e5463cbf8b8615dbd2b16c933a294d52400`) under the selected CDDL-1.0 path. Upstream source and notices are vendored unchanged; `starroom-raw` owns an original narrow C ABI bridge instead of leaking LibRaw structs through the Rust workspace.
