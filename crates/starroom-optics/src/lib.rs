@@ -4,7 +4,7 @@
 //! depend on a system DLL or silently substitute a generic profile.
 
 use quick_xml::{
-    Reader,
+    Reader, XmlVersion,
     escape::unescape,
     events::{BytesStart, Event},
 };
@@ -189,7 +189,7 @@ fn attribute(element: &BytesStart<'_>, key: &[u8]) -> Option<String> {
         .find(|attribute| attribute.key.as_ref() == key)
         .and_then(|attribute| {
             attribute
-                .unescape_value()
+                .normalized_value(XmlVersion::V10)
                 .ok()
                 .map(|value| value.into_owned())
         })
@@ -316,17 +316,17 @@ fn parse_database() -> Result<LensfunDatabase, LensfunError> {
                 }
                 Ok(Event::End(element)) => match element.name().as_ref() {
                     b"camera" => {
-                        if let Some(record) = camera.take() {
-                            if !record.model.is_empty() {
-                                cameras.push(record);
-                            }
+                        if let Some(record) = camera.take()
+                            && !record.model.is_empty()
+                        {
+                            cameras.push(record);
                         }
                     }
                     b"lens" => {
-                        if let Some(record) = lens.take() {
-                            if !record.model.is_empty() {
-                                lenses.push(record);
-                            }
+                        if let Some(record) = lens.take()
+                            && !record.model.is_empty()
+                        {
+                            lenses.push(record);
                         }
                     }
                     _ => field = None,
@@ -533,7 +533,7 @@ impl LensfunProvider {
                 (score > 0).then_some((score, lens))
             })
             .collect();
-        candidates.sort_by(|left, right| right.0.cmp(&left.0));
+        candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
         if candidates.is_empty() {
             return Ok(LensProfileResolution {
                 status: LensProfileStatus::UnknownLens,
