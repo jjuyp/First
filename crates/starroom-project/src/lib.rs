@@ -248,7 +248,7 @@ pub struct PersistedPoint {
     pub y: f32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedGeometry {
     pub rotation_degrees: f32,
