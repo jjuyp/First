@@ -536,9 +536,15 @@ mod tests {
 
     #[test]
     fn m9_high_iso_denoise_reduces_noise_but_preserves_step_edge() {
-        let image = LinearImage::new(7, 1, vec![
-            .08,.12,.07, .14,.09,.13, .09,.13,.08, .75,.72,.78, .69,.74,.71, .77,.70,.75, .72,.76,.70,
-        ]).expect("fixture");
+        let image = LinearImage::new(
+            7,
+            1,
+            vec![
+                0.08, 0.12, 0.07, 0.14, 0.09, 0.13, 0.09, 0.13, 0.08, 0.75, 0.72, 0.78, 0.69, 0.74,
+                0.71, 0.77, 0.70, 0.75, 0.72, 0.76, 0.70,
+            ],
+        )
+        .expect("fixture");
         let output = denoise(
             &image,
             DenoiseParameters {
