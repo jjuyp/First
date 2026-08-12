@@ -273,11 +273,15 @@ fn solve_8x8(mut matrix: [[f32; 9]; 8]) -> Option<[f32; 8]> {
         for value in &mut matrix[column][column..=8] {
             *value /= scale;
         }
+        let pivot_row = matrix[column];
         for row in 0..8 {
             if row != column {
                 let factor = matrix[row][column];
-                for index in column..=8 {
-                    matrix[row][index] -= factor * matrix[column][index];
+                for (target, source) in matrix[row][column..=8]
+                    .iter_mut()
+                    .zip(&pivot_row[column..=8])
+                {
+                    *target -= factor * source;
                 }
             }
         }
