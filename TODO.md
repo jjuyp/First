@@ -7,7 +7,7 @@
 - [x] M9: Native Detail Engine with edge-masked/halo-protected multi-scale sharpen, edge-aware luma/chroma/high-ISO denoise, distinct Texture/Clarity/Dehaze frequency bands, serialization/undo and Preview/Export parity regressions.
 - [x] M10: pinned Lensfun v0.3.4 database/provider, LibRaw/EXIF metadata, auto/manual camera-mount-aware matching, explicit missing/unknown/mismatch/ambiguous states, distortion/TCA/vignette/auto-scale switches, persisted UI and shared Native Preview/Export optics stage.
 - [x] M11: Native crop (free/original/common/custom ratio), rotate/fine-rotate/flip/scale/offset, horizontal/vertical keystone, draggable four-point correction, image-derived Upright modes, overlays, project/undo state and explicit source/post-lens/post-geometry/viewport coordinate contract.
-- [ ] Level 3 Full Acceptance, acceptance commit, Draft PR push and final GitHub Actions green.
+- [x] Level 3 Full Acceptance: 123 Rust tests and 26 Vitest tests passed with warning-denied Clippy, rustfmt, JSON/Golden/RAW validation, lint and production build in push run `31613588937`; acceptance record remains on Draft PR #2 and `main` is unmerged.
 
 ## Product principle — Open-source Foundation First
 

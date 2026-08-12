@@ -1,4 +1,10 @@
 # Implementation Notes
+## 2026-08-12 M7-M11 final acceptance
+
+- M7 through M11 are production implementations in the Rust Native shared render graph. Preview, Before/After and Export share the same mixer, grading, detail, Lensfun optics and geometry stages; the TypeScript layer transports typed parameters and interaction state rather than image-processing math or full-frame JSON pixels.
+- Authoritative Level 3 push run `31613588937` passed on Windows: rustfmt, warning-denied workspace/all-target Clippy, 123 Rust tests, immutable RAW/Golden validation, 26 Vitest tests across four files, ESLint, TypeScript and the production/package build. The workstation independently passed rustfmt, metadata/lockfile checks, JSON manifests, Vitest 26/26, lint and build; native linking remains delegated to CI because local MSVC `link.exe` is not installed.
+- Acceptance commits are `9b99c3c` (M7), `7054f03` (M8), `12c31af` (M9), `b8b8d16` (M10) and `a6f2aad` (M11), followed by warning-denied CI compatibility fixes through `13c25ec`. Draft PR #2 remains open and unmerged. Work stops at M11; M12 has not started.
+
 ## 2026-08-12 M11 Geometry acceptance candidate
 
 - `starroom-geometry` now owns normalized crop, original/common/custom aspect constraints, arbitrary/fine rotation, flips, scale/offset, horizontal/vertical keystone and a solved four-point projective homography. A single inverse-mapped bilinear resampler preserves finite scene-linear values and returns explicit invalid-buffer/singular/non-finite errors; the source file remains immutable.
