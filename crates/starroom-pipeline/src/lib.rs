@@ -126,10 +126,10 @@ pub enum PipelineError {
     InvalidDecodedBuffer,
     #[error("detail image buffer is invalid")]
     DetailBuffer,
-    #[error("white-balance mode {mode:?} is not valid for {source} input")]
+    #[error("white-balance mode {mode:?} is not valid for {input_kind} input")]
     WhiteBalanceSemantic {
         mode: WhiteBalanceMode,
-        source: &'static str,
+        input_kind: &'static str,
     },
     #[error("neutral-picker sample is missing or invalid")]
     InvalidWhiteBalanceSample,
@@ -205,7 +205,7 @@ fn picker_white_balance_scale(
             let pixel = pixels[y * width as usize + x];
             if pixel.iter().all(|v| v.is_finite() && *v > 1.0e-6) {
                 for (target, source) in sum.iter_mut().zip(pixel) {
-                    *target += *source;
+                    *target += source;
                 }
                 count += 1;
             }
@@ -235,7 +235,7 @@ fn apply_white_balance(
         (SourceKind::Encoded, WhiteBalanceMode::AsShot | WhiteBalanceMode::Camera) => {
             Err(PipelineError::WhiteBalanceSemantic {
                 mode: settings.mode,
-                source: "encoded",
+                input_kind: "encoded",
             })
         }
         (_, WhiteBalanceMode::Auto) => {
@@ -255,7 +255,7 @@ fn apply_white_balance(
         }
         (SourceKind::Raw, WhiteBalanceMode::Relative) => Err(PipelineError::WhiteBalanceSemantic {
             mode: settings.mode,
-            source: "RAW",
+            input_kind: "RAW",
         }),
     }
 }
@@ -675,7 +675,7 @@ mod tests {
             result,
             Err(PipelineError::WhiteBalanceSemantic {
                 mode: WhiteBalanceMode::Camera,
-                source: "encoded"
+                input_kind: "encoded"
             })
         ));
     }
