@@ -1447,9 +1447,9 @@ dependencies = [
 
 [[package]]
 name = "http-body-util"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f41fd6a08e4d4ec69df65976da761afd5ad5e58a9d4acb46bd1c953a9e3ff2"
+checksum = "23169fe34a5fbcdd3f3862e78fb9b6fccd5f02a6dc6f732547005d45631ce71c"
 dependencies = [
  "bytes",
  "futures-core",
@@ -3481,8 +3481,8 @@ dependencies = [
  "starroom-grading",
  "starroom-imageio",
  "starroom-optics",
- "starroom-project",
  "starroom-raw",
+ "starroom-render",
  "thiserror 2.0.20",
 ]
 
@@ -3500,7 +3500,6 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
- "starroom-color",
  "starroom-core",
  "thiserror 2.0.20",
 ]
