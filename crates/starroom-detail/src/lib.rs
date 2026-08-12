@@ -337,8 +337,8 @@ pub fn denoise(image: &LinearImage, parameters: DenoiseParameters) -> LinearImag
                         .exp();
                     let range = (-0.5 * ((sample_y - original_y) / range_sigma).powi(2)).exp();
                     let weight = spatial * range;
-                    for channel in 0..3 {
-                        sum[channel] += component_image.sample(
+                    for (channel, accumulated) in sum.iter_mut().enumerate() {
+                        *accumulated += component_image.sample(
                             x_index as isize + dx,
                             y_index as isize + dy,
                             channel,
