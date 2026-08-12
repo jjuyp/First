@@ -50,6 +50,9 @@ export interface NativeEditSettings {
 export interface NativePreviewResult {
   width: number
   height: number
+  /** M12 is explicit: native is the shared graph, and this reports whether its Exposure node
+   * executed on wgpu or on the CPU reference fallback. */
+  acceleration: 'gpu' | 'cpuFallback'
   inputProfile: 'embedded ICC' | 'assumed sRGB' | 'resolved RAW camera profile' | 'Generic RAW Profile'
   cameraProfileId: string | null
   jpeg: Uint8Array
@@ -177,6 +180,7 @@ export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): Native
   return {
     width,
     height,
+    acceleration: flags & 8 ? 'gpu' : 'cpuFallback',
     inputProfile: flags & 4 ? 'Generic RAW Profile'
       : flags & 2 ? 'resolved RAW camera profile'
         : flags & 1 ? 'embedded ICC' : 'assumed sRGB',

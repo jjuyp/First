@@ -22,6 +22,7 @@ describe('native preview contract', () => {
     expect(parseNativePreviewFrame(frame)).toEqual({
       width: 640,
       height: 480,
+      acceleration: 'cpuFallback',
       inputProfile: 'resolved RAW camera profile',
       cameraProfileId: 'dng-forward-matrix:test:camera',
       jpeg: payload,

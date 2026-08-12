@@ -15,6 +15,7 @@ starroom-geometry = { path = "../starroom-geometry" }
 starroom-imageio = { path = "../starroom-imageio" }
 starroom-optics = { path = "../starroom-optics" }
 starroom-raw = { path = "../starroom-raw" }
+starroom-render = { path = "../starroom-render" }
 thiserror.workspace = true
 
 [dev-dependencies]

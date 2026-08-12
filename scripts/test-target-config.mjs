@@ -52,6 +52,14 @@ export const targets = {
     web: [],
     golden: ['geometry', 'landscape'],
   },
+  gpu: {
+    rust: [
+      ['test', '--locked', '-p', 'starroom-render', 'gpu'],
+      ['test', '--locked', '-p', 'starroom-pipeline', 'm12_gpu'],
+    ],
+    web: ['src/nativeRender.test.ts'],
+    golden: ['raw', 'tone', 'curve', 'color', 'grading', 'detail', 'portrait', 'skin', 'neon', 'landscape', 'hdr'],
+  },
   masks: {
     rust: [['test', '--locked', '-p', 'starroom-project', 'mask'], ['test', '--locked', '-p', 'starroom-render']],
     web: ['src/editorState.test.ts'],

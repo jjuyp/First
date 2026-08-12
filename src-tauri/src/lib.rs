@@ -9,9 +9,12 @@ use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
     RelativeColorParameters, RenderSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
     WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_to_srgb8,
-    resolve_source_lens_profile, sample_source_color_band,
+    render_source_preview_with_gpu_to_srgb8, resolve_source_lens_profile, sample_source_color_band,
 };
-use starroom_render::RenderGraph;
+use starroom_render::{
+    RenderGraph,
+    gpu::{GpuBackendKind, GpuRenderer},
+};
 use std::path::{Path, PathBuf};
 use tauri::ipc::Response;
 
@@ -50,7 +53,7 @@ fn engine_capabilities() -> EngineCapabilities {
         local_advisor: true,
         portrait_reference: true,
         healing_reference: true,
-        gpu_renderer: false,
+        gpu_renderer: true,
         raw_pipeline: true,
     }
 }
@@ -307,7 +310,13 @@ impl NativeEditSettings {
 struct NativePreviewRequest {
     source_path: PathBuf,
     max_edge: u32,
+    #[serde(default = "default_prefer_gpu")]
+    prefer_gpu: bool,
     settings: NativeEditSettings,
+}
+
+const fn default_prefer_gpu() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -405,9 +414,36 @@ fn native_preview(request: NativePreviewRequest) -> Result<Response, String> {
     let settings = request.settings.validated()?;
     let decoded = decode_source_preview(&request.source_path, request.max_edge.clamp(256, 4096))
         .map_err(|error| format!("native preview decode failed: {error}"))?;
-    let rendered = render_source_preview_to_srgb8(&decoded, &settings)
-        .map_err(|error| format!("native preview graph failed: {error}"))?;
-    let flags = profile_flag(rendered.color.input);
+    let (rendered, backend_flags) = if request.prefer_gpu {
+        match GpuRenderer::try_new() {
+            Ok(renderer) => {
+                match render_source_preview_with_gpu_to_srgb8(&decoded, &settings, &renderer) {
+                    Ok(rendered) => {
+                        let flag = match renderer.status().backend {
+                            GpuBackendKind::Dx12 | GpuBackendKind::Other => 0x0008,
+                            GpuBackendKind::CpuFallback => 0x0010,
+                        };
+                        (rendered, flag)
+                    }
+                    Err(error) => {
+                        let rendered = render_source_preview_to_srgb8(&decoded, &settings)
+                        .map_err(|fallback| format!("native GPU preview failed ({error}); CPU reference fallback also failed: {fallback}"))?;
+                        (rendered, 0x0010)
+                    }
+                }
+            }
+            Err(_) => {
+                let rendered = render_source_preview_to_srgb8(&decoded, &settings)
+                    .map_err(|error| format!("native CPU preview graph failed after GPU initialization fallback: {error}"))?;
+                (rendered, 0x0010)
+            }
+        }
+    } else {
+        let rendered = render_source_preview_to_srgb8(&decoded, &settings)
+            .map_err(|error| format!("native CPU preview graph failed: {error}"))?;
+        (rendered, 0x0010)
+    };
+    let flags = profile_flag(rendered.color.input) | backend_flags;
     let profile_id = rendered.color.camera_profile_id.as_deref().unwrap_or("");
     let jpeg = encode_jpeg_rgb8(&rendered.data, rendered.width, rendered.height, 91, None)
         .map_err(|error| format!("native preview encode failed: {error}"))?;

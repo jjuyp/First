@@ -406,6 +406,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
         let renderedWidth: number
         let renderedHeight: number
         let nativeProfile = ''
+        let nativeAcceleration: 'gpu' | 'cpuFallback' = 'cpuFallback'
         let release: (() => void) | undefined
         if (photo.renderBackend === 'native') {
           if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
@@ -428,6 +429,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
           renderedWidth = result.width
           renderedHeight = result.height
           nativeProfile = result.cameraProfileId ?? result.inputProfile
+          nativeAcceleration = result.acceleration
         } else {
           const fallback = await renderImageSource(photo.src, adjustments, 1800, curvePoints, mask)
           rendered = fallback
@@ -457,7 +459,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
           onHistogram(calculateHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
           onDimensions(`${renderedWidth} × ${renderedHeight}`)
           onStatus(photo.renderBackend === 'native'
-            ? `Native CPU · ${nativeProfile}${before ? ' · original' : ''}`
+            ? `${nativeAcceleration === 'gpu' ? 'Native GPU' : 'Native CPU fallback'} · ${nativeProfile}${before ? ' · original' : ''}`
             : `Browser fallback${before ? ' · original' : ''}`)
         }
       } catch (error) {

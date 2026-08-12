@@ -26,6 +26,7 @@ use starroom_optics::{
     apply_lens_correction,
 };
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
+use starroom_render::gpu::{GpuError, GpuRenderer};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +177,8 @@ pub enum PipelineError {
     },
     #[error("neutral-picker sample is missing or invalid")]
     InvalidWhiteBalanceSample,
+    #[error("GPU acceleration failed: {0}")]
+    Gpu(#[from] GpuError),
     #[error(transparent)]
     ColorManagement(#[from] ColorManagementError),
 }
@@ -377,16 +380,48 @@ fn apply_curve(rgb: LinearRgb, legacy: &[CurvePoint], curves: &ToneCurveSet) -> 
 fn apply_creative_graph(
     pixels: Vec<[f32; 3]>,
     settings: &RenderSettings,
+    gpu: Option<&GpuRenderer>,
 ) -> Result<Vec<f32>, PipelineError> {
-    let mut data = Vec::with_capacity(pixels.len() * 3);
+    // The GPU accelerates the existing scene-linear Exposure node only. Subsequent stages keep
+    // the established CPU reference math until each earns its own parity gate; this avoids a
+    // second color-science implementation.
+    let pixel_count = pixels.len();
+    let mut prepared = Vec::with_capacity(pixel_count);
     for pixel in pixels {
-        let mut rgb = LinearRgb {
-            r: pixel[0],
-            g: pixel[1],
-            b: pixel[2],
-        };
-        rgb = apply_relative_color(rgb, settings.relative_color);
-        rgb = apply_tone(rgb, settings.tone);
+        prepared.push(apply_relative_color(
+            LinearRgb {
+                r: pixel[0],
+                g: pixel[1],
+                b: pixel[2],
+            },
+            settings.relative_color,
+        ));
+    }
+    let (prepared, tone_parameters) = if let Some(renderer) = gpu {
+        let input: Vec<[f32; 4]> = prepared
+            .iter()
+            .map(|rgb| [rgb.r, rgb.g, rgb.b, 1.0])
+            .collect();
+        let exposed = renderer.apply_exposure(&input, settings.tone.exposure_ev)?;
+        let mut remainder = settings.tone;
+        remainder.exposure_ev = 0.0;
+        (
+            exposed
+                .into_iter()
+                .map(|pixel| LinearRgb {
+                    r: pixel[0],
+                    g: pixel[1],
+                    b: pixel[2],
+                })
+                .collect::<Vec<_>>(),
+            remainder,
+        )
+    } else {
+        (prepared, settings.tone)
+    };
+    let mut data = Vec::with_capacity(pixel_count * 3);
+    for mut rgb in prepared {
+        rgb = apply_tone(rgb, tone_parameters);
         rgb = apply_curve(rgb, &settings.curve, &settings.curves);
         rgb = apply_color_mixer(rgb, settings.color_mixer);
         rgb = apply_grading(rgb, settings.grading);
@@ -499,6 +534,7 @@ fn render_working_graph(
     settings: &RenderSettings,
     optics_resolution: Option<&LensProfileResolution>,
     output_icc: Option<&[u8]>,
+    gpu: Option<&GpuRenderer>,
 ) -> Result<RenderedRgb8, PipelineError> {
     let optically_corrected = if settings.optics.parameters.enabled {
         let resolution = optics_resolution.ok_or(PipelineError::OpticsProfile(
@@ -548,7 +584,7 @@ fn render_working_graph(
     let creative = LinearImage::new(
         geometrically_corrected.width,
         geometrically_corrected.height,
-        apply_creative_graph(pixels, settings)?,
+        apply_creative_graph(pixels, settings, gpu)?,
     )
     .map_err(|_| PipelineError::DetailBuffer)?;
     let denoised = denoise(&creative, settings.denoise);
@@ -593,6 +629,7 @@ fn render_shared_graph(
     decoded: &DecodedRenderedImage,
     settings: &RenderSettings,
     output_icc: Option<&[u8]>,
+    gpu: Option<&GpuRenderer>,
 ) -> Result<RenderedRgb8, PipelineError> {
     let (working, input_source) = to_working_image(decoded, settings)?;
     let resolution = if settings.optics.parameters.enabled {
@@ -607,6 +644,7 @@ fn render_shared_graph(
         settings,
         resolution.as_ref(),
         output_icc,
+        gpu,
     )
 }
 
@@ -614,6 +652,7 @@ fn render_shared_source_graph(
     decoded: &DecodedSourceImage,
     settings: &RenderSettings,
     output_icc: Option<&[u8]>,
+    gpu: Option<&GpuRenderer>,
 ) -> Result<RenderedRgb8, PipelineError> {
     let optics_resolution = if settings.optics.parameters.enabled {
         Some(resolve_source_lens_profile(decoded, &settings.optics)?)
@@ -630,6 +669,7 @@ fn render_shared_source_graph(
                 settings,
                 optics_resolution.as_ref(),
                 output_icc,
+                gpu,
             )
         }
         DecodedSourceImage::Raw(image) => {
@@ -644,6 +684,7 @@ fn render_shared_source_graph(
                 settings,
                 optics_resolution.as_ref(),
                 output_icc,
+                gpu,
             )
         }
     }
@@ -710,7 +751,7 @@ pub fn render_preview_to_srgb8(
     decoded: &DecodedRenderedImage,
     settings: &RenderSettings,
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_graph(decoded, settings, None)
+    render_shared_graph(decoded, settings, None, None)
 }
 
 pub fn render_preview_to_display_icc8(
@@ -718,14 +759,14 @@ pub fn render_preview_to_display_icc8(
     settings: &RenderSettings,
     display_icc: &[u8],
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_graph(decoded, settings, Some(display_icc))
+    render_shared_graph(decoded, settings, Some(display_icc), None)
 }
 
 pub fn render_export_to_srgb8(
     decoded: &DecodedRenderedImage,
     settings: &RenderSettings,
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_graph(decoded, settings, None)
+    render_shared_graph(decoded, settings, None, None)
 }
 
 pub fn render_export_to_icc8(
@@ -733,21 +774,32 @@ pub fn render_export_to_icc8(
     settings: &RenderSettings,
     output_icc: &[u8],
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_graph(decoded, settings, Some(output_icc))
+    render_shared_graph(decoded, settings, Some(output_icc), None)
 }
 
 pub fn render_source_preview_to_srgb8(
     decoded: &DecodedSourceImage,
     settings: &RenderSettings,
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_source_graph(decoded, settings, None)
+    render_shared_source_graph(decoded, settings, None, None)
 }
 
 pub fn render_source_export_to_srgb8(
     decoded: &DecodedSourceImage,
     settings: &RenderSettings,
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_source_graph(decoded, settings, None)
+    render_shared_source_graph(decoded, settings, None, None)
+}
+
+/// M12 preview entry point. It shares all decode, colour-management, tone, geometry, detail and
+/// output stages with export; only the exposure node is delegated to a parity-checked GPU kernel.
+/// A caller must decide and report fallback rather than silently retrying this path on CPU.
+pub fn render_source_preview_with_gpu_to_srgb8(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+    gpu: &GpuRenderer,
+) -> Result<RenderedRgb8, PipelineError> {
+    render_shared_source_graph(decoded, settings, None, Some(gpu))
 }
 
 /// Compatibility entry point. New callers should name preview or export explicitly.
@@ -788,6 +840,40 @@ mod tests {
         assert!((i16::from(output.data[3]) - 179).abs() <= 1);
         assert_eq!(output.data[0], output.data[1]);
         assert_eq!(output.data[1], output.data[2]);
+    }
+
+    #[test]
+    fn m12_gpu_preview_uses_the_same_native_graph_as_cpu_reference() {
+        let source = DecodedSourceImage::Rendered(fixture(&[
+            [0.18, 0.18, 0.18, 1.0],
+            [0.68, 0.32, 0.21, 1.0],
+            [3.5, 0.08, 1.7, 1.0],
+            [0.003, 0.007, 0.012, 1.0],
+        ]));
+        let settings = RenderSettings {
+            tone: ToneParameters {
+                exposure_ev: -1.25,
+                shadows: 0.5,
+                highlights: -0.5,
+                contrast: 0.2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cpu = render_source_preview_to_srgb8(&source, &settings).expect("CPU reference");
+        match GpuRenderer::try_new() {
+            Ok(gpu) => {
+                let accelerated = render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu)
+                    .expect("GPU graph");
+                assert_eq!(accelerated.data, cpu.data);
+                assert_eq!(accelerated.width, cpu.width);
+                assert_eq!(accelerated.height, cpu.height);
+            }
+            Err(error) => {
+                // Adapter-unavailable test hosts are a supported, explicit CPU fallback state.
+                assert!(!error.to_string().is_empty());
+            }
+        }
     }
 
     #[test]
