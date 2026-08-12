@@ -1,4 +1,12 @@
 # Implementation Notes
+## 2026-08-12 M11 Geometry acceptance candidate
+
+- `starroom-geometry` now owns normalized crop, original/common/custom aspect constraints, arbitrary/fine rotation, flips, scale/offset, horizontal/vertical keystone and a solved four-point projective homography. A single inverse-mapped bilinear resampler preserves finite scene-linear values and returns explicit invalid-buffer/singular/non-finite errors; the source file remains immutable.
+- Upright is image-derived rather than a mode preset: Sobel line gradients estimate horizon roll and position-correlated vertical/horizontal convergence, with confidence-gated Auto plus Level, Vertical and Full policies. The implementation is Starroom-authored after studying the pinned darktable `ashift.c` architecture; no darktable code was copied, so no new GPL-derived provenance entry is needed beyond the existing behavioral-reference pin.
+- Lens correction feeds Geometry before creative processing in the Native shared graph. Crop changes the authoritative rendered dimensions, and Preview/Before-After/Export use the same graph. `CoordinateMapper` explicitly names SourceSensor, OrientedImage, PostLens, PostGeometry, Viewport and Normalized spaces so later masks/layers/pyramids/GPU work cannot silently reuse coordinates in the wrong stage.
+- React transports typed geometry parameters only. It provides direct numeric values, Free/Original/common/custom crop ratios, grid/crop overlay, Upright selection, rotation/flip controls and draggable plus numeric four-point guides. Edit snapshots provide undo/redo; project JSON stores geometry with backward-compatible defaults.
+- Regressions cover identity and finite resampling, crop/original/common ratio, homography corner rectification, image-derived horizon analysis, coordinate composition, compact Native IPC and Preview/Export dimension/pixel parity. Local Vitest, TypeScript, ESLint and production build pass; authoritative warning-denied Rust/Native tests run on Windows CI because this workstation lacks MSVC `link.exe`.
+
 ## 2026-08-12 M10 Lensfun optics acceptance candidate
 
 - M10 is a real pinned Lensfun provider rather than a trait/stub. The complete upstream v0.3.4 XML database at commit `101c745e847a5de4a1e569a94368ce2027198598` is embedded unchanged. Rust streams it through pinned `quick-xml` 0.41.0, resolves camera mount and lens, interpolates focal calibration, selects aperture/distance vignetting calibration, and adapts Lensfun's exact Poly3/Poly5/PTLens modifier equations.

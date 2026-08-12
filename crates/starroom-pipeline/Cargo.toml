@@ -11,6 +11,7 @@ starroom-color = { path = "../starroom-color" }
 starroom-color-management = { path = "../starroom-color-management" }
 starroom-detail = { path = "../starroom-detail" }
 starroom-grading = { path = "../starroom-grading" }
+starroom-geometry = { path = "../starroom-geometry" }
 starroom-imageio = { path = "../starroom-imageio" }
 starroom-optics = { path = "../starroom-optics" }
 starroom-raw = { path = "../starroom-raw" }

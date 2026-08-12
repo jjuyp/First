@@ -16,11 +16,14 @@ use starroom_detail::{
     DenoiseParameters, LinearImage, LocalDetailParameters, SharpenParameters, denoise,
     local_detail, sharpen,
 };
+use starroom_geometry::{
+    GeometryParameters, UprightMode, analyze_upright, apply_geometry, apply_upright,
+};
 use starroom_grading::{GradingParameters, apply_grading};
 use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage, lens_metadata};
 use starroom_optics::{
-    LensIdentity, LensMatchMode, LensProfileResolution, LensProfileStatus, LensfunProvider,
-    OpticsSettings, apply_lens_correction,
+    LensIdentity, LensProfileResolution, LensProfileStatus, LensfunProvider, OpticsSettings,
+    apply_lens_correction,
 };
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use thiserror::Error;
@@ -125,6 +128,8 @@ pub struct RenderSettings {
     pub sharpen: SharpenParameters,
     #[serde(default)]
     pub optics: OpticsSettings,
+    #[serde(default)]
+    pub geometry: GeometryParameters,
 }
 
 impl Default for RenderSettings {
@@ -145,6 +150,7 @@ impl Default for RenderSettings {
                 ..Default::default()
             },
             optics: OpticsSettings::default(),
+            geometry: GeometryParameters::default(),
         }
     }
 }
@@ -161,6 +167,8 @@ pub enum PipelineError {
     OpticsCorrection,
     #[error("Lensfun database failed: {0}")]
     OpticsDatabase(String),
+    #[error("geometry transform failed")]
+    Geometry,
     #[error("white-balance mode {mode:?} is not valid for {input_kind} input")]
     WhiteBalanceSemantic {
         mode: WhiteBalanceMode,
@@ -486,8 +494,8 @@ pub fn sample_source_color_band(
 
 fn render_working_graph(
     working: LinearImage,
-    width: u32,
-    height: u32,
+    _source_width: u32,
+    _source_height: u32,
     input_source: InputProfileSource,
     camera_profile: Option<&CameraProfileDescriptor>,
     settings: &RenderSettings,
@@ -514,14 +522,34 @@ fn render_working_graph(
     } else {
         working
     };
-    let pixels: Vec<[f32; 3]> = optically_corrected
+    let geometry_parameters = if settings.geometry.upright_mode != UprightMode::Off {
+        let analysis = analyze_upright(
+            optically_corrected.width,
+            optically_corrected.height,
+            &optically_corrected.data,
+            settings.geometry.upright_mode,
+        );
+        apply_upright(settings.geometry, analysis)
+    } else {
+        settings.geometry
+    };
+    let geometrically_corrected = apply_geometry(
+        optically_corrected.width,
+        optically_corrected.height,
+        &optically_corrected.data,
+        geometry_parameters,
+    )
+    .map_err(|_| PipelineError::Geometry)?;
+    let width = geometrically_corrected.width as u32;
+    let height = geometrically_corrected.height as u32;
+    let pixels: Vec<[f32; 3]> = geometrically_corrected
         .data
         .chunks_exact(3)
         .map(|pixel| [pixel[0], pixel[1], pixel[2]])
         .collect();
     let creative = LinearImage::new(
-        optically_corrected.width,
-        optically_corrected.height,
+        geometrically_corrected.width,
+        geometrically_corrected.height,
         apply_creative_graph(pixels, settings)?,
     )
     .map_err(|_| PipelineError::DetailBuffer)?;
@@ -744,6 +772,7 @@ mod tests {
     use starroom_color::{BandAdjustment, ColorBand};
     use starroom_grading::ColorWheel;
     use starroom_imageio::RenderedFormat;
+    use starroom_optics::LensMatchMode;
 
     fn fixture(values: &[[f32; 4]]) -> DecodedRenderedImage {
         DecodedRenderedImage {
@@ -957,6 +986,41 @@ mod tests {
             render_preview_to_srgb8(&decoded, &settings),
             Err(PipelineError::OpticsProfile(LensProfileStatus::UnknownLens))
         ));
+    }
+
+    #[test]
+    fn m11_geometry_preview_export_share_native_stage_and_dimensions() {
+        let values: Vec<[f32; 4]> = (0..48)
+            .map(|index| {
+                let value = index as f32 / 48.0;
+                [value, value * 0.8, value * 0.6, 1.0]
+            })
+            .collect();
+        let mut decoded = fixture(&values);
+        decoded.width = 8;
+        decoded.height = 6;
+        let settings = RenderSettings {
+            geometry: GeometryParameters {
+                rotation_degrees: 3.0,
+                vertical_keystone: 0.12,
+                horizontal_keystone: -0.08,
+                crop: starroom_geometry::CropRect {
+                    left: 0.125,
+                    top: 0.0,
+                    right: 0.875,
+                    bottom: 1.0,
+                },
+                crop_aspect_width: 1.0,
+                crop_aspect_height: 1.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("preview");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("export");
+        assert_eq!(preview, export);
+        assert_eq!(preview.width, preview.height);
+        assert!(preview.data.iter().any(|value| *value != 0));
     }
 
     #[test]

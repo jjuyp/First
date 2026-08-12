@@ -93,4 +93,18 @@ describe('native preview contract', () => {
     expect(settings.optics.parameters).toMatchObject({ enabled: true, distortion: true, tca: false, vignette: true, autoScale: true })
     expect(settings.optics.manualIdentity).toEqual(identity)
   })
+
+  it('serializes crop perspective upright and four-point geometry without browser image math', () => {
+    const settings = toNativeSettings({ ...defaultAdjustments, rotation: 4.25, geometryVertical: 30,
+      geometryHorizontal: -20, geometryScale: 112, geometryOffsetX: 8, geometryOffsetY: -5,
+      cropLeft: 10, cropTop: 15, cropRight: 90, cropBottom: 85, cropAspectWidth: 3,
+      cropAspectHeight: 2, geometryUpright: 4, geometryFourPoint: 1, quadTopLeftX: 8,
+      quadTopLeftY: 4, quadTopRightX: 93, quadTopRightY: 9 }, [])
+    expect(settings.geometry).toMatchObject({ rotationDegrees: 4.25, verticalKeystone: .3,
+      horizontalKeystone: -.2, scale: 1.12, offsetX: .08, offsetY: -.05,
+      crop: { left: .1, top: .15, right: .9, bottom: .85 }, cropAspectWidth: 3,
+      cropAspectHeight: 2, uprightMode: 'full' })
+    expect(settings.geometry.fourPoint?.topLeft).toEqual({ x: .08, y: .04 })
+    expect(settings.geometry.fourPoint?.topRight).toEqual({ x: .93, y: .09 })
+  })
 })

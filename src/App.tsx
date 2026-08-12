@@ -147,6 +147,15 @@ const sliderGroups: Partial<Record<Tool, Array<{ key: AdjustmentKey; label: stri
     { key: 'maskFeather', label: 'Feather', min: 0, max: 100, step: 1 },
   ],
   geometry: [
+    { key: 'geometryScale', label: 'Scale', min: 5, max: 200, step: .1, suffix: '%' },
+    { key: 'geometryOffsetX', label: 'Offset X', min: -100, max: 100, step: .1, suffix: '%' },
+    { key: 'geometryOffsetY', label: 'Offset Y', min: -100, max: 100, step: .1, suffix: '%' },
+    { key: 'geometryVertical', label: 'Vertical perspective', min: -100, max: 100, step: .1 },
+    { key: 'geometryHorizontal', label: 'Horizontal perspective', min: -100, max: 100, step: .1 },
+    { key: 'cropLeft', label: 'Crop left', min: 0, max: 99, step: .1, suffix: '%' },
+    { key: 'cropTop', label: 'Crop top', min: 0, max: 99, step: .1, suffix: '%' },
+    { key: 'cropRight', label: 'Crop right', min: 1, max: 100, step: .1, suffix: '%' },
+    { key: 'cropBottom', label: 'Crop bottom', min: 1, max: 100, step: .1, suffix: '%' },
     { key: 'rotation', label: 'Rotation', min: -180, max: 180, step: .1, suffix: '°' },
   ],
 }
@@ -348,6 +357,30 @@ function MaskOverlay({ bounds, mask, onBeginEdit, onChange }: {
   </svg>
 }
 
+function FourPointOverlay({ values, onBeginEdit, onAdjust }: {
+  values: Adjustments; onBeginEdit: () => void
+  onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
+}) {
+  const [drag, setDrag] = useState<{ x: AdjustmentKey; y: AdjustmentKey } | null>(null)
+  const handles: Array<[AdjustmentKey, AdjustmentKey]> = [
+    ['quadTopLeftX', 'quadTopLeftY'], ['quadTopRightX', 'quadTopRightY'],
+    ['quadBottomRightX', 'quadBottomRightY'], ['quadBottomLeftX', 'quadBottomLeftY'],
+  ]
+  const move = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (!drag) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    onAdjust(drag.x, Math.max(0, Math.min(100, (event.clientX - rect.left) / rect.width * 100)), false)
+    onAdjust(drag.y, Math.max(0, Math.min(100, (event.clientY - rect.top) / rect.height * 100)), false)
+  }
+  return <svg className="quad-overlay" viewBox="0 0 100 100" preserveAspectRatio="none"
+    aria-label="Draggable four-point perspective guides" onPointerMove={move}
+    onPointerUp={(event) => { setDrag(null); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}>
+    <polygon points={`${values.quadTopLeftX},${values.quadTopLeftY} ${values.quadTopRightX},${values.quadTopRightY} ${values.quadBottomRightX},${values.quadBottomRightY} ${values.quadBottomLeftX},${values.quadBottomLeftY}`} />
+    {handles.map(([x, y]) => <circle key={x} cx={values[x]} cy={values[y]} r="1.8"
+      onPointerDown={(event) => { if (event.button !== 0) return; event.stopPropagation(); onBeginEdit(); setDrag({ x, y }); event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId) }} />)}
+  </svg>
+}
+
 function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdit, onMaskChange, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, metric = true }: {
   photo: PhotoItem; before: boolean; zoom: 'fit' | '100'
   maskActive?: boolean; onBeginMaskEdit?: () => void; onMaskChange?: (mask: RadialMask) => void
@@ -488,7 +521,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   const normalizeAngle = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
   return <section className="inspector-content" aria-label={`${tool} inspector`}>
     <div className="inspector-head"><div><span className="eyebrow">Live CPU preview</span><h2>{tool}</h2></div><ChevronDown size={16} /></div>
-    {renderBackend === 'native' && ['masks', 'geometry'].includes(tool)
+    {renderBackend === 'native' && tool === 'masks'
       && <div className="tool-note">This tool is outside the M1C Native slice. Applying it raises an explicit error; Starroom will not silently use Browser Canvas.</div>}
     {tool === 'color' && <>
       <div className="tool-note">Encoded-image Temperature/Tint are relative corrections, not physical Kelvin. RAW Camera/As-Shot uses LibRaw metadata.</div>
@@ -571,10 +604,22 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
         }} />{suffix}</span></label>)}
     </div>}
     {tool === 'geometry' && <div className="geometry-controls">
+      <label>Upright<select value={Math.round(values.geometryUpright)} onChange={(event) => onAdjust('geometryUpright', Number(event.target.value))}>
+        <option value="0">Off</option><option value="1">Auto</option><option value="2">Level</option><option value="3">Vertical</option><option value="4">Full</option></select></label>
+      <div className="aspect-presets"><button onClick={() => { onBeginAdjustment(); onAdjust('cropAspectWidth', 0, false); onAdjust('cropAspectHeight', 0, false) }}>Free</button>
+        <button onClick={() => { onBeginAdjustment(); onAdjust('cropAspectWidth', -1, false); onAdjust('cropAspectHeight', -1, false) }}>Original</button>
+        {([[1,1,'1:1'],[4,3,'4:3'],[3,2,'3:2'],[16,9,'16:9']] as const).map(([width,height,label]) => <button key={label}
+          onClick={() => { onBeginAdjustment(); onAdjust('cropAspectWidth', width, false); onAdjust('cropAspectHeight', height, false) }}>{label}</button>)}</div>
       <button onClick={() => onAdjust('rotation', normalizeAngle(values.rotation - 90))}><RotateCcw size={16} /> Rotate left</button>
       <button onClick={() => onAdjust('rotation', normalizeAngle(values.rotation + 90))}><RotateCw size={16} /> Rotate right</button>
       <button className={values.flipHorizontal ? 'active' : ''} onClick={() => onAdjust('flipHorizontal', values.flipHorizontal ? 0 : 1)}><FlipHorizontal2 size={16} /> Flip horizontal</button>
       <button className={values.flipVertical ? 'active' : ''} onClick={() => onAdjust('flipVertical', values.flipVertical ? 0 : 1)}><FlipVertical2 size={16} /> Flip vertical</button>
+      <button className={values.geometryFourPoint ? 'active' : ''} onClick={() => onAdjust('geometryFourPoint', values.geometryFourPoint ? 0 : 1)}>Four-point perspective</button>
+      {values.geometryFourPoint !== 0 && <div className="quad-values">{([
+        ['TL X','quadTopLeftX'],['TL Y','quadTopLeftY'],['TR X','quadTopRightX'],['TR Y','quadTopRightY'],
+        ['BR X','quadBottomRightX'],['BR Y','quadBottomRightY'],['BL X','quadBottomLeftX'],['BL Y','quadBottomLeftY'],
+      ] as const).map(([label,key]) => <label key={key}>{label}<input type="number" min="0" max="100" step="0.1" value={values[key]}
+        onFocus={onBeginAdjustment} onChange={(event) => onAdjust(key, Math.min(100, Math.max(0, Number(event.target.value))), false)} />%</label>)}</div>}
     </div>}
     <div className="intent-card"><Sparkles size={17} /><div><strong>Non-destructive edits</strong><span>Type values directly or double-click a slider to reset</span></div></div>
   </section>
@@ -759,10 +804,14 @@ export function App() {
 
   function adjust(key: AdjustmentKey, value: number, recordHistory = true) {
     updateSelected((photo) => {
-      if (photo.adjustments[key] === value) return photo
+      const normalizedValue = key === 'cropLeft' ? Math.min(value, photo.adjustments.cropRight - 1)
+        : key === 'cropTop' ? Math.min(value, photo.adjustments.cropBottom - 1)
+          : key === 'cropRight' ? Math.max(value, photo.adjustments.cropLeft + 1)
+            : key === 'cropBottom' ? Math.max(value, photo.adjustments.cropTop + 1) : value
+      if (photo.adjustments[key] === normalizedValue) return photo
       return {
         ...photo,
-        adjustments: { ...photo.adjustments, [key]: value },
+        adjustments: { ...photo.adjustments, [key]: normalizedValue },
         history: recordHistory ? [...photo.history, takeSnapshot(photo)].slice(-100) : photo.history,
         future: [],
       }
@@ -982,6 +1031,14 @@ export function App() {
                 onWhiteBalancePick={(sample) => updateWhiteBalance('neutralPicker', sample)}
                 onColorSample={tool === 'color' && mixerPicking ? pickMixerBand : undefined}
                 onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} />
+              {tool === 'geometry' && !before && <div className="geometry-overlay" aria-label="Crop and geometry guides"
+                style={{ left: `${selected.adjustments.cropLeft}%`, top: `${selected.adjustments.cropTop}%`,
+                  width: `${selected.adjustments.cropRight - selected.adjustments.cropLeft}%`,
+                  height: `${selected.adjustments.cropBottom - selected.adjustments.cropTop}%` }}>
+                <i className="guide-v one" /><i className="guide-v two" /><i className="guide-h one" /><i className="guide-h two" />
+              </div>}
+              {tool === 'geometry' && !before && selected.adjustments.geometryFourPoint !== 0
+                && <FourPointOverlay values={selected.adjustments} onBeginEdit={beginInteractiveEdit} onAdjust={adjust} />}
               <span className="preview-badge">{selected.renderBackend === 'native' ? 'Native CPU' : 'Browser fallback'} · {before ? 'Original' : hasPhotoEdits(selected) ? `${countPhotoEdits(selected)} edits` : 'Original'}</span>
             </div>
           </div>}

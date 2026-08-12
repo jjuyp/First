@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use starroom_advisor::{AnalysisStats, Suggestion, advise};
 use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
+use starroom_geometry::GeometryParameters;
 use starroom_grading::GradingParameters;
 use starroom_imageio::{decode_source, decode_source_preview, encode_jpeg_rgb8};
 use starroom_optics::{LensProfileResolution, OpticsSettings};
@@ -93,6 +94,8 @@ struct NativeEditSettings {
     local_detail: LocalDetailParameters,
     #[serde(default)]
     optics: OpticsSettings,
+    #[serde(default)]
+    geometry: GeometryParameters,
 }
 
 impl NativeEditSettings {
@@ -210,6 +213,52 @@ impl NativeEditSettings {
         {
             return Err("native manual lens metadata is invalid".into());
         }
+        let geometry_values = [
+            self.geometry.rotation_degrees,
+            self.geometry.vertical_keystone,
+            self.geometry.horizontal_keystone,
+            self.geometry.scale,
+            self.geometry.offset_x,
+            self.geometry.offset_y,
+            self.geometry.crop.left,
+            self.geometry.crop.top,
+            self.geometry.crop.right,
+            self.geometry.crop.bottom,
+            self.geometry.crop_aspect_width,
+            self.geometry.crop_aspect_height,
+        ];
+        let four_point_finite = self.geometry.four_point.is_none_or(|points| {
+            [
+                points.top_left.x,
+                points.top_left.y,
+                points.top_right.x,
+                points.top_right.y,
+                points.bottom_right.x,
+                points.bottom_right.y,
+                points.bottom_left.x,
+                points.bottom_left.y,
+            ]
+            .into_iter()
+            .all(f32::is_finite)
+        });
+        if !geometry_values.into_iter().all(f32::is_finite)
+            || !four_point_finite
+            || !(-180.0..=180.0).contains(&self.geometry.rotation_degrees)
+            || !(-1.5..=1.5).contains(&self.geometry.vertical_keystone)
+            || !(-1.5..=1.5).contains(&self.geometry.horizontal_keystone)
+            || !(0.05..=20.0).contains(&self.geometry.scale)
+            || self.geometry.crop.left < 0.0
+            || self.geometry.crop.top < 0.0
+            || self.geometry.crop.right > 1.0
+            || self.geometry.crop.bottom > 1.0
+            || self.geometry.crop.right <= self.geometry.crop.left
+            || self.geometry.crop.bottom <= self.geometry.crop.top
+            || ((self.geometry.crop_aspect_width < 0.0 || self.geometry.crop_aspect_height < 0.0)
+                && !(self.geometry.crop_aspect_width == -1.0
+                    && self.geometry.crop_aspect_height == -1.0))
+        {
+            return Err("native geometry settings are outside supported ranges".into());
+        }
 
         let unit = |value: f32| (value / 100.0).clamp(-1.0, 1.0);
         let mut curve = self.curve;
@@ -247,6 +296,7 @@ impl NativeEditSettings {
             local_detail: self.local_detail,
             sharpen: self.sharpen_settings,
             optics: self.optics,
+            geometry: self.geometry,
             ..Default::default()
         })
     }
@@ -472,6 +522,7 @@ mod tests {
             denoise_settings: DenoiseParameters::default(),
             local_detail: LocalDetailParameters::default(),
             optics: OpticsSettings::default(),
+            geometry: GeometryParameters::default(),
         }
     }
 

@@ -41,6 +41,10 @@ export interface NativeEditSettings {
   denoiseSettings: { luminance: number; chroma: number; radius: number; detailProtection: number; highIso: number }
   localDetail: { texture: number; clarity: number; dehaze: number }
   optics: { parameters: { enabled: boolean; distortion: boolean; tca: boolean; vignette: boolean; autoScale: boolean }; matchMode: NativeLensMatchMode; manualIdentity: NativeLensIdentity | null }
+  geometry: { rotationDegrees: number; verticalKeystone: number; horizontalKeystone: number; scale: number; offsetX: number; offsetY: number;
+    flipHorizontal: boolean; flipVertical: boolean; crop: { left: number; top: number; right: number; bottom: number };
+    cropAspectWidth: number; cropAspectHeight: number; fourPoint: null | { topLeft: { x: number; y: number }; topRight: { x: number; y: number }; bottomRight: { x: number; y: number }; bottomLeft: { x: number; y: number } };
+    uprightMode: 'off' | 'auto' | 'level' | 'vertical' | 'full' }
 }
 
 export interface NativePreviewResult {
@@ -69,7 +73,6 @@ export function assertNativeSupported(adjustments: Adjustments, mask: RadialMask
   if (adjustments.maskExposure !== 0 || mask.x !== .5 || mask.y !== .5 || mask.width !== .42
     || mask.height !== .42 || mask.rotation !== 0) unsupported.push('Masks')
   if (adjustments.vignette !== 0 || adjustments.lensBrightness !== 0) unsupported.push('Optics')
-  if (adjustments.rotation !== 0 || adjustments.flipHorizontal !== 0 || adjustments.flipVertical !== 0) unsupported.push('Geometry')
   if (unsupported.length) {
     throw new Error(`Native M1C does not support ${unsupported.join(', ')} yet; Browser fallback was not used.`)
   }
@@ -131,6 +134,22 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
     optics: { parameters: { enabled: adjustments.lensCorrection !== 0, distortion: adjustments.lensDistortion !== 0,
       tca: adjustments.lensTca !== 0, vignette: adjustments.lensVignette !== 0, autoScale: adjustments.lensAutoScale !== 0 },
       matchMode: opticsState.matchMode, manualIdentity: opticsState.manualIdentity },
+    geometry: {
+      rotationDegrees: adjustments.rotation, verticalKeystone: adjustments.geometryVertical / 100,
+      horizontalKeystone: adjustments.geometryHorizontal / 100, scale: adjustments.geometryScale / 100,
+      offsetX: adjustments.geometryOffsetX / 100, offsetY: adjustments.geometryOffsetY / 100,
+      flipHorizontal: adjustments.flipHorizontal !== 0, flipVertical: adjustments.flipVertical !== 0,
+      crop: { left: adjustments.cropLeft / 100, top: adjustments.cropTop / 100,
+        right: adjustments.cropRight / 100, bottom: adjustments.cropBottom / 100 },
+      cropAspectWidth: adjustments.cropAspectWidth, cropAspectHeight: adjustments.cropAspectHeight,
+      fourPoint: adjustments.geometryFourPoint === 0 ? null : {
+        topLeft: { x: adjustments.quadTopLeftX / 100, y: adjustments.quadTopLeftY / 100 },
+        topRight: { x: adjustments.quadTopRightX / 100, y: adjustments.quadTopRightY / 100 },
+        bottomRight: { x: adjustments.quadBottomRightX / 100, y: adjustments.quadBottomRightY / 100 },
+        bottomLeft: { x: adjustments.quadBottomLeftX / 100, y: adjustments.quadBottomLeftY / 100 },
+      },
+      uprightMode: (['off', 'auto', 'level', 'vertical', 'full'] as const)[Math.round(adjustments.geometryUpright)] ?? 'off',
+    },
   }
 }
 

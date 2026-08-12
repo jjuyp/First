@@ -180,6 +180,17 @@ button:disabled { opacity: .35; cursor: default; }
 .optics-status { display:flex; flex-direction:column; gap:3px; padding:9px; border:1px solid var(--border); border-radius:7px; overflow-wrap:anywhere; }
 .optics-status span,.optics-status small { color:var(--text-3); font-size:9px; }
 .optics-status.status-autoMatched,.optics-status.status-manualMatched { border-color:var(--success); }
+.geometry-overlay { position:absolute; pointer-events:none; border:1px solid rgba(255,255,255,.9); box-shadow:0 0 0 200vmax rgba(0,0,0,.42); z-index:4; }
+.geometry-overlay i { position:absolute; display:block; background:rgba(255,255,255,.38); }
+.geometry-overlay .guide-v { top:0; bottom:0; width:1px; }.geometry-overlay .guide-v.one { left:33.333%; }.geometry-overlay .guide-v.two { left:66.666%; }
+.geometry-overlay .guide-h { left:0; right:0; height:1px; }.geometry-overlay .guide-h.one { top:33.333%; }.geometry-overlay .guide-h.two { top:66.666%; }
+.quad-overlay { position:absolute; inset:0; width:100%; height:100%; pointer-events:auto; touch-action:none; z-index:5; overflow:visible; }
+.quad-overlay polygon { fill:rgba(120,150,255,.08); stroke:var(--accent); stroke-width:.35; stroke-dasharray:1.5 1; vector-effect:non-scaling-stroke; }
+.quad-overlay circle { fill:var(--accent); stroke:white; stroke-width:.35; vector-effect:non-scaling-stroke; cursor:move; }
+.geometry-controls > label { grid-column:1/-1; display:flex; justify-content:space-between; align-items:center; }
+.aspect-presets { grid-column:1/-1; display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
+.quad-values { grid-column:1/-1; display:grid; grid-template-columns:repeat(2,1fr); gap:5px; }
+.quad-values label { display:flex; justify-content:space-between; color:var(--text-3); font-size:9px; }.quad-values input { width:58px; }
 .curve-preview { width: 100%; height: 120px; display: block; margin-bottom: 7px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--surface-2) 72%, var(--canvas)); touch-action: none; }
 .curve-tabs,.curve-presets { display:flex; gap:6px; margin:0 0 8px; }
 .curve-tabs button,.curve-presets button { flex:1; padding:5px; border:1px solid var(--border); border-radius:5px; background:var(--surface-2); color:var(--text-2); font-size:11px; }

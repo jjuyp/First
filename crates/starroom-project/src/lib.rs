@@ -37,6 +37,8 @@ pub struct Project {
     #[serde(default)]
     pub optics: PersistedOptics,
     #[serde(default)]
+    pub geometry: PersistedGeometry,
+    #[serde(default)]
     pub masks: Vec<MaskNode>,
     #[serde(default)]
     pub layers: Vec<AdjustmentLayer>,
@@ -239,6 +241,57 @@ impl Default for PersistedOptics {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedPoint {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedGeometry {
+    pub rotation_degrees: f32,
+    pub vertical_keystone: f32,
+    pub horizontal_keystone: f32,
+    pub scale: f32,
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub flip_horizontal: bool,
+    pub flip_vertical: bool,
+    pub crop_left: f32,
+    pub crop_top: f32,
+    pub crop_right: f32,
+    pub crop_bottom: f32,
+    pub crop_aspect_width: f32,
+    pub crop_aspect_height: f32,
+    pub four_point: Option<[PersistedPoint; 4]>,
+    pub upright_mode: String,
+}
+
+impl Default for PersistedGeometry {
+    fn default() -> Self {
+        Self {
+            rotation_degrees: 0.0,
+            vertical_keystone: 0.0,
+            horizontal_keystone: 0.0,
+            scale: 1.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            flip_horizontal: false,
+            flip_vertical: false,
+            crop_left: 0.0,
+            crop_top: 0.0,
+            crop_right: 1.0,
+            crop_bottom: 1.0,
+            crop_aspect_width: 0.0,
+            crop_aspect_height: 0.0,
+            four_point: None,
+            upright_mode: "off".into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MaskNode {
@@ -406,6 +459,13 @@ mod tests {
             color_grading: PersistedColorGrading::default(),
             detail: PersistedDetail::default(),
             optics: PersistedOptics::default(),
+            geometry: PersistedGeometry {
+                rotation_degrees: 2.5,
+                crop_aspect_width: 3.0,
+                crop_aspect_height: 2.0,
+                upright_mode: "level".into(),
+                ..Default::default()
+            },
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -432,6 +492,8 @@ mod tests {
         assert_eq!(restored.color_grading.amount, 1.0);
         assert_eq!(restored.detail.sharpen_radius, 1.0);
         assert_eq!(restored.optics.database_version, "0.3.4");
+        assert_eq!(restored.geometry.rotation_degrees, 2.5);
+        assert_eq!(restored.geometry.upright_mode, "level");
         assert_eq!(
             restored.camera_profile.as_ref().unwrap().hash,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

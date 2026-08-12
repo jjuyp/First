@@ -40,6 +40,11 @@ export type AdjustmentKey =
   | 'denoiseLuminance' | 'denoiseChroma' | 'denoiseRadius' | 'denoiseDetailProtection' | 'denoiseHighIso'
   | 'texture' | 'dehaze'
   | 'lensCorrection' | 'lensDistortion' | 'lensTca' | 'lensVignette' | 'lensAutoScale'
+  | 'geometryScale' | 'geometryOffsetX' | 'geometryOffsetY' | 'geometryVertical' | 'geometryHorizontal'
+  | 'cropLeft' | 'cropTop' | 'cropRight' | 'cropBottom' | 'cropAspectWidth' | 'cropAspectHeight'
+  | 'geometryFourPoint' | 'geometryUpright'
+  | 'quadTopLeftX' | 'quadTopLeftY' | 'quadTopRightX' | 'quadTopRightY'
+  | 'quadBottomRightX' | 'quadBottomRightY' | 'quadBottomLeftX' | 'quadBottomLeftY'
 
 export type Adjustments = Record<AdjustmentKey, number>
 
@@ -84,6 +89,11 @@ export const defaultAdjustments: Adjustments = {
   denoiseLuminance: 0, denoiseChroma: 0, denoiseRadius: 1.25, denoiseDetailProtection: 50, denoiseHighIso: 0,
   texture: 0, dehaze: 0,
   lensCorrection: 0, lensDistortion: 1, lensTca: 1, lensVignette: 1, lensAutoScale: 1,
+  geometryScale: 100, geometryOffsetX: 0, geometryOffsetY: 0, geometryVertical: 0, geometryHorizontal: 0,
+  cropLeft: 0, cropTop: 0, cropRight: 100, cropBottom: 100, cropAspectWidth: 0, cropAspectHeight: 0,
+  geometryFourPoint: 0, geometryUpright: 0,
+  quadTopLeftX: 0, quadTopLeftY: 0, quadTopRightX: 100, quadTopRightY: 0,
+  quadBottomRightX: 100, quadBottomRightY: 100, quadBottomLeftX: 0, quadBottomLeftY: 100,
 }
 
 export interface EditorSnapshot {
