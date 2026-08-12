@@ -2,6 +2,8 @@
 //! The graph is backend-neutral: CPU reference, wgpu preview and tiled export must share the
 //! same logical stage order and invalidation rules.
 
+pub mod gpu;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
