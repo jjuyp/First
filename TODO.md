@@ -29,6 +29,13 @@
 - [x] Added UI add/delete/rename/duplicate/enable/reorder/opacity and per-layer Exposure operations with the existing reversible snapshot history; persisted project layers validate IDs, order, opacity and finite values before a sidecar write.
 - [x] Added native contract, pipeline order/finite and project persistence regressions plus `test:layers`. Windows Level 3 Full Acceptance run `31710577180` passed Web and Rust; M15 may begin.
 
+## M15 Native Mask Tree / Layer Compositing (2026-08-13 candidate)
+
+- [x] Expanded persisted MaskTree leaves to Radial, Linear, Brush/Eraser, Luminance and Color Range, with Add/Subtract/Intersect/Invert composites and legacy JSON compatibility.
+- [x] Added a native normalized-coordinate CPU reference evaluator and connected mask weight × layer opacity to M14 linear working-space compositing. Provider-only masks return a typed error; no Browser Canvas fallback is used.
+- [x] Tauri Preview/Before-After/Export share the same compact mask-layer contract. The existing interactive radial overlay now becomes a Native M15 layer; layer UI can select all native mask families.
+- [x] Added mask algebra, invalid/provider, persistence and compositing regressions, plus portrait/dark/backlight/HDR Golden mask selections. Windows Level 3 acceptance is pending; stop after it is green.
+
 ## Product principle — Open-source Foundation First
 
 Before expanding advanced Starroom-specific features, baseline image quality must stand on mature open-source foundations wherever a proven implementation already exists.

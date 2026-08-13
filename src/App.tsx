@@ -17,7 +17,7 @@ import {
   chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
   nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
-  type NativeAdjustmentLayer,
+  type NativeAdjustmentLayer, type NativeMaskDefinition,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -66,8 +66,63 @@ const defaultMask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotatio
 const copyCurve = (points: ToneCurvePoint[]) => points.map((point) => ({ ...point }))
 const defaultCurveChannels = (): NativeToneCurves => ({ master: copyCurve(defaultCurvePoints), red: [], green: [], blue: [] })
 const copyCurveChannels = (curves: NativeToneCurves): NativeToneCurves => ({ master: copyCurve(curves.master), red: copyCurve(curves.red), green: copyCurve(curves.green), blue: copyCurve(curves.blue) })
-const defaultLayer = (): NativeAdjustmentLayer => ({ id: crypto.randomUUID(), name: 'Adjustment layer', enabled: true, opacity: 1, blendMode: 'normal', adjustments: { tone: { exposureEv: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } } })
-const copyLayers = (layers: NativeAdjustmentLayer[]) => layers.map((layer) => ({ ...layer, adjustments: { tone: { ...layer.adjustments.tone } } }))
+const defaultLayer = (): NativeAdjustmentLayer => ({ id: crypto.randomUUID(), name: 'Adjustment layer', enabled: true, opacity: 1, blendMode: 'normal', mask: { type: 'none' }, adjustments: { tone: { exposureEv: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } } })
+const copyLayers = (layers: NativeAdjustmentLayer[]) => layers.map((layer) => ({ ...layer, mask: structuredClone(layer.mask), adjustments: { tone: { ...layer.adjustments.tone } } }))
+const newMaskOfType = (type: 'none' | 'radial' | 'linear' | 'brush' | 'luminance' | 'colorRange'): NativeAdjustmentLayer['mask'] => {
+  if (type === 'radial') return { type, x: .5, y: .5, width: .4, height: .4, rotation: 0, feather: .2, invert: false }
+  if (type === 'linear') return { type, startX: .25, startY: .5, endX: .75, endY: .5, feather: .2, invert: false }
+  if (type === 'brush') return { type, points: [{ x: .5, y: .5, pressure: 1 }], radius: .15, feather: .5, flow: 1, erase: false }
+  if (type === 'luminance') return { type, minimum: .2, maximum: .8, feather: .05, invert: false }
+  if (type === 'colorRange') return { type, reference: [.5, .5, .5], tolerance: .15, feather: .1, invert: false }
+  return { type: 'none' }
+}
+
+/** UI edits only serializable native mask intent; all image math remains in Rust. */
+function LayerMaskControls({ mask, onChange }: { mask: NativeMaskDefinition; onChange: (mask: NativeMaskDefinition) => void }) {
+  const number = (label: string, value: number, update: (value: number) => NativeMaskDefinition, options: { min?: number; max?: number; step?: number } = {}) => (
+    <label>{label}<input aria-label={`Mask ${label}`} type="number" value={value} min={options.min} max={options.max} step={options.step ?? .01}
+      onChange={(event) => onChange(update(Number(event.target.value) || 0))} /></label>
+  )
+  const invert = (current: Exclude<NativeMaskDefinition, { type: 'none' }>, update: (invert: boolean) => NativeMaskDefinition) => (
+    <label><input aria-label="Invert mask" type="checkbox" checked={'invert' in current ? current.invert : false}
+      onChange={(event) => onChange(update(event.target.checked))} /> Invert</label>
+  )
+  if (mask.type === 'radial') return <div className="mask-controls">
+    {number('Center X', mask.x, (x) => ({ ...mask, x }), { min: 0, max: 1 })}{number('Center Y', mask.y, (y) => ({ ...mask, y }), { min: 0, max: 1 })}
+    {number('Width', mask.width, (width) => ({ ...mask, width }), { min: .001, max: 2 })}{number('Height', mask.height, (height) => ({ ...mask, height }), { min: .001, max: 2 })}
+    {number('Angle', mask.rotation, (rotation) => ({ ...mask, rotation }), { min: -180, max: 180, step: 1 })}{number('Feather', mask.feather, (feather) => ({ ...mask, feather }), { min: 0, max: 1 })}
+    {invert(mask, (invert) => ({ ...mask, invert }))}
+  </div>
+  if (mask.type === 'linear') return <div className="mask-controls">
+    {number('Start X', mask.startX, (startX) => ({ ...mask, startX }), { min: 0, max: 1 })}{number('Start Y', mask.startY, (startY) => ({ ...mask, startY }), { min: 0, max: 1 })}
+    {number('End X', mask.endX, (endX) => ({ ...mask, endX }), { min: 0, max: 1 })}{number('End Y', mask.endY, (endY) => ({ ...mask, endY }), { min: 0, max: 1 })}
+    {number('Feather', mask.feather, (feather) => ({ ...mask, feather }), { min: 0, max: 1 })}{invert(mask, (invert) => ({ ...mask, invert }))}
+  </div>
+  if (mask.type === 'brush') {
+    const point = mask.points.at(-1) ?? { x: .5, y: .5, pressure: 1 }
+    const replaceLast = (patch: Partial<typeof point>) => ({ ...mask, points: [...mask.points.slice(0, -1), { ...point, ...patch }] }) as NativeMaskDefinition
+    return <div className="mask-controls">
+      {number('Radius', mask.radius, (radius) => ({ ...mask, radius }), { min: .001, max: 1 })}{number('Feather', mask.feather, (feather) => ({ ...mask, feather }), { min: 0, max: 1 })}
+      {number('Flow', mask.flow, (flow) => ({ ...mask, flow }), { min: 0, max: 1 })}{number('Point X', point.x, (x) => replaceLast({ x }), { min: 0, max: 1 })}
+      {number('Point Y', point.y, (y) => replaceLast({ y }), { min: 0, max: 1 })}{number('Pressure', point.pressure, (pressure) => replaceLast({ pressure }), { min: 0, max: 1 })}
+      <label><input aria-label="Brush erase" type="checkbox" checked={mask.erase} onChange={(event) => onChange({ ...mask, erase: event.target.checked })} /> Erase</label>
+      <button type="button" onClick={() => onChange({ ...mask, points: [...mask.points, { x: .5, y: .5, pressure: 1 }] })}>+ Point</button>
+      <button type="button" disabled={mask.points.length <= 1} onClick={() => onChange({ ...mask, points: mask.points.slice(0, -1) })}>Remove point</button>
+    </div>
+  }
+  if (mask.type === 'luminance') return <div className="mask-controls">
+    {number('Minimum', mask.minimum, (minimum) => ({ ...mask, minimum }), { min: 0, max: 16 })}{number('Maximum', mask.maximum, (maximum) => ({ ...mask, maximum }), { min: 0, max: 16 })}
+    {number('Feather', mask.feather, (feather) => ({ ...mask, feather }), { min: 0, max: 16 })}{invert(mask, (invert) => ({ ...mask, invert }))}
+  </div>
+  if (mask.type === 'colorRange') return <div className="mask-controls">
+    {number('Red', mask.reference[0], (red) => ({ ...mask, reference: [red, mask.reference[1], mask.reference[2]] }), { min: 0, max: 16 })}
+    {number('Green', mask.reference[1], (green) => ({ ...mask, reference: [mask.reference[0], green, mask.reference[2]] }), { min: 0, max: 16 })}
+    {number('Blue', mask.reference[2], (blue) => ({ ...mask, reference: [mask.reference[0], mask.reference[1], blue] }), { min: 0, max: 16 })}
+    {number('Tolerance', mask.tolerance, (tolerance) => ({ ...mask, tolerance }), { min: 0, max: 16 })}{number('Feather', mask.feather, (feather) => ({ ...mask, feather }), { min: 0, max: 16 })}
+    {invert(mask, (invert) => ({ ...mask, invert }))}
+  </div>
+  return null
+}
 const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
   adjustments: { ...photo.adjustments }, curvePoints: copyCurve(photo.curvePoints), curveChannels: copyCurveChannels(photo.curveChannels), whiteBalanceMode: photo.whiteBalanceMode,
   whiteBalanceSample: photo.whiteBalanceSample ? { ...photo.whiteBalanceSample } : null, mask: { ...photo.mask },
@@ -534,7 +589,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   return <section className="inspector-content" aria-label={`${tool} inspector`}>
     <div className="inspector-head"><div><span className="eyebrow">Live CPU preview</span><h2>{tool}</h2></div><ChevronDown size={16} /></div>
     {renderBackend === 'native' && tool === 'masks'
-      && <div className="tool-note">This tool is outside the M1C Native slice. Applying it raises an explicit error; Starroom will not silently use Browser Canvas.</div>}
+      && <div className="tool-note">Native M15 mask layer: the dashed radial selection is evaluated in the shared Preview/Before-After/Export graph. No Browser Canvas compositing is used.</div>}
     {tool === 'color' && <>
       <div className="tool-note">Encoded-image Temperature/Tint are relative corrections, not physical Kelvin. RAW Camera/As-Shot uses LibRaw metadata.</div>
       {renderBackend === 'native' && <div className="wb-controls"><label>White balance mode<select value={whiteBalanceMode}
@@ -1119,10 +1174,13 @@ export function App() {
           {selected.layers.length === 0 ? <small>No local adjustment layers</small> : selected.layers.map((layer, index) => <div className={selectedLayerId === layer.id ? 'layer-row selected' : 'layer-row'} key={layer.id} onClick={() => setSelectedLayerId(layer.id)}>
             <input aria-label={`Enable ${layer.name}`} type="checkbox" checked={layer.enabled} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, enabled: event.target.checked }))} />
             <input aria-label="Layer name" value={layer.name} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, name: event.target.value.slice(0, 80) || 'Adjustment layer' }))} />
+            <label>Mask <select aria-label="Layer mask type" value={'type' in layer.mask ? layer.mask.type : 'none'} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, mask: newMaskOfType(event.target.value as 'none' | 'radial' | 'linear' | 'brush' | 'luminance' | 'colorRange') }))}><option value="none">None</option><option value="radial">Radial</option><option value="linear">Linear</option><option value="brush">Brush</option><option value="luminance">Luminance</option><option value="colorRange">Color</option></select></label>
             <label>Opacity <input aria-label="Layer opacity" type="number" min="0" max="100" value={Math.round(layer.opacity * 100)} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, opacity: Math.max(0, Math.min(1, Number(event.target.value) / 100 || 0)) }))} /></label>
             <button aria-label="Move layer up" disabled={index === 0} onClick={() => moveLayer(layer.id, -1)}>↑</button><button aria-label="Move layer down" disabled={index === selected.layers.length - 1} onClick={() => moveLayer(layer.id, 1)}>↓</button>
             <button aria-label="Duplicate layer" onClick={() => duplicateLayer(layer.id)}>Copy</button><button aria-label="Delete layer" onClick={() => deleteLayer(layer.id)}>×</button>
-            {selectedLayerId === layer.id && <label>Exposure <input aria-label="Layer exposure" type="number" min="-5" max="5" step=".05" value={layer.adjustments.tone.exposureEv} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, adjustments: { tone: { ...current.adjustments.tone, exposureEv: Math.max(-5, Math.min(5, Number(event.target.value) || 0)) } } }))} /></label>}
+            {selectedLayerId === layer.id && <><label>Exposure <input aria-label="Layer exposure" type="number" min="-5" max="5" step=".05" value={layer.adjustments.tone.exposureEv} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, adjustments: { tone: { ...current.adjustments.tone, exposureEv: Math.max(-5, Math.min(5, Number(event.target.value) || 0)) } } }))} /></label>
+              {'type' in layer.mask && <LayerMaskControls mask={layer.mask} onChange={(mask) => updateLayer(layer.id, (current) => ({ ...current, mask }))} />}
+            </>}
           </div>)}
         </section>
         <div className="tool-layout">

@@ -13,7 +13,7 @@ This map is the fast routing layer for Codex and path-aware CI. Cargo manifests 
 | Detail | `starroom-detail` | none | `detail`; pipeline only when stage contract/order changes |
 | Optics | `starroom-optics` provider boundary | none today; Lensfun planned | `optics` |
 | Geometry | `starroom-geometry` | none | `geometry` |
-| Masks | `starroom-project` mask tree, `starroom-render` invalidation | core/project state | `masks`; all relevant image gates when compositing semantics change |
+| Masks | `starroom-project` persisted tree, `starroom-pipeline` native evaluator, `starroom-render` R16Float resource contract | core/project/pipeline state | `masks`; native layer/shared-graph and relevant image gates when compositing semantics change |
 | Portrait | `starroom-portrait` provider-neutral API | detail | `portrait`, `detail` |
 | Healing | `starroom-heal` | detail | `detail` |
 | Advisor | `starroom-advisor` | serialized suggestions only | `ai` |

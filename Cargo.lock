@@ -3482,6 +3482,7 @@ dependencies = [
  "starroom-grading",
  "starroom-imageio",
  "starroom-optics",
+ "starroom-project",
  "starroom-raw",
  "starroom-render",
  "thiserror 2.0.20",

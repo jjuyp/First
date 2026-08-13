@@ -45,10 +45,18 @@ describe('native preview contract', () => {
 
   it('transports ordered layer intent without calculating pixels in TypeScript', () => {
     const layers = [{ id: 'lift', name: 'Lift foreground', enabled: true, opacity: .6, blendMode: 'normal' as const,
+      mask: { type: 'none' as const },
       adjustments: { tone: { exposureEv: .75, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } } }]
     const settings = toNativeSettings(defaultAdjustments, [], 'sourceDefault', null,
       { master: [], red: [], green: [], blue: [] }, undefined, layers)
     expect(settings.layers).toEqual(layers)
+  })
+
+  it('serializes the interactive radial mask as a native layer instead of a browser fallback', () => {
+    const settings = toNativeSettings({ ...defaultAdjustments, maskExposure: 1, maskFeather: 40 }, [], 'sourceDefault', null,
+      { master: [], red: [], green: [], blue: [] }, undefined, [], { x: .25, y: .75, width: .3, height: .5, rotation: 18 })
+    expect(settings.layers).toHaveLength(1)
+    expect(settings.layers[0]).toMatchObject({ id: '__m15-radial-mask__', mask: { type: 'radial', x: .25, y: .75, feather: .4 } })
   })
 
   it('never silently ignores edits outside the M1C native slice', () => {

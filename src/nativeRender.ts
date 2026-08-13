@@ -18,8 +18,16 @@ export type NativeLensMatchMode = 'auto' | 'manual'
 export interface NativeOpticsState { matchMode: NativeLensMatchMode; manualIdentity: NativeLensIdentity | null }
 export interface NativeLensProfileResolution { status: 'autoMatched' | 'manualMatched' | 'missingMetadata' | 'unknownCamera' | 'unknownLens' | 'mountMismatch' | 'ambiguous'; profileId: string | null; databaseVersion: string; cameraMount: string | null; correction: unknown | null }
 export const defaultNativeOpticsState: NativeOpticsState = { matchMode: 'auto', manualIdentity: null }
+export type NativeMaskDefinition =
+  | { type: 'none' }
+  | { type: 'radial'; x: number; y: number; width: number; height: number; rotation: number; feather: number; invert: boolean }
+  | { type: 'linear'; startX: number; startY: number; endX: number; endY: number; feather: number; invert: boolean }
+  | { type: 'brush'; points: Array<{ x: number; y: number; pressure: number }>; radius: number; feather: number; flow: number; erase: boolean }
+  | { type: 'luminance'; minimum: number; maximum: number; feather: number; invert: boolean }
+  | { type: 'colorRange'; reference: [number, number, number]; tolerance: number; feather: number; invert: boolean }
+export type NativeMaskTree = NativeMaskDefinition | { operation: 'add' | 'subtract' | 'intersect' | 'invert'; children: NativeMaskTree[] }
 export interface NativeLayerAdjustments { tone: { exposureEv: number; contrast: number; highlights: number; shadows: number; whites: number; blacks: number } }
-export interface NativeAdjustmentLayer { id: string; name: string; enabled: boolean; opacity: number; blendMode: 'normal'; adjustments: NativeLayerAdjustments }
+export interface NativeAdjustmentLayer { id: string; name: string; enabled: boolean; opacity: number; blendMode: 'normal'; mask: NativeMaskTree; adjustments: NativeLayerAdjustments }
 
 export interface NativeEditSettings {
   exposure: number
@@ -80,9 +88,10 @@ export const getNativeGpuStatus = (preferGpu = true) =>
   invoke<NativeGpuStatus>('gpu_preview_status', { preferGpu })
 
 export function assertNativeSupported(adjustments: Adjustments, mask: RadialMask) {
+  // Kept in the boundary contract: M15 uses this same interaction geometry to construct the
+  // native radial layer below, so the browser never composites it itself.
+  void mask
   const unsupported: string[] = []
-  if (adjustments.maskExposure !== 0 || mask.x !== .5 || mask.y !== .5 || mask.width !== .42
-    || mask.height !== .42 || mask.rotation !== 0) unsupported.push('Masks')
   if (adjustments.vignette !== 0 || adjustments.lensBrightness !== 0) unsupported.push('Optics')
   if (unsupported.length) {
     throw new Error(`Native M1C does not support ${unsupported.join(', ')} yet; Browser fallback was not used.`)
@@ -93,7 +102,8 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
   whiteBalanceMode: NativeWhiteBalanceMode = 'sourceDefault', whiteBalanceSample: NativeWhiteBalanceSample | null = null,
   toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] },
   opticsState: NativeOpticsState = defaultNativeOpticsState,
-  layers: NativeAdjustmentLayer[] = []): NativeEditSettings {
+  layers: NativeAdjustmentLayer[] = [],
+  mask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }): NativeEditSettings {
   const bands: NativeColorBand[] = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'magenta']
   const title = (band: string) => `${band[0].toUpperCase()}${band.slice(1)}`
   const wheel = (zone: 'Global' | 'Shadows' | 'Midtones' | 'Highlights'): NativeColorWheel => ({
@@ -162,7 +172,14 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
       },
       uprightMode: (['off', 'auto', 'level', 'vertical', 'full'] as const)[Math.round(adjustments.geometryUpright)] ?? 'off',
     },
-    layers: layers.map((layer) => ({ ...layer, adjustments: { tone: { ...layer.adjustments.tone } } })),
+    layers: [
+      ...layers.map((layer) => ({ ...layer, mask: structuredClone(layer.mask), adjustments: { tone: { ...layer.adjustments.tone } } })),
+      ...(adjustments.maskExposure === 0 ? [] : [{
+        id: '__m15-radial-mask__', name: 'Radial mask', enabled: true, opacity: 1, blendMode: 'normal' as const,
+        mask: { type: 'radial' as const, ...mask, feather: Math.max(0, adjustments.maskFeather / 100), invert: false },
+        adjustments: { tone: { exposureEv: adjustments.maskExposure, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } },
+      }]),
+    ],
   }
 }
 
@@ -228,7 +245,7 @@ export async function renderNativePreview(
 ) {
   assertNativeSupported(adjustments, mask)
   const frame = await invoke<ArrayBuffer | Uint8Array>('native_preview', {
-    request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers) },
+    request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask) },
   })
   return parseNativePreviewFrame(frame)
 }
@@ -264,7 +281,7 @@ export async function exportNativeJpeg(
 ) {
   assertNativeSupported(adjustments, mask)
   return invoke<NativeExportResult>('native_export_jpeg', {
-    request: { sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers) },
+    request: { sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask) },
   })
 }
 

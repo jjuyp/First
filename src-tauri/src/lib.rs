@@ -717,6 +717,7 @@ mod tests {
                 enabled: true,
                 opacity: 1.0,
                 blend_mode: Default::default(),
+                mask: starroom_project::MaskDefinition::None.into(),
                 adjustments: Default::default(),
             },
             NativeAdjustmentLayer {
@@ -725,6 +726,7 @@ mod tests {
                 enabled: true,
                 opacity: 1.0,
                 blend_mode: Default::default(),
+                mask: starroom_project::MaskDefinition::None.into(),
                 adjustments: Default::default(),
             },
         ];

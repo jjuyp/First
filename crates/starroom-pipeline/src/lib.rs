@@ -25,6 +25,7 @@ use starroom_optics::{
     LensIdentity, LensProfileResolution, LensProfileStatus, LensfunProvider, OpticsSettings,
     apply_lens_correction,
 };
+use starroom_project::{MaskDefinition, MaskOperation, MaskTree};
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use starroom_render::gpu::{GpuError, GpuRenderer};
 use thiserror::Error;
@@ -147,6 +148,8 @@ pub struct NativeAdjustmentLayer {
     pub opacity: f32,
     #[serde(default)]
     pub blend_mode: LayerBlendMode,
+    #[serde(default = "default_mask_tree")]
+    pub mask: MaskTree,
     #[serde(default)]
     pub adjustments: LayerAdjustments,
 }
@@ -156,6 +159,10 @@ fn layer_enabled() -> bool {
 }
 fn layer_opacity() -> f32 {
     1.0
+}
+
+fn default_mask_tree() -> MaskTree {
+    MaskDefinition::None.into()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -230,6 +237,10 @@ pub enum PipelineError {
     InvalidWhiteBalanceSample,
     #[error("adjustment layer {id} is invalid: {reason}")]
     InvalidLayer { id: String, reason: &'static str },
+    #[error("mask is invalid: {0}")]
+    InvalidMask(&'static str),
+    #[error("mask provider {provider:?} is unavailable for this native graph")]
+    MaskProviderUnavailable { provider: String },
     #[error("GPU acceleration failed: {0}")]
     Gpu(#[from] GpuError),
     #[error(transparent)]
@@ -459,9 +470,203 @@ fn layer_is_finite(layer: &NativeAdjustmentLayer) -> bool {
         .all(|point| point.x.is_finite() && point.y.is_finite())
 }
 
+fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    if edge1 <= edge0 {
+        return if value >= edge1 { 1.0 } else { 0.0 };
+    }
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn mask_leaf_weight(
+    mask: &MaskDefinition,
+    x: f32,
+    y: f32,
+    rgb: LinearRgb,
+) -> Result<f32, PipelineError> {
+    let weight = match mask {
+        MaskDefinition::None => 1.0,
+        MaskDefinition::Radial {
+            x: center_x,
+            y: center_y,
+            width,
+            height,
+            rotation,
+            feather,
+            invert,
+        } => {
+            if ![*center_x, *center_y, *width, *height, *rotation, *feather]
+                .into_iter()
+                .all(f32::is_finite)
+                || *width <= 0.0
+                || *height <= 0.0
+                || *feather < 0.0
+            {
+                return Err(PipelineError::InvalidMask(
+                    "radial values must be finite with positive size",
+                ));
+            }
+            let angle = -*rotation * std::f32::consts::PI / 180.0;
+            let dx = x - *center_x;
+            let dy = y - *center_y;
+            let local_x = dx * angle.cos() - dy * angle.sin();
+            let local_y = dx * angle.sin() + dy * angle.cos();
+            let distance = (local_x / (*width * 0.5)).hypot(local_y / (*height * 0.5));
+            let result = 1.0 - smoothstep(1.0, 1.0 + *feather * 2.0, distance);
+            if *invert { 1.0 - result } else { result }
+        }
+        MaskDefinition::Linear {
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            feather,
+            invert,
+        } => {
+            if ![*start_x, *start_y, *end_x, *end_y, *feather]
+                .into_iter()
+                .all(f32::is_finite)
+                || *feather < 0.0
+            {
+                return Err(PipelineError::InvalidMask("linear values must be finite"));
+            }
+            let dx = *end_x - *start_x;
+            let dy = *end_y - *start_y;
+            let length = dx.hypot(dy);
+            if length <= 1.0e-6 {
+                return Err(PipelineError::InvalidMask("linear endpoints must differ"));
+            }
+            let along = ((x - *start_x) * dx + (y - *start_y) * dy) / length;
+            let result = smoothstep(0.0, (*feather).max(0.001), along);
+            if *invert { 1.0 - result } else { result }
+        }
+        MaskDefinition::Brush {
+            points,
+            radius,
+            feather,
+            flow,
+            erase,
+        } => {
+            if ![*radius, *feather, *flow].into_iter().all(f32::is_finite)
+                || *radius <= 0.0
+                || *feather < 0.0
+                || !(0.0..=1.0).contains(flow)
+            {
+                return Err(PipelineError::InvalidMask(
+                    "brush values are outside supported ranges",
+                ));
+            }
+            let mut coverage: f32 = 0.0;
+            for point in points {
+                if ![point.x, point.y, point.pressure]
+                    .into_iter()
+                    .all(f32::is_finite)
+                    || point.pressure < 0.0
+                {
+                    return Err(PipelineError::InvalidMask("brush point is invalid"));
+                }
+                let distance = (x - point.x).hypot(y - point.y);
+                coverage = coverage.max(
+                    (1.0 - smoothstep(*radius, *radius * (1.0 + *feather), distance))
+                        * point.pressure,
+                );
+            }
+            let result = (coverage * *flow).clamp(0.0, 1.0);
+            if *erase { 1.0 - result } else { result }
+        }
+        MaskDefinition::Luminance {
+            minimum,
+            maximum,
+            feather,
+            invert,
+        } => {
+            if ![*minimum, *maximum, *feather]
+                .into_iter()
+                .all(f32::is_finite)
+                || *minimum > *maximum
+                || *feather < 0.0
+            {
+                return Err(PipelineError::InvalidMask("luminance range is invalid"));
+            }
+            let luma = rgb.r * 0.2627 + rgb.g * 0.6780 + rgb.b * 0.0593;
+            let soft = (*feather).max(0.0001);
+            let result = smoothstep(*minimum - soft, *minimum + soft, luma)
+                * (1.0 - smoothstep(*maximum - soft, *maximum + soft, luma));
+            if *invert { 1.0 - result } else { result }
+        }
+        MaskDefinition::ColorRange {
+            reference,
+            tolerance,
+            feather,
+            invert,
+        } => {
+            if !reference
+                .into_iter()
+                .copied()
+                .chain([*tolerance, *feather])
+                .all(f32::is_finite)
+                || *tolerance < 0.0
+                || *feather < 0.0
+            {
+                return Err(PipelineError::InvalidMask("color range is invalid"));
+            }
+            let distance = ((rgb.r - reference[0]).powi(2)
+                + (rgb.g - reference[1]).powi(2)
+                + (rgb.b - reference[2]).powi(2))
+            .sqrt();
+            let result =
+                1.0 - smoothstep(*tolerance, *tolerance + (*feather).max(0.0001), distance);
+            if *invert { 1.0 - result } else { result }
+        }
+        MaskDefinition::Provider { provider, .. } => {
+            return Err(PipelineError::MaskProviderUnavailable {
+                provider: provider.clone(),
+            });
+        }
+    };
+    Ok(weight.clamp(0.0, 1.0))
+}
+
+fn mask_weight(mask: &MaskTree, x: f32, y: f32, rgb: LinearRgb) -> Result<f32, PipelineError> {
+    if !x.is_finite()
+        || !y.is_finite()
+        || !rgb.r.is_finite()
+        || !rgb.g.is_finite()
+        || !rgb.b.is_finite()
+    {
+        return Err(PipelineError::InvalidMask(
+            "coordinates and input must be finite",
+        ));
+    }
+    match mask {
+        MaskTree::Leaf(leaf) => mask_leaf_weight(leaf, x, y, rgb),
+        MaskTree::Composite(composite) => {
+            let mut children = composite.children.iter();
+            let Some(first) = children.next() else {
+                return Ok(0.0);
+            };
+            let first_weight = mask_weight(first, x, y, rgb)?;
+            match composite.operation {
+                MaskOperation::Add => children.try_fold(first_weight, |value, child| {
+                    Ok(value.max(mask_weight(child, x, y, rgb)?))
+                }),
+                MaskOperation::Subtract => children.try_fold(first_weight, |value, child| {
+                    Ok(value * (1.0 - mask_weight(child, x, y, rgb)?))
+                }),
+                MaskOperation::Intersect => children.try_fold(first_weight, |value, child| {
+                    Ok(value.min(mask_weight(child, x, y, rgb)?))
+                }),
+                MaskOperation::Invert => Ok(1.0 - first_weight),
+            }
+        }
+    }
+}
+
 fn apply_layers(
     mut rgb: LinearRgb,
     layers: &[NativeAdjustmentLayer],
+    x: f32,
+    y: f32,
 ) -> Result<LinearRgb, PipelineError> {
     for layer in layers {
         if !layer.enabled {
@@ -495,10 +700,11 @@ fn apply_layers(
         );
         // M14 deliberately supports only Normal. Any future mode must earn an explicit
         // scene-linear implementation rather than quietly behaving like Normal.
+        let weight = layer.opacity * mask_weight(&layer.mask, x, y, rgb)?;
         rgb = LinearRgb {
-            r: rgb.r + (adjusted.r - rgb.r) * layer.opacity,
-            g: rgb.g + (adjusted.g - rgb.g) * layer.opacity,
-            b: rgb.b + (adjusted.b - rgb.b) * layer.opacity,
+            r: rgb.r + (adjusted.r - rgb.r) * weight,
+            g: rgb.g + (adjusted.g - rgb.g) * weight,
+            b: rgb.b + (adjusted.b - rgb.b) * weight,
         };
         if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
             return Err(PipelineError::InvalidLayer {
@@ -512,6 +718,8 @@ fn apply_layers(
 
 fn apply_creative_graph(
     pixels: Vec<[f32; 3]>,
+    width: usize,
+    height: usize,
     settings: &RenderSettings,
     gpu: Option<&GpuRenderer>,
 ) -> Result<Vec<f32>, PipelineError> {
@@ -553,12 +761,14 @@ fn apply_creative_graph(
         (prepared, settings.tone)
     };
     let mut data = Vec::with_capacity(pixel_count * 3);
-    for mut rgb in prepared {
+    for (index, mut rgb) in prepared.into_iter().enumerate() {
         rgb = apply_tone(rgb, tone_parameters);
         rgb = apply_curve(rgb, &settings.curve, &settings.curves);
         rgb = apply_color_mixer(rgb, settings.color_mixer);
         rgb = apply_grading(rgb, settings.grading);
-        rgb = apply_layers(rgb, &settings.layers)?;
+        let x = (index % width) as f32 / width.max(1) as f32;
+        let y = (index / width) as f32 / height.max(1) as f32;
+        rgb = apply_layers(rgb, &settings.layers, x, y)?;
         if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
             return Err(PipelineError::InvalidDecodedBuffer);
         }
@@ -718,7 +928,13 @@ fn render_working_graph(
     let creative = LinearImage::new(
         geometrically_corrected.width,
         geometrically_corrected.height,
-        apply_creative_graph(pixels, settings, gpu)?,
+        apply_creative_graph(
+            pixels,
+            geometrically_corrected.width,
+            geometrically_corrected.height,
+            settings,
+            gpu,
+        )?,
     )
     .map_err(|_| PipelineError::DetailBuffer)?;
     let denoised = denoise(&creative, settings.denoise);
@@ -979,6 +1195,7 @@ mod tests {
             enabled: true,
             opacity: 1.0,
             blend_mode: LayerBlendMode::Normal,
+            mask: MaskDefinition::None.into(),
             adjustments: LayerAdjustments {
                 tone: ToneParameters {
                     exposure_ev: 1.0,
@@ -993,6 +1210,7 @@ mod tests {
             enabled: true,
             opacity: 0.5,
             blend_mode: LayerBlendMode::Normal,
+            mask: MaskDefinition::None.into(),
             adjustments: LayerAdjustments {
                 tone: ToneParameters {
                     contrast: 0.75,
@@ -1001,9 +1219,15 @@ mod tests {
                 ..Default::default()
             },
         };
-        let output =
-            apply_layers(initial, &[brighten.clone(), contrast_half.clone()]).expect("layers");
-        let reversed = apply_layers(initial, &[contrast_half, brighten]).expect("reversed layers");
+        let output = apply_layers(
+            initial,
+            &[brighten.clone(), contrast_half.clone()],
+            0.5,
+            0.5,
+        )
+        .expect("layers");
+        let reversed =
+            apply_layers(initial, &[contrast_half, brighten], 0.5, 0.5).expect("reversed layers");
         assert!(output.r.is_finite() && output.g.is_finite() && output.b.is_finite());
         assert!(
             (output.r - reversed.r).abs() > 0.01,
@@ -1019,6 +1243,7 @@ mod tests {
             enabled: true,
             opacity: 1.2,
             blend_mode: LayerBlendMode::Normal,
+            mask: MaskDefinition::None.into(),
             adjustments: LayerAdjustments::default(),
         };
         assert!(matches!(
@@ -1028,7 +1253,9 @@ mod tests {
                     g: 0.2,
                     b: 0.2
                 },
-                &[invalid.clone()]
+                &[invalid.clone()],
+                0.5,
+                0.5
             ),
             Err(PipelineError::InvalidLayer { .. })
         ));
@@ -1041,10 +1268,152 @@ mod tests {
                     g: 0.2,
                     b: 0.2
                 },
-                &[invalid]
+                &[invalid],
+                0.5,
+                0.5
             ),
             Err(PipelineError::InvalidLayer { .. })
         ));
+    }
+
+    #[test]
+    fn m15_mask_tree_supports_radial_brush_and_boolean_operations() {
+        let radial = MaskDefinition::Radial {
+            x: 0.5,
+            y: 0.5,
+            width: 0.4,
+            height: 0.4,
+            rotation: 0.0,
+            feather: 0.1,
+            invert: false,
+        };
+        let brush = MaskDefinition::Brush {
+            points: vec![starroom_project::BrushPoint {
+                x: 0.5,
+                y: 0.5,
+                pressure: 1.0,
+            }],
+            radius: 0.1,
+            feather: 0.5,
+            flow: 1.0,
+            erase: false,
+        };
+        let tree = MaskTree::Composite(starroom_project::MaskComposite {
+            operation: MaskOperation::Subtract,
+            children: vec![radial.into(), brush.into()],
+        });
+        let center = mask_weight(
+            &tree,
+            0.5,
+            0.5,
+            LinearRgb {
+                r: 0.3,
+                g: 0.3,
+                b: 0.3,
+            },
+        )
+        .expect("mask");
+        let edge = mask_weight(
+            &tree,
+            0.65,
+            0.5,
+            LinearRgb {
+                r: 0.3,
+                g: 0.3,
+                b: 0.3,
+            },
+        )
+        .expect("mask");
+        assert!(center < 0.01);
+        assert!(edge.is_finite() && (0.0..=1.0).contains(&edge));
+    }
+
+    #[test]
+    fn m15_luminance_and_color_masks_are_finite_and_invertible() {
+        let rgb = LinearRgb {
+            r: 0.4,
+            g: 0.4,
+            b: 0.4,
+        };
+        let luminance = MaskDefinition::Luminance {
+            minimum: 0.3,
+            maximum: 0.5,
+            feather: 0.02,
+            invert: false,
+        };
+        let inverted = MaskTree::Composite(starroom_project::MaskComposite {
+            operation: MaskOperation::Invert,
+            children: vec![luminance.clone().into()],
+        });
+        let selected = mask_weight(&luminance.into(), 0.5, 0.5, rgb).expect("luma");
+        let inverse = mask_weight(&inverted, 0.5, 0.5, rgb).expect("inverse");
+        assert!((selected + inverse - 1.0).abs() < 1.0e-5);
+        let color = MaskDefinition::ColorRange {
+            reference: [0.4, 0.4, 0.4],
+            tolerance: 0.02,
+            feather: 0.1,
+            invert: false,
+        };
+        assert!(mask_weight(&color.into(), 0.5, 0.5, rgb).expect("color") > 0.99);
+    }
+
+    #[test]
+    fn m15_provider_mask_never_silently_substitutes() {
+        let provider = MaskDefinition::Provider {
+            provider: "subject".into(),
+            request: "person".into(),
+            fingerprint: None,
+        };
+        assert!(matches!(
+            mask_weight(
+                &provider.into(),
+                0.5,
+                0.5,
+                LinearRgb {
+                    r: 0.2,
+                    g: 0.2,
+                    b: 0.2
+                }
+            ),
+            Err(PipelineError::MaskProviderUnavailable { .. })
+        ));
+    }
+
+    #[test]
+    fn m15_layer_compositing_uses_mask_weight_before_opacity() {
+        let layer = NativeAdjustmentLayer {
+            id: "local-lift".into(),
+            name: "Local lift".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: LayerBlendMode::Normal,
+            mask: MaskDefinition::Radial {
+                x: 0.5,
+                y: 0.5,
+                width: 0.3,
+                height: 0.3,
+                rotation: 0.0,
+                feather: 0.0,
+                invert: false,
+            }
+            .into(),
+            adjustments: LayerAdjustments {
+                tone: ToneParameters {
+                    exposure_ev: 1.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        };
+        let source = LinearRgb {
+            r: 0.2,
+            g: 0.2,
+            b: 0.2,
+        };
+        let center = apply_layers(source, &[layer.clone()], 0.5, 0.5).expect("center");
+        let outside = apply_layers(source, &[layer], 0.0, 0.0).expect("outside");
+        assert!(center.r > source.r * 1.8);
+        assert!((outside.r - source.r).abs() < 1.0e-6);
     }
 
     #[test]

@@ -330,12 +330,30 @@ pub enum MaskDefinition {
         end_x: f32,
         end_y: f32,
         feather: f32,
+        #[serde(default)]
+        invert: bool,
     },
     Brush {
         points: Vec<BrushPoint>,
         radius: f32,
         feather: f32,
         flow: f32,
+        #[serde(default)]
+        erase: bool,
+    },
+    Luminance {
+        minimum: f32,
+        maximum: f32,
+        feather: f32,
+        #[serde(default)]
+        invert: bool,
+    },
+    ColorRange {
+        reference: [f32; 3],
+        tolerance: f32,
+        feather: f32,
+        #[serde(default)]
+        invert: bool,
     },
     Provider {
         provider: String,
@@ -350,6 +368,7 @@ pub enum MaskOperation {
     Add,
     Subtract,
     Intersect,
+    Invert,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -567,6 +586,7 @@ mod tests {
                             radius: 0.04,
                             feather: 0.5,
                             flow: 1.0,
+                            erase: false,
                         }
                         .into(),
                     ],
@@ -632,5 +652,45 @@ mod tests {
             project.validate_layers(),
             Err(ProjectError::InvalidLayers(_))
         ));
+    }
+
+    #[test]
+    fn m15_extended_mask_leaves_round_trip_without_rasterizing() {
+        let tree = MaskTree::Composite(MaskComposite {
+            operation: MaskOperation::Add,
+            children: vec![
+                MaskDefinition::Linear {
+                    start_x: 0.1,
+                    start_y: 0.2,
+                    end_x: 0.8,
+                    end_y: 0.6,
+                    feather: 0.15,
+                    invert: false,
+                }
+                .into(),
+                MaskDefinition::ColorRange {
+                    reference: [0.35, 0.42, 0.51],
+                    tolerance: 0.08,
+                    feather: 0.12,
+                    invert: true,
+                }
+                .into(),
+                MaskTree::Composite(MaskComposite {
+                    operation: MaskOperation::Invert,
+                    children: vec![
+                        MaskDefinition::Luminance {
+                            minimum: 0.1,
+                            maximum: 0.7,
+                            feather: 0.04,
+                            invert: false,
+                        }
+                        .into(),
+                    ],
+                }),
+            ],
+        });
+        let json = serde_json::to_string(&tree).expect("serialize extended mask");
+        let restored: MaskTree = serde_json::from_str(&json).expect("deserialize extended mask");
+        assert_eq!(restored, tree);
     }
 }

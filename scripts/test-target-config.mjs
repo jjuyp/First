@@ -71,8 +71,8 @@ export const targets = {
     golden: ['portrait', 'night', 'hdr'],
   },
   masks: {
-    rust: [['test', '--locked', '-p', 'starroom-project', 'mask'], ['test', '--locked', '-p', 'starroom-render']],
-    web: ['src/editorState.test.ts'],
+    rust: [['test', '--locked', '-p', 'starroom-project', 'mask'], ['test', '--locked', '-p', 'starroom-pipeline', 'm15_'], ['test', '--locked', '-p', 'starroom-render']],
+    web: ['src/editorState.test.ts', 'src/nativeRender.test.ts'],
     golden: ['mask'],
   },
   portrait: {

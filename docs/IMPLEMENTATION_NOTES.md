@@ -1,4 +1,10 @@
 # Implementation Notes
+## 2026-08-13 M15 Native mask tree / layer compositing candidate
+
+- M15 is Starroom-owned local-edit architecture. `starroom-project::MaskTree` is persisted as a composable expression instead of a destructive raster: None, Radial, Linear, Brush/Eraser, Luminance and Color Range leaves combine through Add/Subtract/Intersect/Invert.
+- `starroom-pipeline` evaluates the tree against finite post-geometry normalized image coordinates and linear working RGB. The resulting `0..1` mask multiplies the M14 layer opacity before Normal compositing; no intermediate RGB clamp or browser image processing is introduced. Unsupported Provider leaves are explicit typed errors, never guessed subject masks.
+- The existing wgpu R16Float mask resource remains the GPU precision/resource contract. The current production reference is CPU-native and shares the same compact Tauri settings for Preview, Before/After and Export; future GPU execution must satisfy this reference's mask regressions.
+
 ## 2026-08-13 M14 non-destructive adjustment layers candidate
 
 - The M14 layer stack is Starroom-owned document/render architecture, not a new image-science replacement. `NativeAdjustmentLayer` carries only serializable intent; the Rust shared graph applies enabled Normal layers in order in linear Rec.2020 D65 and blends their own native creative result at finite `0..1` opacity before Detail/output.

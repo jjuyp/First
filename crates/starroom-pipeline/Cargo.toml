@@ -14,6 +14,7 @@ starroom-grading = { path = "../starroom-grading" }
 starroom-geometry = { path = "../starroom-geometry" }
 starroom-imageio = { path = "../starroom-imageio" }
 starroom-optics = { path = "../starroom-optics" }
+starroom-project = { path = "../starroom-project" }
 starroom-raw = { path = "../starroom-raw" }
 starroom-render = { path = "../starroom-render" }
 thiserror.workspace = true
