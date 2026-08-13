@@ -1013,7 +1013,8 @@ mod tests {
                 ..Default::default()
             },
         };
-        let output = apply_layers(initial, &[brighten.clone(), contrast_half.clone()]).expect("layers");
+        let output =
+            apply_layers(initial, &[brighten.clone(), contrast_half.clone()]).expect("layers");
         let reversed = apply_layers(initial, &[contrast_half, brighten]).expect("reversed layers");
         assert!(output.r.is_finite() && output.g.is_finite() && output.b.is_finite());
         assert!(
