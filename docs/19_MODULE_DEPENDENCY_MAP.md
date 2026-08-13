@@ -14,7 +14,7 @@ This map is the fast routing layer for Codex and path-aware CI. Cargo manifests 
 | Optics | `starroom-optics` provider boundary | none today; Lensfun planned | `optics` |
 | Geometry | `starroom-geometry` | none | `geometry` |
 | Masks | `starroom-project` persisted tree, `starroom-pipeline` native evaluator, `starroom-render` R16Float resource contract | core/project/pipeline state | `masks`; native layer/shared-graph and relevant image gates when compositing semantics change |
-| Portrait | `starroom-portrait` provider-neutral API | detail | `portrait`, `detail` |
+| Portrait | `starroom-portrait` local ONNX ModelRegistry/provider, `starroom-project` PortraitSemantic MaskTree leaf, `starroom-pipeline` native raster resolver | `ort`, M15 mask tree, M11 source coordinates, detail | `portrait`, `masks`, `geometry`; shared graph and web contract when the Tauri cache bridge changes |
 | Healing | `starroom-heal` | detail | `detail` |
 | Advisor | `starroom-advisor` | serialized suggestions only | `ai` |
 | AI runtime | future typed runtime/provider crate | model manifest, local runtime | `ai`; relevant feature gate for generated editable artifact |

@@ -29,3 +29,4 @@ starroom-pipeline = { path = "../crates/starroom-pipeline" }
 starroom-detail = { path = "../crates/starroom-detail" }
 starroom-grading = { path = "../crates/starroom-grading" }
 starroom-color-management = { path = "../crates/starroom-color-management" }
+starroom-portrait = { path = "../crates/starroom-portrait" }

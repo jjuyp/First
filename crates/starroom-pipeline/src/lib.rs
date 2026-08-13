@@ -25,7 +25,7 @@ use starroom_optics::{
     LensIdentity, LensProfileResolution, LensProfileStatus, LensfunProvider, OpticsSettings,
     apply_lens_correction,
 };
-use starroom_project::{MaskDefinition, MaskOperation, MaskTree};
+use starroom_project::{MaskDefinition, MaskOperation, MaskTree, PortraitMaskRegion};
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use starroom_render::gpu::{GpuError, GpuRenderer};
 use thiserror::Error;
@@ -154,6 +154,34 @@ pub struct NativeAdjustmentLayer {
     pub adjustments: LayerAdjustments,
 }
 
+/// Native-only M16 semantic-mask cache entry. The project's MaskTree persists a compact
+/// reference; source-image R16Float-compatible weights are resolved here in the shared graph.
+/// Tauri obtains these values from the local ONNX cache, not from a browser JSON pixel payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortraitMaskRaster {
+    pub cache_key: String,
+    pub face_id: String,
+    pub region: PortraitMaskRegion,
+    pub width: u32,
+    pub height: u32,
+    pub values: Vec<f32>,
+}
+
+impl PortraitMaskRaster {
+    fn weight_at(&self, x: f32, y: f32) -> Result<f32, PipelineError> {
+        if self.width == 0
+            || self.height == 0
+            || self.values.len() != self.width as usize * self.height as usize
+            || self.values.iter().any(|value| !value.is_finite())
+        {
+            return Err(PipelineError::InvalidMask("portrait raster is malformed"));
+        }
+        let px = (x.clamp(0.0, 1.0) * self.width.saturating_sub(1) as f32).round() as usize;
+        let py = (y.clamp(0.0, 1.0) * self.height.saturating_sub(1) as f32).round() as usize;
+        Ok(self.values[py * self.width as usize + px].clamp(0.0, 1.0))
+    }
+}
+
 fn layer_enabled() -> bool {
     true
 }
@@ -188,6 +216,10 @@ pub struct RenderSettings {
     /// vector order, which is part of the graph cache identity.
     #[serde(default)]
     pub layers: Vec<NativeAdjustmentLayer>,
+    /// Runtime cache bindings for M16 PortraitSemantic leaves. This deliberately is not
+    /// serialized into sidecars or accepted from the frontend transport.
+    #[serde(skip)]
+    pub portrait_masks: Vec<PortraitMaskRaster>,
 }
 
 impl Default for RenderSettings {
@@ -210,6 +242,7 @@ impl Default for RenderSettings {
             optics: OpticsSettings::default(),
             geometry: GeometryParameters::default(),
             layers: Vec::new(),
+            portrait_masks: Vec::new(),
         }
     }
 }
@@ -483,6 +516,7 @@ fn mask_leaf_weight(
     x: f32,
     y: f32,
     rgb: LinearRgb,
+    portrait_masks: &[PortraitMaskRaster],
 ) -> Result<f32, PipelineError> {
     let weight = match mask {
         MaskDefinition::None => 1.0,
@@ -618,6 +652,43 @@ fn mask_leaf_weight(
                 1.0 - smoothstep(*tolerance, *tolerance + (*feather).max(0.0001), distance);
             if *invert { 1.0 - result } else { result }
         }
+        MaskDefinition::PortraitSemantic {
+            face_id,
+            region,
+            threshold,
+            feather,
+            model_id,
+            model_version,
+            model_hash,
+            cache_key,
+        } => {
+            if face_id.trim().is_empty()
+                || cache_key.trim().is_empty()
+                || model_id.trim().is_empty()
+                || model_version.trim().is_empty()
+                || model_hash.len() != 64
+                || ![*threshold, *feather].into_iter().all(f32::is_finite)
+                || !(0.0..=1.0).contains(threshold)
+                || *feather < 0.0
+            {
+                return Err(PipelineError::InvalidMask(
+                    "portrait semantic reference is invalid",
+                ));
+            }
+            let raster = portrait_masks
+                .iter()
+                .find(|candidate| {
+                    candidate.cache_key == *cache_key
+                        && candidate.face_id == *face_id
+                        && candidate.region == *region
+                })
+                .ok_or_else(|| PipelineError::MaskProviderUnavailable {
+                    provider: format!("portrait semantic cache: {cache_key}"),
+                })?;
+            let value = raster.weight_at(x, y)?;
+            let refined = smoothstep(*threshold - *feather, *threshold + *feather + 1.0e-5, value);
+            refined
+        }
         MaskDefinition::Provider { provider, .. } => {
             return Err(PipelineError::MaskProviderUnavailable {
                 provider: provider.clone(),
@@ -627,7 +698,13 @@ fn mask_leaf_weight(
     Ok(weight.clamp(0.0, 1.0))
 }
 
-fn mask_weight(mask: &MaskTree, x: f32, y: f32, rgb: LinearRgb) -> Result<f32, PipelineError> {
+fn mask_weight(
+    mask: &MaskTree,
+    x: f32,
+    y: f32,
+    rgb: LinearRgb,
+    portrait_masks: &[PortraitMaskRaster],
+) -> Result<f32, PipelineError> {
     if !x.is_finite()
         || !y.is_finite()
         || !rgb.r.is_finite()
@@ -639,22 +716,22 @@ fn mask_weight(mask: &MaskTree, x: f32, y: f32, rgb: LinearRgb) -> Result<f32, P
         ));
     }
     match mask {
-        MaskTree::Leaf(leaf) => mask_leaf_weight(leaf, x, y, rgb),
+        MaskTree::Leaf(leaf) => mask_leaf_weight(leaf, x, y, rgb, portrait_masks),
         MaskTree::Composite(composite) => {
             let mut children = composite.children.iter();
             let Some(first) = children.next() else {
                 return Ok(0.0);
             };
-            let first_weight = mask_weight(first, x, y, rgb)?;
+            let first_weight = mask_weight(first, x, y, rgb, portrait_masks)?;
             match composite.operation {
                 MaskOperation::Add => children.try_fold(first_weight, |value, child| {
-                    Ok(value.max(mask_weight(child, x, y, rgb)?))
+                    Ok(value.max(mask_weight(child, x, y, rgb, portrait_masks)?))
                 }),
                 MaskOperation::Subtract => children.try_fold(first_weight, |value, child| {
-                    Ok(value * (1.0 - mask_weight(child, x, y, rgb)?))
+                    Ok(value * (1.0 - mask_weight(child, x, y, rgb, portrait_masks)?))
                 }),
                 MaskOperation::Intersect => children.try_fold(first_weight, |value, child| {
-                    Ok(value.min(mask_weight(child, x, y, rgb)?))
+                    Ok(value.min(mask_weight(child, x, y, rgb, portrait_masks)?))
                 }),
                 MaskOperation::Invert => Ok(1.0 - first_weight),
             }
@@ -667,6 +744,7 @@ fn apply_layers(
     layers: &[NativeAdjustmentLayer],
     x: f32,
     y: f32,
+    portrait_masks: &[PortraitMaskRaster],
 ) -> Result<LinearRgb, PipelineError> {
     for layer in layers {
         if !layer.enabled {
@@ -700,7 +778,7 @@ fn apply_layers(
         );
         // M14 deliberately supports only Normal. Any future mode must earn an explicit
         // scene-linear implementation rather than quietly behaving like Normal.
-        let weight = layer.opacity * mask_weight(&layer.mask, x, y, rgb)?;
+        let weight = layer.opacity * mask_weight(&layer.mask, x, y, rgb, portrait_masks)?;
         rgb = LinearRgb {
             r: rgb.r + (adjusted.r - rgb.r) * weight,
             g: rgb.g + (adjusted.g - rgb.g) * weight,
@@ -768,7 +846,7 @@ fn apply_creative_graph(
         rgb = apply_grading(rgb, settings.grading);
         let x = (index % width) as f32 / width.max(1) as f32;
         let y = (index / width) as f32 / height.max(1) as f32;
-        rgb = apply_layers(rgb, &settings.layers, x, y)?;
+        rgb = apply_layers(rgb, &settings.layers, x, y, &settings.portrait_masks)?;
         if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
             return Err(PipelineError::InvalidDecodedBuffer);
         }
@@ -1224,10 +1302,11 @@ mod tests {
             &[brighten.clone(), contrast_half.clone()],
             0.5,
             0.5,
+            &[],
         )
         .expect("layers");
-        let reversed =
-            apply_layers(initial, &[contrast_half, brighten], 0.5, 0.5).expect("reversed layers");
+        let reversed = apply_layers(initial, &[contrast_half, brighten], 0.5, 0.5, &[])
+            .expect("reversed layers");
         assert!(output.r.is_finite() && output.g.is_finite() && output.b.is_finite());
         assert!(
             (output.r - reversed.r).abs() > 0.01,
@@ -1255,7 +1334,8 @@ mod tests {
                 },
                 &[invalid.clone()],
                 0.5,
-                0.5
+                0.5,
+                &[],
             ),
             Err(PipelineError::InvalidLayer { .. })
         ));
@@ -1270,7 +1350,8 @@ mod tests {
                 },
                 &[invalid],
                 0.5,
-                0.5
+                0.5,
+                &[],
             ),
             Err(PipelineError::InvalidLayer { .. })
         ));
@@ -1311,6 +1392,7 @@ mod tests {
                 g: 0.3,
                 b: 0.3,
             },
+            &[],
         )
         .expect("mask");
         let edge = mask_weight(
@@ -1322,6 +1404,7 @@ mod tests {
                 g: 0.3,
                 b: 0.3,
             },
+            &[],
         )
         .expect("mask");
         assert!(center < 0.01);
@@ -1345,8 +1428,8 @@ mod tests {
             operation: MaskOperation::Invert,
             children: vec![luminance.clone().into()],
         });
-        let selected = mask_weight(&luminance.into(), 0.5, 0.5, rgb).expect("luma");
-        let inverse = mask_weight(&inverted, 0.5, 0.5, rgb).expect("inverse");
+        let selected = mask_weight(&luminance.into(), 0.5, 0.5, rgb, &[]).expect("luma");
+        let inverse = mask_weight(&inverted, 0.5, 0.5, rgb, &[]).expect("inverse");
         assert!((selected + inverse - 1.0).abs() < 1.0e-5);
         let color = MaskDefinition::ColorRange {
             reference: [0.4, 0.4, 0.4],
@@ -1354,7 +1437,7 @@ mod tests {
             feather: 0.1,
             invert: false,
         };
-        assert!(mask_weight(&color.into(), 0.5, 0.5, rgb).expect("color") > 0.99);
+        assert!(mask_weight(&color.into(), 0.5, 0.5, rgb, &[]).expect("color") > 0.99);
     }
 
     #[test]
@@ -1373,7 +1456,8 @@ mod tests {
                     r: 0.2,
                     g: 0.2,
                     b: 0.2
-                }
+                },
+                &[],
             ),
             Err(PipelineError::MaskProviderUnavailable { .. })
         ));
@@ -1410,10 +1494,47 @@ mod tests {
             g: 0.2,
             b: 0.2,
         };
-        let center = apply_layers(source, std::slice::from_ref(&layer), 0.5, 0.5).expect("center");
-        let outside = apply_layers(source, &[layer], 0.0, 0.0).expect("outside");
+        let center =
+            apply_layers(source, std::slice::from_ref(&layer), 0.5, 0.5, &[]).expect("center");
+        let outside = apply_layers(source, &[layer], 0.0, 0.0, &[]).expect("outside");
         assert!(center.r > source.r * 1.8);
         assert!((outside.r - source.r).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn m16_portrait_semantic_leaf_uses_native_cache_and_m15_boolean_algebra() {
+        let leaf: MaskTree = MaskDefinition::PortraitSemantic {
+            face_id: "face-1".into(),
+            region: PortraitMaskRegion::Skin,
+            threshold: 0.5,
+            feather: 0.0,
+            model_id: "parser".into(),
+            model_version: "pin".into(),
+            model_hash: "a".repeat(64),
+            cache_key: "parse-1".into(),
+        }
+        .into();
+        let raster = PortraitMaskRaster {
+            cache_key: "parse-1".into(),
+            face_id: "face-1".into(),
+            region: PortraitMaskRegion::Skin,
+            width: 2,
+            height: 1,
+            values: vec![1.0, 0.0],
+        };
+        let rgb = LinearRgb {
+            r: 0.2,
+            g: 0.2,
+            b: 0.2,
+        };
+        assert!(
+            mask_weight(&leaf, 0.0, 0.0, rgb, std::slice::from_ref(&raster)).expect("cache") > 0.99
+        );
+        assert!(mask_weight(&leaf, 1.0, 0.0, rgb, &[raster]).expect("cache") < 0.01);
+        assert!(matches!(
+            mask_weight(&leaf, 0.0, 0.0, rgb, &[]),
+            Err(PipelineError::MaskProviderUnavailable { .. })
+        ));
     }
 
     #[test]

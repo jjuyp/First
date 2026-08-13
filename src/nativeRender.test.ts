@@ -124,4 +124,15 @@ describe('native preview contract', () => {
     expect(settings.geometry.fourPoint?.topLeft).toEqual({ x: .08, y: .04 })
     expect(settings.geometry.fourPoint?.topRight).toEqual({ x: .93, y: .09 })
   })
+
+  it('transports a compact M16 portrait cache reference, never semantic pixels', () => {
+    const layers = [{ id: 'portrait-skin', name: 'Portrait skin', enabled: true, opacity: 1, blendMode: 'normal' as const,
+      mask: { type: 'portraitSemantic' as const, faceId: 'face-123', region: 'skin' as const, threshold: .55, feather: .08,
+        modelId: 'yakhyo/face-parsing-bisenet-resnet18', modelVersion: '8a4729d', modelHash: 'a'.repeat(64), cacheKey: 'face-123:crop' },
+      adjustments: { tone: { exposureEv: .3, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } } }]
+    const settings = toNativeSettings(defaultAdjustments, [], 'sourceDefault', null,
+      { master: [], red: [], green: [], blue: [] }, undefined, layers)
+    expect(settings.layers[0].mask).toMatchObject({ type: 'portraitSemantic', cacheKey: 'face-123:crop', region: 'skin' })
+    expect(JSON.stringify(settings)).not.toContain('values')
+  })
 })

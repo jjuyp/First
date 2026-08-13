@@ -9,18 +9,23 @@ use starroom_imageio::{
 };
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
-    NativeAdjustmentLayer, RelativeColorParameters, RenderSettings, ToneCurveSet, WhiteBalanceMode,
-    WhiteBalanceSample, WhiteBalanceSettings, render_source_export_to_srgb8,
-    render_source_preview_to_srgb8, render_source_preview_with_gpu_to_srgb8,
-    resolve_source_lens_profile, sample_source_color_band,
+    NativeAdjustmentLayer, PortraitMaskRaster, RelativeColorParameters, RenderSettings,
+    ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample, WhiteBalanceSettings,
+    render_source_export_to_srgb8, render_source_preview_to_srgb8,
+    render_source_preview_with_gpu_to_srgb8, resolve_source_lens_profile, sample_source_color_band,
 };
+use starroom_portrait::{
+    DetectedFace, PortraitError, PortraitModelRegistry, PortraitOnnxProvider, PortraitParseResult,
+    PortraitRegion,
+};
+use starroom_project::{MaskDefinition, MaskTree, PortraitMaskRegion};
 use starroom_render::{
     RenderGraph,
     gpu::{GpuBackendKind, GpuRenderer, GpuStatus, probe_gpu_status},
     scheduler::{Completion, DEFAULT_TILE_EDGE, RenderScheduler, SchedulerStatus, Viewport},
 };
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::{collections::BTreeMap, sync::Mutex};
 use tauri::State;
 use tauri::ipc::Response;
 
@@ -346,6 +351,87 @@ struct NativePreviewRequest {
 /// identities; the immutable source image remains on disk and full export never reads this cache.
 struct NativePreviewScheduler(Mutex<RenderScheduler>);
 
+/// Process-local M16 model/session and soft-mask cache. It never crosses the Tauri boundary:
+/// IPC transports face geometry and a compact cache reference, while Preview/Export resolve the
+/// source-space R16Float-compatible mask in the Native shared graph.
+struct NativePortraitRuntime(Mutex<PortraitRuntimeState>);
+
+#[derive(Default)]
+struct PortraitRuntimeState {
+    provider: Option<PortraitOnnxProvider>,
+    parsed: BTreeMap<String, PortraitParseResult>,
+}
+
+impl Default for NativePortraitRuntime {
+    fn default() -> Self {
+        Self(Mutex::new(PortraitRuntimeState::default()))
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PortraitFailure {
+    code: &'static str,
+    message: String,
+}
+
+impl From<PortraitError> for PortraitFailure {
+    fn from(value: PortraitError) -> Self {
+        let code = match value {
+            PortraitError::DetectorModelMissing { .. } => "detectorModelMissing",
+            PortraitError::ParserModelMissing { .. } => "parserModelMissing",
+            PortraitError::ModelHashMismatch { .. } => "modelHashMismatch",
+            PortraitError::RuntimeUnavailable(_) => "runtimeUnavailable",
+            PortraitError::DetectorInitializationFailed(_) => "detectorInitializationFailed",
+            PortraitError::ParserInitializationFailed(_) => "parserInitializationFailed",
+            PortraitError::DetectionFailed(_) => "detectionFailed",
+            PortraitError::ParsingFailed(_) => "parsingFailed",
+            PortraitError::InvalidDetectionOutput(_) => "invalidDetectionOutput",
+            PortraitError::InvalidParsingOutput(_) => "invalidParsingOutput",
+            PortraitError::NoFaceDetected => "noFaceDetected",
+            PortraitError::InvalidTransform(_) => "invalidTransform",
+            PortraitError::UnsupportedExecutionProvider(_) => "unsupportedExecutionProvider",
+        };
+        Self {
+            code,
+            message: value.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PortraitFaceResponse {
+    face: DetectedFace,
+    cache_key: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PortraitDetectionResponse {
+    status: &'static str,
+    faces: Vec<PortraitFaceResponse>,
+    detector_model_id: String,
+    detector_model_version: String,
+    detector_model_hash: String,
+    parser_model_id: String,
+    parser_model_version: String,
+    parser_model_hash: String,
+    error: Option<PortraitFailure>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PortraitDetectRequest {
+    source_path: PathBuf,
+    #[serde(default = "default_face_crop_scale")]
+    face_crop_scale: f32,
+}
+
+const fn default_face_crop_scale() -> f32 {
+    1.4
+}
+
 impl Default for NativePreviewScheduler {
     fn default() -> Self {
         Self(Mutex::new(RenderScheduler::default()))
@@ -465,6 +551,201 @@ fn source_dimensions(decoded: &DecodedSourceImage) -> (u32, u32) {
     }
 }
 
+fn local_portrait_models() -> PortraitModelRegistry {
+    let root = std::env::var_os("STARROOM_LOCAL_MODELS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("models").join("local"));
+    PortraitModelRegistry::local_default(root)
+}
+
+fn source_rgba_for_portrait(path: &Path) -> Result<(u32, u32, Vec<u8>, String), PortraitError> {
+    // M16 identity is source-image space, never the M13 preview-pyramid size.
+    let decoded = decode_source(path)
+        .map_err(|error| PortraitError::DetectionFailed(format!("source decode: {error}")))?;
+    let rendered =
+        render_source_export_to_srgb8(&decoded, &RenderSettings::default()).map_err(|error| {
+            PortraitError::DetectionFailed(format!("source display transform: {error}"))
+        })?;
+    let mut rgba = Vec::with_capacity(rendered.width as usize * rendered.height as usize * 4);
+    for rgb in rendered.data.chunks_exact(3) {
+        rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+    }
+    let identity = preview_source_identity(path).map_err(PortraitError::DetectionFailed)?;
+    Ok((rendered.width, rendered.height, rgba, identity))
+}
+
+fn project_region(region: PortraitRegion) -> PortraitMaskRegion {
+    match region {
+        PortraitRegion::Face => PortraitMaskRegion::Face,
+        PortraitRegion::Skin => PortraitMaskRegion::Skin,
+        PortraitRegion::Eyes => PortraitMaskRegion::Eyes,
+        PortraitRegion::LeftEye => PortraitMaskRegion::LeftEye,
+        PortraitRegion::RightEye => PortraitMaskRegion::RightEye,
+        PortraitRegion::Brows => PortraitMaskRegion::Brows,
+        PortraitRegion::LeftBrow => PortraitMaskRegion::LeftBrow,
+        PortraitRegion::RightBrow => PortraitMaskRegion::RightBrow,
+        PortraitRegion::Lips => PortraitMaskRegion::Lips,
+        PortraitRegion::Mouth => PortraitMaskRegion::Mouth,
+        PortraitRegion::Hair => PortraitMaskRegion::Hair,
+    }
+}
+
+fn collect_portrait_mask_references(
+    tree: &MaskTree,
+    values: &mut Vec<(String, String, PortraitMaskRegion)>,
+) {
+    match tree {
+        MaskTree::Leaf(MaskDefinition::PortraitSemantic {
+            face_id,
+            region,
+            cache_key,
+            ..
+        }) => values.push((cache_key.clone(), face_id.clone(), *region)),
+        MaskTree::Leaf(_) => {}
+        MaskTree::Composite(composite) => {
+            for child in &composite.children {
+                collect_portrait_mask_references(child, values);
+            }
+        }
+    }
+}
+
+fn attach_portrait_masks(
+    settings: &mut RenderSettings,
+    runtime: &NativePortraitRuntime,
+) -> Result<(), String> {
+    let mut references = Vec::new();
+    for layer in &settings.layers {
+        collect_portrait_mask_references(&layer.mask, &mut references);
+    }
+    if references.is_empty() {
+        return Ok(());
+    }
+    let state = runtime
+        .0
+        .lock()
+        .map_err(|_| "portrait runtime lock was poisoned".to_owned())?;
+    for (cache_key, face_id, region) in references {
+        let parse = state
+            .parsed
+            .get(&cache_key)
+            .ok_or_else(|| format!("portrait semantic cache is unavailable: {cache_key}"))?;
+        let source_region = match region {
+            PortraitMaskRegion::Face => PortraitRegion::Face,
+            PortraitMaskRegion::Skin => PortraitRegion::Skin,
+            PortraitMaskRegion::Eyes => PortraitRegion::Eyes,
+            PortraitMaskRegion::LeftEye => PortraitRegion::LeftEye,
+            PortraitMaskRegion::RightEye => PortraitRegion::RightEye,
+            PortraitMaskRegion::Brows => PortraitRegion::Brows,
+            PortraitMaskRegion::LeftBrow => PortraitRegion::LeftBrow,
+            PortraitMaskRegion::RightBrow => PortraitRegion::RightBrow,
+            PortraitMaskRegion::Lips => PortraitRegion::Lips,
+            PortraitMaskRegion::Mouth => PortraitRegion::Mouth,
+            PortraitMaskRegion::Hair => PortraitRegion::Hair,
+        };
+        let mask = parse
+            .regions
+            .get(&source_region)
+            .ok_or_else(|| format!("portrait semantic region is unavailable: {cache_key}"))?;
+        settings.portrait_masks.push(PortraitMaskRaster {
+            cache_key,
+            face_id,
+            region,
+            width: mask.width,
+            height: mask.height,
+            values: mask.values.clone(),
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn portrait_detect(
+    runtime: State<'_, NativePortraitRuntime>,
+    request: PortraitDetectRequest,
+) -> PortraitDetectionResponse {
+    let registry = local_portrait_models();
+    let response_shell = |status, error: Option<PortraitError>| PortraitDetectionResponse {
+        status,
+        faces: Vec::new(),
+        detector_model_id: registry.detector.id.clone(),
+        detector_model_version: registry.detector.version.clone(),
+        detector_model_hash: registry.detector.sha256.clone(),
+        parser_model_id: registry.parser.id.clone(),
+        parser_model_version: registry.parser.version.clone(),
+        parser_model_hash: registry.parser.sha256.clone(),
+        error: error.map(Into::into),
+    };
+    if !request.face_crop_scale.is_finite() || !(1.0..=3.0).contains(&request.face_crop_scale) {
+        return response_shell(
+            "failed",
+            Some(PortraitError::InvalidTransform(
+                "face crop scale must be 1.0..3.0".into(),
+            )),
+        );
+    }
+    let (width, height, rgba, source_identity) =
+        match source_rgba_for_portrait(&request.source_path) {
+            Ok(value) => value,
+            Err(error) => return response_shell("failed", Some(error)),
+        };
+    let mut state = match runtime.0.lock() {
+        Ok(state) => state,
+        Err(_) => {
+            return response_shell(
+                "failed",
+                Some(PortraitError::RuntimeUnavailable(
+                    "portrait runtime lock was poisoned".into(),
+                )),
+            );
+        }
+    };
+    if state.provider.is_none() {
+        match PortraitOnnxProvider::initialize(registry.clone()) {
+            Ok(provider) => state.provider = Some(provider),
+            Err(error) => return response_shell("unavailable", Some(error)),
+        }
+    }
+    let provider = state.provider.as_mut().expect("initialized above");
+    let faces = match provider.detect(
+        width,
+        height,
+        &rgba,
+        request.face_crop_scale,
+        &source_identity,
+    ) {
+        Ok(value) => value,
+        Err(PortraitError::NoFaceDetected) => {
+            return response_shell("noFace", Some(PortraitError::NoFaceDetected));
+        }
+        Err(error) => return response_shell("failed", Some(error)),
+    };
+    let mut response_faces = Vec::with_capacity(faces.len());
+    for face in faces {
+        let parsed = match provider.parse(width, height, &rgba, &face, &source_identity) {
+            Ok(value) => value,
+            Err(error) => return response_shell("failed", Some(error)),
+        };
+        let cache_key = format!(
+            "{}:{}",
+            parsed.cache_key.face_id, parsed.cache_key.crop_transform_hash
+        );
+        state.parsed.insert(cache_key.clone(), parsed);
+        response_faces.push(PortraitFaceResponse { face, cache_key });
+    }
+    PortraitDetectionResponse {
+        status: "ready",
+        faces: response_faces,
+        detector_model_id: registry.detector.id,
+        detector_model_version: registry.detector.version,
+        detector_model_hash: registry.detector.sha256,
+        parser_model_id: registry.parser.id,
+        parser_model_version: registry.parser.version,
+        parser_model_hash: registry.parser.sha256,
+        error: None,
+    }
+}
+
 /// Explicit M13 diagnostics for progressive preview scheduling. The UI can expose cache and
 /// stale-frame statistics without receiving pixels through JSON.
 #[tauri::command]
@@ -481,11 +762,13 @@ fn native_preview_scheduler_status(
 #[tauri::command]
 fn native_preview(
     scheduler: State<'_, NativePreviewScheduler>,
+    portrait_runtime: State<'_, NativePortraitRuntime>,
     request: NativePreviewRequest,
 ) -> Result<Response, String> {
     let graph_identity = serde_json::to_string(&request.settings)
         .map_err(|error| format!("native preview graph identity serialization failed: {error}"))?;
-    let settings = request.settings.validated()?;
+    let mut settings = request.settings.validated()?;
+    attach_portrait_masks(&mut settings, &portrait_runtime)?;
     let requested_edge = request.max_edge.clamp(256, 4096);
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
     let decoded = decode_source_preview(&request.source_path, level.max_edge())
@@ -572,11 +855,15 @@ fn same_file(left: &Path, right: &Path) -> bool {
 }
 
 #[tauri::command]
-fn native_export_jpeg(request: NativeExportRequest) -> Result<NativeExportResult, String> {
+fn native_export_jpeg(
+    portrait_runtime: State<'_, NativePortraitRuntime>,
+    request: NativeExportRequest,
+) -> Result<NativeExportResult, String> {
     if same_file(&request.source_path, &request.output_path) {
         return Err("export destination must not overwrite the source image".into());
     }
-    let settings = request.settings.validated()?;
+    let mut settings = request.settings.validated()?;
+    attach_portrait_masks(&mut settings, &portrait_runtime)?;
     let decoded = decode_source(&request.source_path)
         .map_err(|error| format!("native export decode failed: {error}"))?;
     let rendered = render_source_export_to_srgb8(&decoded, &settings)
@@ -619,6 +906,7 @@ fn native_export_jpeg(request: NativeExportRequest) -> Result<NativeExportResult
 pub fn run() {
     tauri::Builder::default()
         .manage(NativePreviewScheduler::default())
+        .manage(NativePortraitRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             engine_status,
@@ -628,6 +916,7 @@ pub fn run() {
             native_preview,
             native_preview_scheduler_status,
             native_export_jpeg,
+            portrait_detect,
             native_sample_color,
             native_optics_status
         ])

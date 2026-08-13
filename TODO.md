@@ -1,5 +1,16 @@
 # Complete Internal Build Plan
 
+## M16 Portrait Detection / Semantic Mask Foundation (in progress)
+
+- [x] Pin local-only YuNet `face_detection_yunet_2026may.onnx` and BiSeNet **ResNet18** ONNX identities, SHA-256 verification and explicit source/license policy in `MODEL_PROVENANCE.md`.
+- [x] Implement Rust `ort` ModelRegistry/ModelSession with CPU and DirectML-requested provider paths, typed unavailable/init/hash/output errors and no cloud/browser fallback.
+- [x] Implement source-space YuNet multi-face decode, confidence/NMS, stable per-image geometry IDs, 1.4 square crop and eye-line inverse transform.
+- [x] Implement BiSeNet 512 RGB/mean/std/CHW inference contract, soft-logit probabilities, semantic Face/Skin/Eyes/Brows/Lips/Mouth/Hair mapping and skin exclusions.
+- [x] Extend M15 `MaskTree` with compact serialized `portraitSemantic` leaves and resolve cached source R16Float-compatible rasters only in the Native shared Preview/Export graph.
+- [x] Add local Native portrait UI state, All Faces/individual face selection, detection status/error state and MaskTree leaf creation; do not add M17 retouch controls.
+- [ ] Complete mock/semantic/serialization/cache regressions, run the local frontend gates, push a focused M16 development commit and use GitHub Windows compile feedback to close the acceptance gate.
+- [ ] Do not start M17 until a dedicated M16 acceptance commit and Level 3 CI are green.
+
 ## Continuous M7-M11 acceptance (2026-08-12 specification)
 
 - [x] M7: Native eight-band Red/Orange/Yellow/Green/Cyan/Blue/Purple/Magenta OKLCh Color Mixer; H/C/L controls, circular overlap, hue-lock state, Native targeted sample, undo/serialization, Preview/Export shared stage and finite/HDR regressions.

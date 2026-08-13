@@ -18,6 +18,11 @@ export type NativeLensMatchMode = 'auto' | 'manual'
 export interface NativeOpticsState { matchMode: NativeLensMatchMode; manualIdentity: NativeLensIdentity | null }
 export interface NativeLensProfileResolution { status: 'autoMatched' | 'manualMatched' | 'missingMetadata' | 'unknownCamera' | 'unknownLens' | 'mountMismatch' | 'ambiguous'; profileId: string | null; databaseVersion: string; cameraMount: string | null; correction: unknown | null }
 export const defaultNativeOpticsState: NativeOpticsState = { matchMode: 'auto', manualIdentity: null }
+export type NativePortraitRegion = 'face' | 'skin' | 'eyes' | 'leftEye' | 'rightEye' | 'brows' | 'leftBrow' | 'rightBrow' | 'lips' | 'mouth' | 'hair'
+export interface NativePortraitLandmark { x: number; y: number; z: number }
+export interface NativePortraitFace { id: string; confidence: number; bounds: { left: number; top: number; right: number; bottom: number }; landmarks: NativePortraitLandmark[]; crop: { centerX: number; centerY: number; side: number; rotationDegrees: number } }
+export interface NativePortraitFailure { code: string; message: string }
+export interface NativePortraitDetection { status: 'ready' | 'noFace' | 'unavailable' | 'failed'; faces: Array<{ face: NativePortraitFace; cacheKey: string }>; detectorModelId: string; detectorModelVersion: string; detectorModelHash: string; parserModelId: string; parserModelVersion: string; parserModelHash: string; error: NativePortraitFailure | null }
 export type NativeMaskDefinition =
   | { type: 'none' }
   | { type: 'radial'; x: number; y: number; width: number; height: number; rotation: number; feather: number; invert: boolean }
@@ -25,6 +30,7 @@ export type NativeMaskDefinition =
   | { type: 'brush'; points: Array<{ x: number; y: number; pressure: number }>; radius: number; feather: number; flow: number; erase: boolean }
   | { type: 'luminance'; minimum: number; maximum: number; feather: number; invert: boolean }
   | { type: 'colorRange'; reference: [number, number, number]; tolerance: number; feather: number; invert: boolean }
+  | { type: 'portraitSemantic'; faceId: string; region: NativePortraitRegion; threshold: number; feather: number; modelId: string; modelVersion: string; modelHash: string; cacheKey: string }
 export type NativeMaskTree = NativeMaskDefinition | { operation: 'add' | 'subtract' | 'intersect' | 'invert'; children: NativeMaskTree[] }
 export interface NativeLayerAdjustments { tone: { exposureEv: number; contrast: number; highlights: number; shadows: number; whites: number; blacks: number } }
 export interface NativeAdjustmentLayer { id: string; name: string; enabled: boolean; opacity: number; blendMode: 'normal'; mask: NativeMaskTree; adjustments: NativeLayerAdjustments }
@@ -227,6 +233,12 @@ export async function chooseNativePhotoPaths(): Promise<string[]> {
     }],
   })
   return selected ? (Array.isArray(selected) ? selected : [selected]) : []
+}
+
+/** M16: all inference is local Rust/ONNX Runtime. This returns compact geometry/cache metadata,
+ * never parser pixels or image data through JSON. */
+export async function detectNativePortrait(sourcePath: string, faceCropScale = 1.4): Promise<NativePortraitDetection> {
+  return invoke<NativePortraitDetection>('portrait_detect', { request: { sourcePath, faceCropScale } })
 }
 
 export const nativeThumbnailUrl = (path: string) => convertFileSrc(path)

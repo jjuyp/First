@@ -2,23 +2,25 @@
 
 ## Current Milestone
 
-M15 accepted - Native mask tree and layer compositing. The typed, high-precision Rust evaluator
-is connected to M14 layers; do not begin M16 without a new explicit task.
+M16 in progress — local YuNet face detection and BiSeNet ResNet18 semantic portrait masks. M15
+remains the only compositing system: M16 contributes compact editable `PortraitSemantic` leaves
+and native cached values, then stops. Do not begin M17.
 
 ## Goal
 
-Masks are authoritative serialized edit state and render in the Native shared graph. React owns
-only drawing/interaction intent; it neither rasterizes nor composites a mask. Preview,
-Before/After and Export receive identical tree descriptions and use the same native R16Float
-semantic mask stage.
+Use fixed, local-only YuNet and BiSeNet ResNet18 ONNX models through Rust ONNX Runtime to create
+multi-face, source-coordinate, editable soft semantic masks. Preview/Before-After/Export resolve
+the same cached source R16Float-compatible mask through the M15 Native shared graph. React only
+presents compact face/cache references and interaction state; it never receives parser pixels or
+implements landmark, semantic or image math.
 
 ## Relevant modules
 
-- `crates/starroom-project` serializable `MaskTree` grammar
-- `crates/starroom-render` R16Float resource contract
-- `crates/starroom-pipeline` CPU reference mask evaluator and layer compositing
-- `src-tauri/src/lib.rs` native contract validation
-- `src/App.tsx` mask/layer interaction state only
+- `crates/starroom-portrait` fixed-model registry, ONNX sessions, YuNet/BiSeNet adapters
+- `crates/starroom-project` serializable `PortraitSemantic` MaskTree grammar
+- `crates/starroom-pipeline` native semantic-raster resolution and layer compositing
+- `src-tauri/src/lib.rs` local cache and compact native IPC
+- `src/nativeRender.ts`, `src/App.tsx` interaction/state presentation only
 
 ## Required files
 
@@ -28,30 +30,33 @@ semantic mask stage.
 - `docs/19_MODULE_DEPENDENCY_MAP.md`
 - `docs/20_OPEN_SOURCE_IMPLEMENTATION_MAP.md`
 - `docs/21_DEVELOPMENT_ACCELERATION.md`
+- `MODEL_PROVENANCE.md`
 
 ## Open-source decision
 
-No dependency is added for M15 expression-tree architecture. Starroom owns composable brush,
-linear and radial mask coordinates; it uses the existing R16Float wgpu resource contract and a
-native CPU reference for parity. Color/luminance sampling remains Rust-side.
+Integrate `ort 2.0.0-rc.10` as the single local ONNX Runtime adapter. YuNet is pinned and MIT
+approved. BiSeNet ResNet18 is pinned but local-only, non-commercial and must be reviewed before
+any public release. Neither weight is committed, packaged or supplied to CI. No cloud, telemetry,
+browser canvas or substitute model is permitted.
 
 ## Acceptance criteria
 
-- Native tree supports None, Brush, Linear, Radial and compositional Add/Subtract/Intersect;
-  invalid/provider-only masks are explicit errors, never invisible fallbacks.
-- Masks operate in oriented normalized image coordinates, preserve finite `0..1` weights and
-  blend into M14 layers identically for Preview/Before-After/Export.
-- UI can select and transform radial masks; native requests carry explicit mask intent.
-- Regression covers operation algebra, feather/invert, bounds, layer opacity and shared graph
-  parity. GPU R16Float allocation remains covered by the existing GPU resource contract.
+- YuNet returns validated multi-face bbox/confidence/five landmarks with per-image stable IDs.
+- BiSeNet uses the exact 512 RGB / normalization / CHW input and preserves soft probabilities
+  until source-mask refinement; Skin excludes eyes/brows/lips/hair/eyeglass semantics.
+- M15 Add/Subtract/Intersect/Invert can operate on a `PortraitSemantic` leaf. Missing native
+  cache/model is a typed error, never a transparent mask.
+- Detection/parse cache keys record source identity, model hash, face ID and crop transform.
+- UI provides detection status, All Faces/individual selection and semantic mask creation only;
+  it does not begin M17 retouch tools.
 
 ## Targeted tests
 
+- `npm.cmd run test:portrait`
 - `npm.cmd run test:masks`
-- `cargo test -p starroom-pipeline mask`
-- Native preview contract and shared graph Level 2 acceptance
+- Native preview/export contract and shared graph Level 2, then Level 3 acceptance
 
 ## Stop conditions
 
-M15 passed GitHub Windows Level 3 Full Acceptance run `31713812877`. Stop here: do not begin
-M16, merge `main`, force-push or make PR #2 ready.
+Do not begin M17, merge `main`, force-push, or make PR #2 ready. M16 is accepted only after its
+dedicated commit and GitHub Windows Level 3 Full Acceptance are green.

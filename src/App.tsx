@@ -17,7 +17,7 @@ import {
   chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
   nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
-  type NativeAdjustmentLayer, type NativeMaskDefinition,
+  detectNativePortrait, type NativeAdjustmentLayer, type NativeMaskDefinition, type NativePortraitDetection, type NativePortraitRegion,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -120,6 +120,12 @@ function LayerMaskControls({ mask, onChange }: { mask: NativeMaskDefinition; onC
     {number('Blue', mask.reference[2], (blue) => ({ ...mask, reference: [mask.reference[0], mask.reference[1], blue] }), { min: 0, max: 16 })}
     {number('Tolerance', mask.tolerance, (tolerance) => ({ ...mask, tolerance }), { min: 0, max: 16 })}{number('Feather', mask.feather, (feather) => ({ ...mask, feather }), { min: 0, max: 16 })}
     {invert(mask, (invert) => ({ ...mask, invert }))}
+  </div>
+  if (mask.type === 'portraitSemantic') return <div className="mask-controls portrait-mask-controls">
+    <small>Local semantic cache: {mask.faceId.slice(0, 13)}…</small>
+    {number('Threshold', mask.threshold, (threshold) => ({ ...mask, threshold }), { min: 0, max: 1, step: .01 })}
+    {number('Feather', mask.feather, (feather) => ({ ...mask, feather }), { min: 0, max: 1, step: .01 })}
+    <small>{mask.region} · {mask.modelVersion.slice(0, 8)}</small>
   </div>
   return null
 }
@@ -741,6 +747,8 @@ export function App() {
   const [mixerPicking, setMixerPicking] = useState(false)
   const [opticsStatus, setOpticsStatus] = useState<NativeLensProfileResolution | null>(null)
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null)
+  const [portraitDetection, setPortraitDetection] = useState<NativePortraitDetection | null>(null)
+  const [portraitFaceId, setPortraitFaceId] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -757,6 +765,8 @@ export function App() {
     setZoomScale(1)
     setPan({ x: 0, y: 0 })
     setOpticsStatus(null)
+    setPortraitDetection(null)
+    setPortraitFaceId(null)
   }
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
@@ -1014,6 +1024,38 @@ export function App() {
     }
   }
 
+  async function detectPortrait() {
+    if (!selected.sourcePath || selected.renderBackend !== 'native') {
+      setNotice('Portrait detection requires a Native photo; Browser fallback is not used.')
+      return
+    }
+    setRenderStatus('Local YuNet + BiSeNet detection…')
+    try {
+      const detection = await detectNativePortrait(selected.sourcePath)
+      setPortraitDetection(detection)
+      setPortraitFaceId(detection.faces[0]?.face.id ?? null)
+      const message = detection.status === 'ready' ? `${detection.faces.length} local face(s) detected` : detection.error?.message ?? 'No face detected'
+      setNotice(message)
+      setRenderStatus(detection.status === 'ready' ? 'Portrait masks ready in Native cache' : `Portrait ${detection.status}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Portrait detection failed')
+      setRenderStatus('Portrait detection failed')
+    }
+  }
+
+  function addPortraitMask(faceId: string, cacheKey: string, region: NativePortraitRegion) {
+    if (!portraitDetection) return
+    const layer = defaultLayer()
+    const label = region.replace(/([A-Z])/g, ' $1')
+    layer.name = `Portrait ${label}`
+    layer.mask = { type: 'portraitSemantic', faceId, region, threshold: .5, feather: .08,
+      modelId: portraitDetection.parserModelId, modelVersion: portraitDetection.parserModelVersion,
+      modelHash: portraitDetection.parserModelHash, cacheKey }
+    mutateLayers((layers) => [...layers, layer])
+    setSelectedLayerId(layer.id)
+    setNotice(`${layer.name} added as a Native MaskTree leaf`)
+  }
+
   function resetAdjustment(key: AdjustmentKey) {
     adjust(key, defaultAdjustments[key])
   }
@@ -1151,6 +1193,11 @@ export function App() {
               </div>}
               {tool === 'geometry' && !before && selected.adjustments.geometryFourPoint !== 0
                 && <FourPointOverlay values={selected.adjustments} onBeginEdit={beginInteractiveEdit} onAdjust={adjust} />}
+              {tool === 'masks' && !before && portraitDetection?.status === 'ready' && <div className="portrait-overlay" aria-label="Detected portrait regions">
+                {portraitDetection.faces.map(({ face }, index) => <button key={face.id} className={portraitFaceId === face.id ? 'selected' : ''}
+                  style={{ left: `${face.bounds.left * 100}%`, top: `${face.bounds.top * 100}%`, width: `${(face.bounds.right - face.bounds.left) * 100}%`, height: `${(face.bounds.bottom - face.bounds.top) * 100}%` }}
+                  onClick={() => setPortraitFaceId(face.id)}>Face {index + 1}</button>)}
+              </div>}
               <span className="preview-badge">{selected.renderBackend === 'native' ? 'Native CPU' : 'Browser fallback'} · {before ? 'Original' : hasPhotoEdits(selected) ? `${countPhotoEdits(selected)} edits` : 'Original'}</span>
             </div>
           </div>}
@@ -1169,12 +1216,25 @@ export function App() {
 
       <aside className="inspector-panel">
         <div className="histogram-wrap"><Histogram values={histogram} /><div><span>LIVE</span><span>{dimensions}</span><span>CPU</span></div></div>
+        <section className="portrait-panel" aria-label="Portrait masks">
+          <div className="layer-stack-head"><strong>Portrait</strong><button onClick={detectPortrait} disabled={selected.renderBackend !== 'native'}>Detect faces</button></div>
+          {selected.renderBackend !== 'native' && <small>Native image required. Browser fallback is intentionally unavailable.</small>}
+          {portraitDetection && <div className={`portrait-status status-${portraitDetection.status}`}>
+            <strong>{portraitDetection.status === 'ready' ? `${portraitDetection.faces.length} face(s)` : portraitDetection.status}</strong>
+            <small>{portraitDetection.error?.message ?? `YuNet ${portraitDetection.detectorModelVersion.slice(0, 8)} · BiSeNet ResNet18`}</small>
+          </div>}
+          {portraitDetection?.faces.map(({ face, cacheKey }, index) => <div className={portraitFaceId === face.id ? 'portrait-face selected' : 'portrait-face'} key={face.id}>
+            <button onClick={() => setPortraitFaceId(face.id)}>Face {index + 1} · {Math.round(face.confidence * 100)}%</button>
+            {portraitFaceId === face.id && <div className="portrait-regions">{(['face', 'skin', 'eyes', 'brows', 'lips', 'hair'] as NativePortraitRegion[]).map((region) =>
+              <button key={region} onClick={() => addPortraitMask(face.id, cacheKey, region)}>{region}</button>)}</div>}
+          </div>)}
+        </section>
         <section className="layer-stack" aria-label="Adjustment layers">
           <div className="layer-stack-head"><strong>Layers</strong><button onClick={addLayer}>+ Add</button></div>
           {selected.layers.length === 0 ? <small>No local adjustment layers</small> : selected.layers.map((layer, index) => <div className={selectedLayerId === layer.id ? 'layer-row selected' : 'layer-row'} key={layer.id} onClick={() => setSelectedLayerId(layer.id)}>
             <input aria-label={`Enable ${layer.name}`} type="checkbox" checked={layer.enabled} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, enabled: event.target.checked }))} />
             <input aria-label="Layer name" value={layer.name} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, name: event.target.value.slice(0, 80) || 'Adjustment layer' }))} />
-            <label>Mask <select aria-label="Layer mask type" value={'type' in layer.mask ? layer.mask.type : 'none'} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, mask: newMaskOfType(event.target.value as 'none' | 'radial' | 'linear' | 'brush' | 'luminance' | 'colorRange') }))}><option value="none">None</option><option value="radial">Radial</option><option value="linear">Linear</option><option value="brush">Brush</option><option value="luminance">Luminance</option><option value="colorRange">Color</option></select></label>
+            <label>Mask <select aria-label="Layer mask type" value={'type' in layer.mask ? layer.mask.type : 'none'} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, mask: newMaskOfType(event.target.value as 'none' | 'radial' | 'linear' | 'brush' | 'luminance' | 'colorRange') }))}><option value="none">None</option><option value="radial">Radial</option><option value="linear">Linear</option><option value="brush">Brush</option><option value="luminance">Luminance</option><option value="colorRange">Color</option><option value="portraitSemantic" disabled>Portrait (use Portrait panel)</option></select></label>
             <label>Opacity <input aria-label="Layer opacity" type="number" min="0" max="100" value={Math.round(layer.opacity * 100)} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, opacity: Math.max(0, Math.min(1, Number(event.target.value) / 100 || 0)) }))} /></label>
             <button aria-label="Move layer up" disabled={index === 0} onClick={() => moveLayer(layer.id, -1)}>↑</button><button aria-label="Move layer down" disabled={index === selected.layers.length - 1} onClick={() => moveLayer(layer.id, 1)}>↓</button>
             <button aria-label="Duplicate layer" onClick={() => duplicateLayer(layer.id)}>Copy</button><button aria-label="Delete layer" onClick={() => deleteLayer(layer.id)}>×</button>

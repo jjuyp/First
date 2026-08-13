@@ -74,6 +74,14 @@
 
 Record deviations, dependency-version changes, GPU/backend issues, camera exceptions, model substitutions, benchmarks and unresolved quality tradeoffs. Do not rewrite specification history to hide compromises.
 
+## 2026-08-14 M16 Portrait Detection implementation candidate
+
+- M16 adopts a real local `ort 2.0.0-rc.10` ONNX Runtime adapter rather than a trait-only face provider. It verifies exact SHA-256 values before opening the fixed OpenCV Zoo YuNet detector and yakhyo Face Parsing **BiSeNet ResNet18** parser. The requested DirectML provider is attempted first when selected; CPU session creation is explicit fallback. There is no cloud, telemetry, browser inference or synthetic output substitution.
+- YuNet output decoding validates named class/objectness/bbox/keypoint tensors, performs confidence/NMS multi-face selection and records normalized source bounds plus five landmarks. Stable IDs intentionally hash only this source identity and same-photo geometry; no biometric embedding or cross-photo recognition is created. The parser uses the required 512 RGB float `/255`, ImageNet mean/std and HWC-to-CHW contract, then turns logits into probabilities before semantic mapping.
+- Semantic masks are projected back through the stored square 1.4 crop and eye-line rotation into source image coordinates. `Skin` subtracts eyes/brows/lips/mouth/hair/eyeglass probability; all masks remain finite soft coverage. A compact M15 `PortraitSemantic` leaf records face ID, region, threshold/feather, parser id/version/hash and cache identity, while native runtime cache holds the source raster. Preview and export attach the same cache values to `RenderSettings`; no parser raster travels in Tauri JSON.
+- `MODEL_PROVENANCE.md` records YuNet as approved MIT and BiSeNet as **NON_COMMERCIAL_ONLY / REVIEW_REQUIRED_BEFORE_PUBLIC_RELEASE** due to its trained-model/data provenance. Both ONNX binaries remain in ignored `models/local/`, are not committed or CI-provisioned, and a no-model application exposes a typed unavailable state. Real model integration is therefore verified only on a deliberately provisioned local machine; public CI validates compiled adapter, mocks/semantic contracts and absence of model binaries.
+- Local frontend checks passed: ESLint, Vitest 28/28 and production TypeScript/Vite build. `cargo fmt --check` and locked metadata pass. This workstation still lacks MSVC `link.exe`, so the Rust compiler/Clippy/test acceptance must run on the authoritative GitHub Windows runner after the development commit; no M16 acceptance claim has yet been made.
+
 ## 2026-08-12 Development Acceleration Pass
 
 - Added executable Level 1/2/3 routing through `scripts/test-target.mjs`. The eleven named targets own explicit Rust commands, related Vitest files and Golden tags; Level 2 adds shared pipeline/render regressions plus lint/format/build, while Level 3 retains the complete former acceptance surface and JSON/package checks.
