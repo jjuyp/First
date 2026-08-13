@@ -3402,6 +3402,7 @@ name = "starroom-desktop"
 version = "0.2.0"
 dependencies = [
  "serde",
+ "serde_json",
  "starroom-advisor",
  "starroom-color",
  "starroom-color-management",
