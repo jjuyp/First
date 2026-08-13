@@ -686,8 +686,7 @@ fn mask_leaf_weight(
                     provider: format!("portrait semantic cache: {cache_key}"),
                 })?;
             let value = raster.weight_at(x, y)?;
-            let refined = smoothstep(*threshold - *feather, *threshold + *feather + 1.0e-5, value);
-            refined
+            smoothstep(*threshold - *feather, *threshold + *feather + 1.0e-5, value)
         }
         MaskDefinition::Provider { provider, .. } => {
             return Err(PipelineError::MaskProviderUnavailable {
