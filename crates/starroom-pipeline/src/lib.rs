@@ -112,6 +112,64 @@ pub struct ToneCurveSet {
     pub blue: Vec<CurvePoint>,
 }
 
+/// M14 native adjustment-layer intent. Layer math remains entirely in the shared Rust graph;
+/// the frontend transports only this small, serializable edit description.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum LayerBlendMode {
+    #[default]
+    Normal,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayerAdjustments {
+    #[serde(default)]
+    pub tone: ToneParameters,
+    #[serde(default)]
+    pub relative_color: RelativeColorParameters,
+    #[serde(default)]
+    pub curves: ToneCurveSet,
+    #[serde(default)]
+    pub color_mixer: ColorMixer,
+    #[serde(default)]
+    pub grading: GradingParameters,
+}
+
+impl Default for LayerAdjustments {
+    fn default() -> Self {
+        Self {
+            tone: ToneParameters::default(),
+            relative_color: RelativeColorParameters::default(),
+            curves: ToneCurveSet::default(),
+            color_mixer: ColorMixer::default(),
+            grading: GradingParameters::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAdjustmentLayer {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "layer_enabled")]
+    pub enabled: bool,
+    #[serde(default = "layer_opacity")]
+    pub opacity: f32,
+    #[serde(default)]
+    pub blend_mode: LayerBlendMode,
+    #[serde(default)]
+    pub adjustments: LayerAdjustments,
+}
+
+fn layer_enabled() -> bool {
+    true
+}
+fn layer_opacity() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderSettings {
     pub color_management: ColorManagementSettings,
@@ -131,6 +189,10 @@ pub struct RenderSettings {
     pub optics: OpticsSettings,
     #[serde(default)]
     pub geometry: GeometryParameters,
+    /// Evaluated after global creative adjustments and before detail/output. Layer order is the
+    /// vector order, which is part of the graph cache identity.
+    #[serde(default)]
+    pub layers: Vec<NativeAdjustmentLayer>,
 }
 
 impl Default for RenderSettings {
@@ -152,6 +214,7 @@ impl Default for RenderSettings {
             },
             optics: OpticsSettings::default(),
             geometry: GeometryParameters::default(),
+            layers: Vec::new(),
         }
     }
 }
@@ -177,6 +240,8 @@ pub enum PipelineError {
     },
     #[error("neutral-picker sample is missing or invalid")]
     InvalidWhiteBalanceSample,
+    #[error("adjustment layer {id} is invalid: {reason}")]
+    InvalidLayer { id: String, reason: &'static str },
     #[error("GPU acceleration failed: {0}")]
     Gpu(#[from] GpuError),
     #[error(transparent)]
@@ -377,6 +442,86 @@ fn apply_curve(rgb: LinearRgb, legacy: &[CurvePoint], curves: &ToneCurveSet) -> 
     }
 }
 
+fn layer_is_finite(layer: &NativeAdjustmentLayer) -> bool {
+    let tone = layer.adjustments.tone;
+    let color = layer.adjustments.relative_color;
+    layer.opacity.is_finite()
+        && [
+            tone.exposure_ev,
+            tone.contrast,
+            tone.highlights,
+            tone.shadows,
+            tone.whites,
+            tone.blacks,
+            color.temperature,
+            color.tint,
+            color.vibrance,
+            color.saturation,
+        ]
+        .into_iter()
+        .all(f32::is_finite)
+        && [
+            &layer.adjustments.curves.master,
+            &layer.adjustments.curves.red,
+            &layer.adjustments.curves.green,
+            &layer.adjustments.curves.blue,
+        ]
+        .into_iter()
+        .flatten()
+        .all(|point| point.x.is_finite() && point.y.is_finite())
+}
+
+fn apply_layers(
+    mut rgb: LinearRgb,
+    layers: &[NativeAdjustmentLayer],
+) -> Result<LinearRgb, PipelineError> {
+    for layer in layers {
+        if !layer.enabled {
+            continue;
+        }
+        if !layer_is_finite(layer) {
+            return Err(PipelineError::InvalidLayer {
+                id: layer.id.clone(),
+                reason: "non-finite control",
+            });
+        }
+        if !(0.0..=1.0).contains(&layer.opacity) {
+            return Err(PipelineError::InvalidLayer {
+                id: layer.id.clone(),
+                reason: "opacity must be 0..1",
+            });
+        }
+        let adjusted = apply_grading(
+            apply_color_mixer(
+                apply_curve(
+                    apply_tone(
+                        apply_relative_color(rgb, layer.adjustments.relative_color),
+                        layer.adjustments.tone,
+                    ),
+                    &[],
+                    &layer.adjustments.curves,
+                ),
+                layer.adjustments.color_mixer,
+            ),
+            layer.adjustments.grading,
+        );
+        // M14 deliberately supports only Normal. Any future mode must earn an explicit
+        // scene-linear implementation rather than quietly behaving like Normal.
+        rgb = LinearRgb {
+            r: rgb.r + (adjusted.r - rgb.r) * layer.opacity,
+            g: rgb.g + (adjusted.g - rgb.g) * layer.opacity,
+            b: rgb.b + (adjusted.b - rgb.b) * layer.opacity,
+        };
+        if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
+            return Err(PipelineError::InvalidLayer {
+                id: layer.id.clone(),
+                reason: "produced non-finite output",
+            });
+        }
+    }
+    Ok(rgb)
+}
+
 fn apply_creative_graph(
     pixels: Vec<[f32; 3]>,
     settings: &RenderSettings,
@@ -425,6 +570,7 @@ fn apply_creative_graph(
         rgb = apply_curve(rgb, &settings.curve, &settings.curves);
         rgb = apply_color_mixer(rgb, settings.color_mixer);
         rgb = apply_grading(rgb, settings.grading);
+        rgb = apply_layers(rgb, &settings.layers)?;
         if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
             return Err(PipelineError::InvalidDecodedBuffer);
         }
@@ -830,6 +976,70 @@ mod tests {
             embedded_icc: None,
             exif: None,
         }
+    }
+
+    #[test]
+    fn m14_layers_apply_in_order_with_linear_normal_opacity() {
+        let initial = LinearRgb {
+            r: 0.18,
+            g: 0.18,
+            b: 0.18,
+        };
+        let brighten = NativeAdjustmentLayer {
+            id: "brighten".into(),
+            name: "Brighten".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: LayerBlendMode::Normal,
+            adjustments: LayerAdjustments {
+                tone: ToneParameters {
+                    exposure_ev: 1.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        };
+        let contrast_half = NativeAdjustmentLayer {
+            id: "contrast".into(),
+            name: "Contrast".into(),
+            enabled: true,
+            opacity: 0.5,
+            blend_mode: LayerBlendMode::Normal,
+            adjustments: LayerAdjustments {
+                tone: ToneParameters {
+                    contrast: 0.75,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        };
+        let output = apply_layers(initial, &[brighten.clone(), contrast_half.clone()]).expect("layers");
+        let reversed = apply_layers(initial, &[contrast_half, brighten]).expect("reversed layers");
+        assert!(output.r.is_finite() && output.g.is_finite() && output.b.is_finite());
+        assert!(
+            (output.r - reversed.r).abs() > 0.01,
+            "layer order is meaningful"
+        );
+    }
+
+    #[test]
+    fn m14_layer_rejects_invalid_opacity_and_non_finite_controls() {
+        let mut invalid = NativeAdjustmentLayer {
+            id: "bad".into(),
+            name: "Bad".into(),
+            enabled: true,
+            opacity: 1.2,
+            blend_mode: LayerBlendMode::Normal,
+            adjustments: LayerAdjustments::default(),
+        };
+        assert!(
+            matches!(apply_layers(LinearRgb { r: .2, g: .2, b: .2 }, &[invalid.clone()]), Err(PipelineError::InvalidLayer { .. }))
+        );
+        invalid.opacity = 1.0;
+        invalid.adjustments.tone.exposure_ev = f32::NAN;
+        assert!(
+            matches!(apply_layers(LinearRgb { r: .2, g: .2, b: .2 }, &[invalid]), Err(PipelineError::InvalidLayer { .. }))
+        );
     }
 
     #[test]

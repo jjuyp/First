@@ -22,6 +22,7 @@ This map is the fast routing layer for Codex and path-aware CI. Cargo manifests 
 | Shared graph | `starroom-pipeline` | color, CM, grading, detail, image I/O, RAW | **all targeted gates** |
 | Render/cache graph | `starroom-render` | stage dependency declarations | **all targeted gates** |
 | Preview pyramid / tiles | `starroom-render::scheduler`, Tauri preview request boundary | render graph halo/dependency contract, wgpu resource budget | `tiles`, `gpu`; shared graph at Level 2 |
+| Adjustment layers | `starroom-project` document model, `starroom-pipeline` native evaluator | typed tone/color/curve adapters | `layers`, shared graph; all image gates when blend/order changes |
 | Project state | `starroom-project` | core | **all targeted gates** when serialization/common adjustment schema changes |
 
 ## CI path policy

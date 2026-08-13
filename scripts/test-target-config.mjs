@@ -65,6 +65,11 @@ export const targets = {
     web: ['src/nativeRender.test.ts'],
     golden: ['raw', 'detail', 'geometry', 'portrait', 'landscape', 'hdr'],
   },
+  layers: {
+    rust: [['test', '--locked', '-p', 'starroom-pipeline', 'm14_layer'], ['test', '--locked', '-p', 'starroom-project', 'layer']],
+    web: ['src/nativeRender.test.ts', 'src/editorState.test.ts'],
+    golden: ['portrait', 'night', 'hdr'],
+  },
   masks: {
     rust: [['test', '--locked', '-p', 'starroom-project', 'mask'], ['test', '--locked', '-p', 'starroom-render']],
     web: ['src/editorState.test.ts'],

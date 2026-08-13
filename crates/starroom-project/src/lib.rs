@@ -11,6 +11,8 @@ pub enum ProjectError {
     Serialize(#[from] serde_json::Error),
     #[error("project file operation failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error("project layer stack is invalid: {0}")]
+    InvalidLayers(&'static str),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -397,7 +399,34 @@ pub struct AdjustmentLayer {
 }
 
 impl Project {
+    /// Validates the persisted non-destructive layer document. Rendering has a separate typed
+    /// request validation, but sidecars must never persist ambiguous order or invalid opacity.
+    pub fn validate_layers(&self) -> Result<(), ProjectError> {
+        let mut ids = std::collections::BTreeSet::new();
+        let mut orders = std::collections::BTreeSet::new();
+        for layer in &self.layers {
+            if layer.id.trim().is_empty() || !ids.insert(&layer.id) {
+                return Err(ProjectError::InvalidLayers(
+                    "ids must be non-empty and unique",
+                ));
+            }
+            if !layer.opacity.is_finite() || !(0.0..=1.0).contains(&layer.opacity) {
+                return Err(ProjectError::InvalidLayers(
+                    "opacity must be finite and 0..1",
+                ));
+            }
+            if !orders.insert(layer.order) {
+                return Err(ProjectError::InvalidLayers("order values must be unique"));
+            }
+            if layer.adjustments.values().any(|value| !value.is_finite()) {
+                return Err(ProjectError::InvalidLayers("adjustments must be finite"));
+            }
+        }
+        Ok(())
+    }
+
     pub fn write_sidecar(&self, path: impl AsRef<Path>) -> Result<(), ProjectError> {
+        self.validate_layers()?;
         let json = serde_json::to_vec_pretty(self)?;
         fs::write(path, json)?;
         Ok(())
@@ -502,6 +531,7 @@ mod tests {
         assert_eq!(restored.tone_curves.preset.as_deref(), Some("identity"));
         assert_eq!(restored.layers.len(), 1);
         assert_eq!(restored.layers[0].adjustments.get("exposure"), Some(&0.35));
+        assert!(restored.validate_layers().is_ok());
     }
 
     #[test]
@@ -564,5 +594,43 @@ mod tests {
         let restored: Project = serde_json::from_str(json).expect("deserialize old project");
         assert!(restored.layers.is_empty());
         assert!(restored.camera_profile.is_none());
+    }
+
+    #[test]
+    fn layers_reject_duplicate_identity_and_invalid_opacity() {
+        let layer = AdjustmentLayer {
+            id: "duplicate".into(),
+            name: "Layer".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            order: 0,
+            mask: MaskDefinition::None.into(),
+            adjustments: BTreeMap::new(),
+        };
+        let project = Project {
+            schema_version: 2,
+            engine_version: "0.2.0".into(),
+            source: SourceIdentity {
+                path: "fixture.jpg".into(),
+                content_hash: "hash".into(),
+                byte_length: 1,
+            },
+            global_adjustments: GlobalAdjustments::default(),
+            camera_profile: None,
+            white_balance: PersistedWhiteBalance::default(),
+            tone_curves: PersistedToneCurves::default(),
+            color_mixer: PersistedColorMixer::default(),
+            color_grading: PersistedColorGrading::default(),
+            detail: PersistedDetail::default(),
+            optics: PersistedOptics::default(),
+            geometry: PersistedGeometry::default(),
+            masks: vec![],
+            layers: vec![layer.clone(), layer],
+        };
+        assert!(matches!(
+            project.validate_layers(),
+            Err(ProjectError::InvalidLayers(_))
+        ));
     }
 }

@@ -17,6 +17,7 @@ import {
   chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
   nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
+  type NativeAdjustmentLayer,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -37,6 +38,7 @@ interface PhotoItem {
   whiteBalanceSample: NativeWhiteBalanceSample | null
   opticsState: NativeOpticsState
   mask: RadialMask
+  layers: NativeAdjustmentLayer[]
   history: EditSnapshot[]
   future: EditSnapshot[]
 }
@@ -49,6 +51,7 @@ interface EditSnapshot {
   whiteBalanceSample: NativeWhiteBalanceSample | null
   opticsState: NativeOpticsState
   mask: RadialMask
+  layers: NativeAdjustmentLayer[]
 }
 
 const defaultCurvePoints: ToneCurvePoint[] = [
@@ -63,26 +66,31 @@ const defaultMask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotatio
 const copyCurve = (points: ToneCurvePoint[]) => points.map((point) => ({ ...point }))
 const defaultCurveChannels = (): NativeToneCurves => ({ master: copyCurve(defaultCurvePoints), red: [], green: [], blue: [] })
 const copyCurveChannels = (curves: NativeToneCurves): NativeToneCurves => ({ master: copyCurve(curves.master), red: copyCurve(curves.red), green: copyCurve(curves.green), blue: copyCurve(curves.blue) })
+const defaultLayer = (): NativeAdjustmentLayer => ({ id: crypto.randomUUID(), name: 'Adjustment layer', enabled: true, opacity: 1, blendMode: 'normal', adjustments: { tone: { exposureEv: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } } })
+const copyLayers = (layers: NativeAdjustmentLayer[]) => layers.map((layer) => ({ ...layer, adjustments: { tone: { ...layer.adjustments.tone } } }))
 const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
   adjustments: { ...photo.adjustments }, curvePoints: copyCurve(photo.curvePoints), curveChannels: copyCurveChannels(photo.curveChannels), whiteBalanceMode: photo.whiteBalanceMode,
   whiteBalanceSample: photo.whiteBalanceSample ? { ...photo.whiteBalanceSample } : null, mask: { ...photo.mask },
   opticsState: { ...photo.opticsState, manualIdentity: photo.opticsState.manualIdentity ? { ...photo.opticsState.manualIdentity } : null },
+  layers: copyLayers(photo.layers),
 })
 const applySnapshot = (photo: PhotoItem, snapshot: EditSnapshot) => ({
   ...photo, adjustments: { ...snapshot.adjustments }, curvePoints: copyCurve(snapshot.curvePoints), curveChannels: copyCurveChannels(snapshot.curveChannels),
   whiteBalanceMode: snapshot.whiteBalanceMode, whiteBalanceSample: snapshot.whiteBalanceSample ? { ...snapshot.whiteBalanceSample } : null, mask: { ...snapshot.mask },
   opticsState: { ...snapshot.opticsState, manualIdentity: snapshot.opticsState.manualIdentity ? { ...snapshot.opticsState.manualIdentity } : null },
+  layers: copyLayers(snapshot.layers),
 })
 const hasCurveEdits = (points: ToneCurvePoint[]) => points.length !== defaultCurvePoints.length
   || points.some((point, index) => Math.abs(point.x - defaultCurvePoints[index].x) > .0001 || Math.abs(point.y - defaultCurvePoints[index].y) > .0001)
 const hasMaskGeometryEdits = (mask: RadialMask) => (Object.keys(defaultMask) as Array<keyof RadialMask>)
   .some((key) => Math.abs(mask[key] - defaultMask[key]) > .0001)
 const hasPhotoEdits = (photo: PhotoItem) => hasAdjustments(photo.adjustments) || hasCurveEdits(photo.curvePoints) || hasMaskGeometryEdits(photo.mask)
-  || photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity !== null
+  || photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity !== null || photo.layers.length > 0
 const countPhotoEdits = (photo: PhotoItem) => (Object.keys(defaultAdjustments) as AdjustmentKey[])
   .filter((key) => photo.adjustments[key] !== defaultAdjustments[key]).length
   + (hasCurveEdits(photo.curvePoints) ? 1 : 0) + (hasMaskGeometryEdits(photo.mask) ? 1 : 0)
   + (photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity ? 1 : 0)
+  + photo.layers.length
 
 const demoPhoto: PhotoItem = {
   id: 'starroom-demo',
@@ -98,6 +106,7 @@ const demoPhoto: PhotoItem = {
   whiteBalanceSample: null,
   opticsState: { ...defaultNativeOpticsState },
   mask: { ...defaultMask },
+  layers: [],
   history: [],
   future: [],
 }
@@ -412,7 +421,8 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
           if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
-            before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState)
+            before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
+            before ? [] : photo.layers)
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -472,7 +482,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
       window.clearTimeout(timeout)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
-    photo.mask, photo.opticsState, photo.renderBackend, photo.sourcePath, photo.src])
+    photo.mask, photo.opticsState, photo.layers, photo.renderBackend, photo.sourcePath, photo.src])
 
   useEffect(() => {
     const measure = () => canvasRef.current && setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -675,6 +685,7 @@ export function App() {
   const [mixerBand, setMixerBand] = useState('Red')
   const [mixerPicking, setMixerPicking] = useState(false)
   const [opticsStatus, setOpticsStatus] = useState<NativeLensProfileResolution | null>(null)
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -726,7 +737,7 @@ export function App() {
       objectUrls.current.add(src)
       return { id: crypto.randomUUID(), name: file.name, src, renderBackend: 'browserFallback', imported: true, rating: 0,
         adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null,
-        opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask }, history: [], future: [] }
+        opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask }, layers: [], history: [], future: [] }
     })
     setPhotos((current) => [...imported, ...current])
     selectPhoto(imported[0].id)
@@ -759,6 +770,7 @@ export function App() {
         whiteBalanceSample: null,
         opticsState: { ...defaultNativeOpticsState },
         mask: { ...defaultMask },
+        layers: [],
         history: [],
         future: [],
       }))
@@ -829,6 +841,48 @@ export function App() {
     updateSelected((photo) => ({ ...photo, curvePoints: curveChannel === 'master' ? copyCurve(points) : photo.curvePoints,
       curveChannels: { ...photo.curveChannels, [curveChannel]: copyCurve(points) }, future: [] }))
     setBefore(false)
+  }
+
+  function mutateLayers(mutator: (layers: NativeAdjustmentLayer[]) => NativeAdjustmentLayer[]) {
+    updateSelected((photo) => ({ ...photo, layers: mutator(copyLayers(photo.layers)), history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    setBefore(false)
+  }
+
+  function addLayer() {
+    const layer = defaultLayer()
+    mutateLayers((layers) => [...layers, layer])
+    setSelectedLayerId(layer.id)
+  }
+
+  function duplicateLayer(id: string) {
+    let duplicateId = ''
+    mutateLayers((layers) => layers.flatMap((layer) => {
+      if (layer.id !== id) return [layer]
+      const copy = { ...layer, id: crypto.randomUUID(), name: `${layer.name} copy`, adjustments: { tone: { ...layer.adjustments.tone } } }
+      duplicateId = copy.id
+      return [layer, copy]
+    }))
+    setSelectedLayerId(duplicateId)
+  }
+
+  function deleteLayer(id: string) {
+    mutateLayers((layers) => layers.filter((layer) => layer.id !== id))
+    setSelectedLayerId(null)
+  }
+
+  function updateLayer(id: string, mutate: (layer: NativeAdjustmentLayer) => NativeAdjustmentLayer) {
+    mutateLayers((layers) => layers.map((layer) => layer.id === id ? mutate(layer) : layer))
+  }
+
+  function moveLayer(id: string, direction: -1 | 1) {
+    mutateLayers((layers) => {
+      const index = layers.findIndex((layer) => layer.id === id)
+      const next = index + direction
+      if (index < 0 || next < 0 || next >= layers.length) return layers
+      const reordered = [...layers]
+      ;[reordered[index], reordered[next]] = [reordered[next], reordered[index]]
+      return reordered
+    })
   }
 
   function saveCurvePreset() {
@@ -933,6 +987,7 @@ export function App() {
     if (!hasPhotoEdits(selected)) return
     updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null,
       opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask },
+      layers: [],
       history: [...photo.history, takeSnapshot(photo)], future: [] }))
   }
 
@@ -947,7 +1002,7 @@ export function App() {
           return
         }
         const result = await exportNativeJpeg(selected.sourcePath, outputPath, selected.adjustments, selected.curvePoints, selected.mask,
-          selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState)
+          selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState, selected.layers)
         setNotice(`Native JPEG exported · ${result.width} × ${result.height} · ${result.inputProfile}`)
         setRenderStatus(`Native CPU · ${result.workingSpace}`)
         return
@@ -1059,6 +1114,17 @@ export function App() {
 
       <aside className="inspector-panel">
         <div className="histogram-wrap"><Histogram values={histogram} /><div><span>LIVE</span><span>{dimensions}</span><span>CPU</span></div></div>
+        <section className="layer-stack" aria-label="Adjustment layers">
+          <div className="layer-stack-head"><strong>Layers</strong><button onClick={addLayer}>+ Add</button></div>
+          {selected.layers.length === 0 ? <small>No local adjustment layers</small> : selected.layers.map((layer, index) => <div className={selectedLayerId === layer.id ? 'layer-row selected' : 'layer-row'} key={layer.id} onClick={() => setSelectedLayerId(layer.id)}>
+            <input aria-label={`Enable ${layer.name}`} type="checkbox" checked={layer.enabled} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, enabled: event.target.checked }))} />
+            <input aria-label="Layer name" value={layer.name} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, name: event.target.value.slice(0, 80) || 'Adjustment layer' }))} />
+            <label>Opacity <input aria-label="Layer opacity" type="number" min="0" max="100" value={Math.round(layer.opacity * 100)} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, opacity: Math.max(0, Math.min(1, Number(event.target.value) / 100 || 0)) }))} /></label>
+            <button aria-label="Move layer up" disabled={index === 0} onClick={() => moveLayer(layer.id, -1)}>↑</button><button aria-label="Move layer down" disabled={index === selected.layers.length - 1} onClick={() => moveLayer(layer.id, 1)}>↓</button>
+            <button aria-label="Duplicate layer" onClick={() => duplicateLayer(layer.id)}>Copy</button><button aria-label="Delete layer" onClick={() => deleteLayer(layer.id)}>×</button>
+            {selectedLayerId === layer.id && <label>Exposure <input aria-label="Layer exposure" type="number" min="-5" max="5" step=".05" value={layer.adjustments.tone.exposureEv} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, adjustments: { tone: { ...current.adjustments.tone, exposureEv: Math.max(-5, Math.min(5, Number(event.target.value) || 0)) } } }))} /></label>}
+          </div>)}
+        </section>
         <div className="tool-layout">
           <nav className="tool-rail" aria-label="Editing tools">{toolItems.map(({ id, label, icon: Icon }) => <button key={id}
             className={tool === id ? 'active' : ''} aria-label={label}

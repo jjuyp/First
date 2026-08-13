@@ -18,6 +18,8 @@ export type NativeLensMatchMode = 'auto' | 'manual'
 export interface NativeOpticsState { matchMode: NativeLensMatchMode; manualIdentity: NativeLensIdentity | null }
 export interface NativeLensProfileResolution { status: 'autoMatched' | 'manualMatched' | 'missingMetadata' | 'unknownCamera' | 'unknownLens' | 'mountMismatch' | 'ambiguous'; profileId: string | null; databaseVersion: string; cameraMount: string | null; correction: unknown | null }
 export const defaultNativeOpticsState: NativeOpticsState = { matchMode: 'auto', manualIdentity: null }
+export interface NativeLayerAdjustments { tone: { exposureEv: number; contrast: number; highlights: number; shadows: number; whites: number; blacks: number } }
+export interface NativeAdjustmentLayer { id: string; name: string; enabled: boolean; opacity: number; blendMode: 'normal'; adjustments: NativeLayerAdjustments }
 
 export interface NativeEditSettings {
   exposure: number
@@ -46,6 +48,7 @@ export interface NativeEditSettings {
     flipHorizontal: boolean; flipVertical: boolean; crop: { left: number; top: number; right: number; bottom: number };
     cropAspectWidth: number; cropAspectHeight: number; fourPoint: null | { topLeft: { x: number; y: number }; topRight: { x: number; y: number }; bottomRight: { x: number; y: number }; bottomLeft: { x: number; y: number } };
     uprightMode: 'off' | 'auto' | 'level' | 'vertical' | 'full' }
+  layers: NativeAdjustmentLayer[]
 }
 
 export interface NativePreviewResult {
@@ -89,7 +92,8 @@ export function assertNativeSupported(adjustments: Adjustments, mask: RadialMask
 export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint[],
   whiteBalanceMode: NativeWhiteBalanceMode = 'sourceDefault', whiteBalanceSample: NativeWhiteBalanceSample | null = null,
   toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] },
-  opticsState: NativeOpticsState = defaultNativeOpticsState): NativeEditSettings {
+  opticsState: NativeOpticsState = defaultNativeOpticsState,
+  layers: NativeAdjustmentLayer[] = []): NativeEditSettings {
   const bands: NativeColorBand[] = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'magenta']
   const title = (band: string) => `${band[0].toUpperCase()}${band.slice(1)}`
   const wheel = (zone: 'Global' | 'Shadows' | 'Midtones' | 'Highlights'): NativeColorWheel => ({
@@ -158,6 +162,7 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
       },
       uprightMode: (['off', 'auto', 'level', 'vertical', 'full'] as const)[Math.round(adjustments.geometryUpright)] ?? 'off',
     },
+    layers: layers.map((layer) => ({ ...layer, adjustments: { tone: { ...layer.adjustments.tone } } })),
   }
 }
 
@@ -218,11 +223,12 @@ export async function renderNativePreview(
   whiteBalanceSample: NativeWhiteBalanceSample | null = null,
   toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] },
   opticsState: NativeOpticsState = defaultNativeOpticsState,
+  layers: NativeAdjustmentLayer[] = [],
   maxEdge = 1800,
 ) {
   assertNativeSupported(adjustments, mask)
   const frame = await invoke<ArrayBuffer | Uint8Array>('native_preview', {
-    request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState) },
+    request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers) },
   })
   return parseNativePreviewFrame(frame)
 }
@@ -254,10 +260,11 @@ export async function exportNativeJpeg(
   whiteBalanceSample: NativeWhiteBalanceSample | null = null,
   toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] },
   opticsState: NativeOpticsState = defaultNativeOpticsState,
+  layers: NativeAdjustmentLayer[] = [],
 ) {
   assertNativeSupported(adjustments, mask)
   return invoke<NativeExportResult>('native_export_jpeg', {
-    request: { sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState) },
+    request: { sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers) },
   })
 }
 

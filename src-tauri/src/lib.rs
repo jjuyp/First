@@ -9,9 +9,10 @@ use starroom_imageio::{
 };
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
-    RelativeColorParameters, RenderSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
-    WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_to_srgb8,
-    render_source_preview_with_gpu_to_srgb8, resolve_source_lens_profile, sample_source_color_band,
+    NativeAdjustmentLayer, RelativeColorParameters, RenderSettings, ToneCurveSet, WhiteBalanceMode,
+    WhiteBalanceSample, WhiteBalanceSettings, render_source_export_to_srgb8,
+    render_source_preview_to_srgb8, render_source_preview_with_gpu_to_srgb8,
+    resolve_source_lens_profile, sample_source_color_band,
 };
 use starroom_render::{
     RenderGraph,
@@ -111,6 +112,8 @@ struct NativeEditSettings {
     optics: OpticsSettings,
     #[serde(default)]
     geometry: GeometryParameters,
+    #[serde(default)]
+    layers: Vec<NativeAdjustmentLayer>,
 }
 
 impl NativeEditSettings {
@@ -144,6 +147,17 @@ impl NativeEditSettings {
         }
         if self.curve.len() > 32 {
             return Err("native tone curve accepts at most 32 points".into());
+        }
+        if self.layers.len() > 64 {
+            return Err("native layer stack accepts at most 64 layers".into());
+        }
+        let mut layer_ids = std::collections::BTreeSet::new();
+        if self
+            .layers
+            .iter()
+            .any(|layer| layer.id.trim().is_empty() || !layer_ids.insert(&layer.id))
+        {
+            return Err("native layer identifiers must be unique and non-empty".into());
         }
         if !(30.0..=80.0).contains(&self.color_mixer.band_width_degrees)
             || self.color_mixer.bands.iter().any(|band| {
@@ -312,6 +326,7 @@ impl NativeEditSettings {
             sharpen: self.sharpen_settings,
             optics: self.optics,
             geometry: self.geometry,
+            layers: self.layers,
             ..Default::default()
         })
     }
@@ -652,6 +667,7 @@ mod tests {
             local_detail: LocalDetailParameters::default(),
             optics: OpticsSettings::default(),
             geometry: GeometryParameters::default(),
+            layers: Vec::new(),
         }
     }
 
@@ -688,6 +704,30 @@ mod tests {
     fn non_finite_settings_are_rejected_before_the_graph() {
         let mut settings = settings();
         settings.exposure = f32::NAN;
+        assert!(settings.validated().is_err());
+    }
+
+    #[test]
+    fn layer_contract_rejects_duplicate_ids_before_native_rendering() {
+        let mut settings = settings();
+        settings.layers = vec![
+            NativeAdjustmentLayer {
+                id: "same".into(),
+                name: "First".into(),
+                enabled: true,
+                opacity: 1.0,
+                blend_mode: Default::default(),
+                adjustments: Default::default(),
+            },
+            NativeAdjustmentLayer {
+                id: "same".into(),
+                name: "Second".into(),
+                enabled: true,
+                opacity: 1.0,
+                blend_mode: Default::default(),
+                adjustments: Default::default(),
+            },
+        ];
         assert!(settings.validated().is_err());
     }
 }

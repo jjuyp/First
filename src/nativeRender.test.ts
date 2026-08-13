@@ -43,6 +43,14 @@ describe('native preview contract', () => {
     expect(settings.colorMixer.bands).toHaveLength(8)
   })
 
+  it('transports ordered layer intent without calculating pixels in TypeScript', () => {
+    const layers = [{ id: 'lift', name: 'Lift foreground', enabled: true, opacity: .6, blendMode: 'normal' as const,
+      adjustments: { tone: { exposureEv: .75, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } } }]
+    const settings = toNativeSettings(defaultAdjustments, [], 'sourceDefault', null,
+      { master: [], red: [], green: [], blue: [] }, undefined, layers)
+    expect(settings.layers).toEqual(layers)
+  })
+
   it('never silently ignores edits outside the M1C native slice', () => {
     expect(() => assertNativeSupported({ ...defaultAdjustments, vignette: 10 }, defaultMask))
       .toThrow(/Browser fallback was not used/)
