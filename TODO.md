@@ -27,7 +27,7 @@
 - [x] Added typed Native layer intent with ordered Normal blend, enabled state, finite opacity validation and explicit rejection of malformed IDs before the shared graph runs.
 - [x] Native Preview, Before/After and Export now receive the same compact layer stack; stack evaluation occurs in linear working RGB after global creative controls and before Detail/output.
 - [x] Added UI add/delete/rename/duplicate/enable/reorder/opacity and per-layer Exposure operations with the existing reversible snapshot history; persisted project layers validate IDs, order, opacity and finite values before a sidecar write.
-- [x] Added native contract, pipeline order/finite and project persistence regressions plus `test:layers`. Windows Level 3 acceptance is pending; do not advance to M15 until green.
+- [x] Added native contract, pipeline order/finite and project persistence regressions plus `test:layers`. Windows Level 3 Full Acceptance run `31710577180` passed Web and Rust; M15 may begin.
 
 ## Product principle — Open-source Foundation First
 

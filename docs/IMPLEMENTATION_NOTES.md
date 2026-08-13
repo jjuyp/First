@@ -4,6 +4,7 @@
 - The M14 layer stack is Starroom-owned document/render architecture, not a new image-science replacement. `NativeAdjustmentLayer` carries only serializable intent; the Rust shared graph applies enabled Normal layers in order in linear Rec.2020 D65 and blends their own native creative result at finite `0..1` opacity before Detail/output.
 - Preview, Before/After and Export use the same Tauri `NativeEditSettings.layers` contract. Browser UI only mutates immutable layer intent and snapshot history; it does not evaluate an image or silently replace an unsupported blend mode.
 - Sidecar `AdjustmentLayer` records keep their established stable order/mask references and now reject duplicate identity/order, non-finite adjustment values and invalid opacity before write. M15 will connect the persisted mask tree to this layer evaluator; M14 intentionally does not pretend that an unimplemented spatial mask is active.
+- Windows Level 3 Full Acceptance run `31710577180` passed all Web and Rust checks after the M14 formatting and clippy corrections.
 
 ## 2026-08-13 M13 preview pyramid / scheduler candidate
 

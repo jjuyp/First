@@ -2,22 +2,23 @@
 
 ## Current Milestone
 
-M14 - Non-destructive adjustment layers. Build typed, ordered native layer evaluation and the
-layer-stack interaction surface before advancing to M15.
+M15 - Native mask tree and layer compositing. Replace the pre-M15 visual radial-mask interaction
+with a typed, high-precision Rust mask evaluator connected to M14 layers.
 
 ## Goal
 
-Layers are product architecture, so Starroom owns their ordering, opacity, persistence and undo
-semantics. The native shared graph evaluates enabled Normal layers in order; React only edits
-serializable layer intent and never calculates a pixel.
+Masks are authoritative serialized edit state and render in the Native shared graph. React owns
+only drawing/interaction intent; it neither rasterizes nor composites a mask. Preview,
+Before/After and Export receive identical tree descriptions and use the same native R16Float
+semantic mask stage.
 
 ## Relevant modules
 
-- `crates/starroom-project` persisted layer model and project compatibility
-- `crates/starroom-pipeline` native layer evaluator and shared preview/export graph
-- `src-tauri/src/lib.rs` compact native layer request contract
-- `src/App.tsx` layer interaction, project state and reversible history
-- `scripts/test-target-config.mjs` layer acceptance routing
+- `crates/starroom-project` serializable `MaskTree` grammar
+- `crates/starroom-render` R16Float resource contract
+- `crates/starroom-pipeline` CPU reference mask evaluator and layer compositing
+- `src-tauri/src/lib.rs` native contract validation
+- `src/App.tsx` mask/layer interaction state only
 
 ## Required files
 
@@ -30,27 +31,27 @@ serializable layer intent and never calculates a pixel.
 
 ## Open-source decision
 
-No mature external library owns Starroom's non-destructive layer document model. Use the existing
-serde-backed `starroom-project` model and native linear-light blend semantics. Do not introduce
-image math in TypeScript or substitute Browser Canvas for the shared graph.
+No dependency is added for M15 expression-tree architecture. Starroom owns composable brush,
+linear and radial mask coordinates; it uses the existing R16Float wgpu resource contract and a
+native CPU reference for parity. Color/luminance sampling remains Rust-side.
 
 ## Acceptance criteria
 
-- Ordered add/delete/rename/duplicate/enable/reorder/opacity operations persist and undo/redo.
-- Native Preview and Export receive the same compact layer-stack settings and evaluate active
-  Normal layers in order. Source pixels remain immutable.
-- Layer adjustment values are finite and typed; unsupported blend modes are explicit errors,
-  never silent substitutions.
-- Layer-state changes are reflected in render/cache identity and regressions cover order, opacity,
-  persistence and native preview/export parity.
+- Native tree supports None, Brush, Linear, Radial and compositional Add/Subtract/Intersect;
+  invalid/provider-only masks are explicit errors, never invisible fallbacks.
+- Masks operate in oriented normalized image coordinates, preserve finite `0..1` weights and
+  blend into M14 layers identically for Preview/Before-After/Export.
+- UI can select and transform radial masks; native requests carry explicit mask intent.
+- Regression covers operation algebra, feather/invert, bounds, layer opacity and shared graph
+  parity. GPU R16Float allocation remains covered by the existing GPU resource contract.
 
 ## Targeted tests
 
-- `npm.cmd run test:layers`
-- `cargo test -p starroom-pipeline layers`
-- Native request-contract Vitest and shared graph Level 2 acceptance
+- `npm.cmd run test:masks`
+- `cargo test -p starroom-pipeline mask`
+- Native preview contract and shared graph Level 2 acceptance
 
 ## Stop conditions
 
-After M14 local and GitHub acceptance, continue directly to M15. Never merge `main`, force-push
-or make PR #2 ready.
+After M15 local and GitHub acceptance, stop. Do not begin M16, merge `main`, force-push or make
+PR #2 ready.
