@@ -708,32 +708,42 @@ fn portrait_detect(
             Err(error) => return response_shell("unavailable", Some(error)),
         }
     }
-    let provider = state.provider.as_mut().expect("initialized above");
-    let faces = match provider.detect(
-        width,
-        height,
-        &rgba,
-        request.face_crop_scale,
-        &source_identity,
-    ) {
-        Ok(value) => value,
-        Err(PortraitError::NoFaceDetected) => {
-            return response_shell("noFace", Some(PortraitError::NoFaceDetected));
-        }
-        Err(error) => return response_shell("failed", Some(error)),
-    };
-    let mut response_faces = Vec::with_capacity(faces.len());
-    for face in faces {
-        let parsed = match provider.parse(width, height, &rgba, &face, &source_identity) {
+    let (response_faces, parsed_results, execution_provider) = {
+        let provider = state.provider.as_mut().expect("initialized above");
+        let faces = match provider.detect(
+            width,
+            height,
+            &rgba,
+            request.face_crop_scale,
+            &source_identity,
+        ) {
             Ok(value) => value,
+            Err(PortraitError::NoFaceDetected) => {
+                return response_shell("noFace", Some(PortraitError::NoFaceDetected));
+            }
             Err(error) => return response_shell("failed", Some(error)),
         };
-        let cache_key = format!(
-            "{}:{}",
-            parsed.cache_key.face_id, parsed.cache_key.crop_transform_hash
-        );
-        state.parsed.insert(cache_key.clone(), parsed);
-        response_faces.push(PortraitFaceResponse { face, cache_key });
+        let mut response_faces = Vec::with_capacity(faces.len());
+        let mut parsed_results = Vec::with_capacity(faces.len());
+        for face in faces {
+            let parsed = match provider.parse(width, height, &rgba, &face, &source_identity) {
+                Ok(value) => value,
+                Err(error) => return response_shell("failed", Some(error)),
+            };
+            let cache_key = format!(
+                "{}:{}",
+                parsed.cache_key.face_id, parsed.cache_key.crop_transform_hash
+            );
+            response_faces.push(PortraitFaceResponse {
+                face,
+                cache_key: cache_key.clone(),
+            });
+            parsed_results.push((cache_key, parsed));
+        }
+        (response_faces, parsed_results, provider.execution_provider)
+    };
+    for (cache_key, parsed) in parsed_results {
+        state.parsed.insert(cache_key, parsed);
     }
     PortraitDetectionResponse {
         status: "ready",
@@ -744,7 +754,7 @@ fn portrait_detect(
         parser_model_id: registry.parser.id,
         parser_model_version: registry.parser.version,
         parser_model_hash: registry.parser.sha256,
-        execution_provider: provider.execution_provider,
+        execution_provider,
         error: None,
     }
 }
