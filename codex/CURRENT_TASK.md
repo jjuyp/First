@@ -2,6 +2,8 @@
 
 ## Current Milestone
 
+M16 accepted — GitHub Level 3 Full Acceptance `31727256150` passed for SHA `c508793`.
+
 M16 in progress — local YuNet face detection and BiSeNet ResNet18 semantic portrait masks. M15
 remains the only compositing system: M16 contributes compact editable `PortraitSemantic` leaves
 and native cached values, then stops. Do not begin M17.
