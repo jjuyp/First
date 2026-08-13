@@ -346,17 +346,44 @@ pub struct PortraitOnnxProvider {
     detector: Session,
     parser: Session,
     pub registry: PortraitModelRegistry,
+    /// The provider actually used by both sessions. A requested DirectML
+    /// session deliberately falls back as a pair to CPU, never per-model.
+    pub execution_provider: ExecutionProvider,
 }
 
 impl PortraitOnnxProvider {
     pub fn initialize(registry: PortraitModelRegistry) -> Result<Self, PortraitError> {
         registry.verify()?;
-        let detector = Self::open_session(&registry.detector, registry.execution_provider, false)?;
-        let parser = Self::open_session(&registry.parser, registry.execution_provider, true)?;
+        let (detector, parser, execution_provider) = match registry.execution_provider {
+            ExecutionProvider::Cpu => (
+                Self::open_session(&registry.detector, ExecutionProvider::Cpu, false)?,
+                Self::open_session(&registry.parser, ExecutionProvider::Cpu, true)?,
+                ExecutionProvider::Cpu,
+            ),
+            ExecutionProvider::DirectMl => {
+                let direct = (|| {
+                    Ok::<_, PortraitError>((
+                        Self::open_session(&registry.detector, ExecutionProvider::DirectMl, false)?,
+                        Self::open_session(&registry.parser, ExecutionProvider::DirectMl, true)?,
+                    ))
+                })();
+                match direct {
+                    Ok((detector, parser)) => (detector, parser, ExecutionProvider::DirectMl),
+                    // A partial DirectML initialization is intentionally discarded so
+                    // detection and parsing cannot silently run on different devices.
+                    Err(_) => (
+                        Self::open_session(&registry.detector, ExecutionProvider::Cpu, false)?,
+                        Self::open_session(&registry.parser, ExecutionProvider::Cpu, true)?,
+                        ExecutionProvider::Cpu,
+                    ),
+                }
+            }
+        };
         Ok(Self {
             detector,
             parser,
             registry,
+            execution_provider,
         })
     }
     fn open_session(
@@ -378,21 +405,12 @@ impl PortraitOnnxProvider {
                 .map_err(|e| failure(e.to_string()))?
                 .commit_from_file(&descriptor.path)
                 .map_err(|e| failure(e.to_string())),
-            ExecutionProvider::DirectMl => {
-                let direct = Session::builder()
-                    .map_err(|e| failure(e.to_string()))?
-                    .with_execution_providers([DirectMLExecutionProvider::default().build()])
-                    .and_then(|builder| builder.commit_from_file(&descriptor.path));
-                match direct {
-                    Ok(session) => Ok(session),
-                    Err(_) => Session::builder()
-                        .map_err(|e| failure(e.to_string()))?
-                        .with_execution_providers([CPUExecutionProvider::default().build()])
-                        .map_err(|e| failure(e.to_string()))?
-                        .commit_from_file(&descriptor.path)
-                        .map_err(|e| failure(e.to_string())),
-                }
-            }
+            ExecutionProvider::DirectMl => Session::builder()
+                .map_err(|e| failure(e.to_string()))?
+                .with_execution_providers([DirectMLExecutionProvider::default().build()])
+                .map_err(|e| failure(e.to_string()))?
+                .commit_from_file(&descriptor.path)
+                .map_err(|e| failure(e.to_string())),
         }
     }
 
@@ -1189,7 +1207,10 @@ mod tests {
             },
         )
         .expect("crop");
-        assert!(crop.side > 700.0 && crop.rotation_degrees.is_finite());
+        // The largest normalized face dimension is .5 * 1000 = 500 px; the
+        // required 1.4x portrait crop is therefore exactly 700 px.  This
+        // protects the contract rather than requiring arbitrary extra margin.
+        assert!((crop.side - 700.0).abs() < 0.01 && crop.rotation_degrees.is_finite());
         let source = crop
             .source_point(256.0, 256.0, 512.0)
             .expect("inverse transform");

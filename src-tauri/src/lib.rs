@@ -417,6 +417,7 @@ struct PortraitDetectionResponse {
     parser_model_id: String,
     parser_model_version: String,
     parser_model_hash: String,
+    execution_provider: starroom_portrait::ExecutionProvider,
     error: Option<PortraitFailure>,
 }
 
@@ -674,6 +675,7 @@ fn portrait_detect(
         parser_model_id: registry.parser.id.clone(),
         parser_model_version: registry.parser.version.clone(),
         parser_model_hash: registry.parser.sha256.clone(),
+        execution_provider: registry.execution_provider,
         error: error.map(Into::into),
     };
     if !request.face_crop_scale.is_finite() || !(1.0..=3.0).contains(&request.face_crop_scale) {
@@ -742,6 +744,7 @@ fn portrait_detect(
         parser_model_id: registry.parser.id,
         parser_model_version: registry.parser.version,
         parser_model_hash: registry.parser.sha256,
+        execution_provider: provider.execution_provider,
         error: None,
     }
 }

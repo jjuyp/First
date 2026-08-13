@@ -1056,6 +1056,32 @@ export function App() {
     setNotice(`${layer.name} added as a Native MaskTree leaf`)
   }
 
+  function addAllPortraitMasks(region: NativePortraitRegion) {
+    if (!portraitDetection?.faces.length) return
+    const layer = defaultLayer()
+    const label = region.replace(/([A-Z])/g, ' $1')
+    layer.name = `All faces ${label}`
+    // This is metadata-only UI composition.  Rust evaluates the M15 MaskTree
+    // and all semantic probability rasters in the native shared render graph.
+    layer.mask = {
+      operation: 'add',
+      children: portraitDetection.faces.map(({ face, cacheKey }) => ({
+        type: 'portraitSemantic' as const,
+        faceId: face.id,
+        region,
+        threshold: .5,
+        feather: .08,
+        modelId: portraitDetection.parserModelId,
+        modelVersion: portraitDetection.parserModelVersion,
+        modelHash: portraitDetection.parserModelHash,
+        cacheKey,
+      })),
+    }
+    mutateLayers((layers) => [...layers, layer])
+    setSelectedLayerId(layer.id)
+    setNotice(`${layer.name} added as a Native MaskTree group`)
+  }
+
   function resetAdjustment(key: AdjustmentKey) {
     adjust(key, defaultAdjustments[key])
   }
@@ -1194,7 +1220,7 @@ export function App() {
               {tool === 'geometry' && !before && selected.adjustments.geometryFourPoint !== 0
                 && <FourPointOverlay values={selected.adjustments} onBeginEdit={beginInteractiveEdit} onAdjust={adjust} />}
               {tool === 'masks' && !before && portraitDetection?.status === 'ready' && <div className="portrait-overlay" aria-label="Detected portrait regions">
-                {portraitDetection.faces.map(({ face }, index) => <button key={face.id} className={portraitFaceId === face.id ? 'selected' : ''}
+                {portraitDetection.faces.map(({ face }, index) => <button key={face.id} className={portraitFaceId === face.id || portraitFaceId === '__all__' ? 'selected' : ''}
                   style={{ left: `${face.bounds.left * 100}%`, top: `${face.bounds.top * 100}%`, width: `${(face.bounds.right - face.bounds.left) * 100}%`, height: `${(face.bounds.bottom - face.bounds.top) * 100}%` }}
                   onClick={() => setPortraitFaceId(face.id)}>Face {index + 1}</button>)}
               </div>}
@@ -1221,13 +1247,18 @@ export function App() {
           {selected.renderBackend !== 'native' && <small>Native image required. Browser fallback is intentionally unavailable.</small>}
           {portraitDetection && <div className={`portrait-status status-${portraitDetection.status}`}>
             <strong>{portraitDetection.status === 'ready' ? `${portraitDetection.faces.length} face(s)` : portraitDetection.status}</strong>
-            <small>{portraitDetection.error?.message ?? `YuNet ${portraitDetection.detectorModelVersion.slice(0, 8)} · BiSeNet ResNet18`}</small>
+            <small>{portraitDetection.error?.message ?? `YuNet ${portraitDetection.detectorModelVersion.slice(0, 8)} · BiSeNet ResNet18 · ${portraitDetection.executionProvider === 'directMl' ? 'DirectML' : 'CPU'}`}</small>
           </div>}
           {portraitDetection?.faces.map(({ face, cacheKey }, index) => <div className={portraitFaceId === face.id ? 'portrait-face selected' : 'portrait-face'} key={face.id}>
             <button onClick={() => setPortraitFaceId(face.id)}>Face {index + 1} · {Math.round(face.confidence * 100)}%</button>
             {portraitFaceId === face.id && <div className="portrait-regions">{(['face', 'skin', 'eyes', 'brows', 'lips', 'hair'] as NativePortraitRegion[]).map((region) =>
               <button key={region} onClick={() => addPortraitMask(face.id, cacheKey, region)}>{region}</button>)}</div>}
           </div>)}
+          {portraitDetection?.faces.length && <div className={portraitFaceId === '__all__' ? 'portrait-face selected' : 'portrait-face'}>
+            <button onClick={() => setPortraitFaceId('__all__')}>All faces</button>
+            {portraitFaceId === '__all__' && <div className="portrait-regions">{(['face', 'skin', 'eyes', 'brows', 'lips', 'hair'] as NativePortraitRegion[]).map((region) =>
+              <button key={region} onClick={() => addAllPortraitMasks(region)}>{region}</button>)}</div>}
+          </div>}
         </section>
         <section className="layer-stack" aria-label="Adjustment layers">
           <div className="layer-stack-head"><strong>Layers</strong><button onClick={addLayer}>+ Add</button></div>

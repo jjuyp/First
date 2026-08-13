@@ -22,7 +22,7 @@ export type NativePortraitRegion = 'face' | 'skin' | 'eyes' | 'leftEye' | 'right
 export interface NativePortraitLandmark { x: number; y: number; z: number }
 export interface NativePortraitFace { id: string; confidence: number; bounds: { left: number; top: number; right: number; bottom: number }; landmarks: NativePortraitLandmark[]; crop: { centerX: number; centerY: number; side: number; rotationDegrees: number } }
 export interface NativePortraitFailure { code: string; message: string }
-export interface NativePortraitDetection { status: 'ready' | 'noFace' | 'unavailable' | 'failed'; faces: Array<{ face: NativePortraitFace; cacheKey: string }>; detectorModelId: string; detectorModelVersion: string; detectorModelHash: string; parserModelId: string; parserModelVersion: string; parserModelHash: string; error: NativePortraitFailure | null }
+export interface NativePortraitDetection { status: 'ready' | 'noFace' | 'unavailable' | 'failed'; faces: Array<{ face: NativePortraitFace; cacheKey: string }>; detectorModelId: string; detectorModelVersion: string; detectorModelHash: string; parserModelId: string; parserModelVersion: string; parserModelHash: string; executionProvider: 'cpu' | 'directMl'; error: NativePortraitFailure | null }
 export type NativeMaskDefinition =
   | { type: 'none' }
   | { type: 'radial'; x: number; y: number; width: number; height: number; rotation: number; feather: number; invert: boolean }
