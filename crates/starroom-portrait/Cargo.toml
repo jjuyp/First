@@ -10,4 +10,5 @@ serde.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 ort = { version = "=2.0.0-rc.10", features = ["directml"] }
+ndarray = "0.16"
 starroom-detail = { path = "../starroom-detail" }

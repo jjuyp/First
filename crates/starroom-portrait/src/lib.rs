@@ -1,6 +1,7 @@
 //! Portrait-retouch contracts and CPU references for Starroom v0.2.
 //! Face/skin detection is provider-based so MediaPipe can be integrated without coupling the core.
 
+use ndarray::Array4;
 use ort::{
     execution_providers::{CPUExecutionProvider, directml::DirectMLExecutionProvider},
     session::Session,
@@ -418,7 +419,7 @@ impl PortraitOnnxProvider {
             [1.0, 1.0, 1.0],
             false,
         )?;
-        let tensor = ort::ndarray::Array4::from_shape_vec((1, 3, 320, 320), input)
+        let tensor = Array4::from_shape_vec((1, 3, 320, 320), input)
             .map_err(|e| PortraitError::DetectionFailed(e.to_string()))?;
         let output = self
             .detector
@@ -475,7 +476,7 @@ impl PortraitOnnxProvider {
             [0.229, 0.224, 0.225],
             true,
         )?;
-        let tensor = ort::ndarray::Array4::from_shape_vec((1, 3, 512, 512), input)
+        let tensor = Array4::from_shape_vec((1, 3, 512, 512), input)
             .map_err(|e| PortraitError::ParsingFailed(e.to_string()))?;
         let output = self
             .parser
