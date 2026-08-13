@@ -20,7 +20,7 @@
 - [x] Added a Native `starroom-render::scheduler` with fixed 512/1024/2048/4096 pyramid levels, deterministic 24/45/60/100 MP tile plans, graph-declared halos and visible/nearby/remaining viewport priority.
 - [x] Added generation-based supersession, stale-output rejection, source/version + graph + level + region cache identities, and bounded RAM/VRAM LRU accounting. The Tauri preview request now selects its native pyramid level, schedules it and reuses only an exact cached derived frame; Export still reopens the full immutable source.
 - [x] Added `test:tiles`, scheduler regressions and a plan-only benchmark report. No image/color foundation was replaced and GPU unavailability remains the existing explicit CPU-reference status.
-- [ ] Complete Windows Level 3 acceptance after repairing the prior M12 Clippy regression; do not advance to M14 before it is green.
+- [x] Windows Level 3 Full Acceptance passed on GitHub Actions run `31707532900` after the M12 Clippy and desktop lockfile corrections; M14 may begin.
 
 ## Product principle — Open-source Foundation First
 
