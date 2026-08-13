@@ -601,7 +601,7 @@ fn mask_leaf_weight(
             invert,
         } => {
             if !reference
-                .into_iter()
+                .iter()
                 .copied()
                 .chain([*tolerance, *feather])
                 .all(f32::is_finite)
@@ -1410,7 +1410,7 @@ mod tests {
             g: 0.2,
             b: 0.2,
         };
-        let center = apply_layers(source, &[layer.clone()], 0.5, 0.5).expect("center");
+        let center = apply_layers(source, std::slice::from_ref(&layer), 0.5, 0.5).expect("center");
         let outside = apply_layers(source, &[layer], 0.0, 0.0).expect("outside");
         assert!(center.r > source.r * 1.8);
         assert!((outside.r - source.r).abs() < 1.0e-6);
