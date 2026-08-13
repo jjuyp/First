@@ -60,6 +60,11 @@ export const targets = {
     web: ['src/nativeRender.test.ts'],
     golden: ['raw', 'tone', 'curve', 'color', 'grading', 'detail', 'portrait', 'skin', 'neon', 'landscape', 'hdr'],
   },
+  tiles: {
+    rust: [['test', '--locked', '-p', 'starroom-render', 'scheduler']],
+    web: ['src/nativeRender.test.ts'],
+    golden: ['raw', 'detail', 'geometry', 'portrait', 'landscape', 'hdr'],
+  },
   masks: {
     rust: [['test', '--locked', '-p', 'starroom-project', 'mask'], ['test', '--locked', '-p', 'starroom-render']],
     web: ['src/editorState.test.ts'],

@@ -17,6 +17,7 @@
     "test:optics": "node scripts/test-target.mjs optics",
     "test:geometry": "node scripts/test-target.mjs geometry",
     "test:gpu": "node scripts/test-target.mjs gpu",
+    "test:tiles": "node scripts/test-target.mjs tiles",
     "test:masks": "node scripts/test-target.mjs masks",
     "test:portrait": "node scripts/test-target.mjs portrait",
     "test:ai": "node scripts/test-target.mjs ai",

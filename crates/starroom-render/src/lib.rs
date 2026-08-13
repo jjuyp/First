@@ -3,6 +3,7 @@
 //! same logical stage order and invalidation rules.
 
 pub mod gpu;
+pub mod scheduler;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

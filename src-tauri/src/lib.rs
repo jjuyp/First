@@ -4,7 +4,9 @@ use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
 use starroom_geometry::GeometryParameters;
 use starroom_grading::GradingParameters;
-use starroom_imageio::{decode_source, decode_source_preview, encode_jpeg_rgb8};
+use starroom_imageio::{
+    DecodedSourceImage, decode_source, decode_source_preview, encode_jpeg_rgb8,
+};
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
     RelativeColorParameters, RenderSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
@@ -14,8 +16,11 @@ use starroom_pipeline::{
 use starroom_render::{
     RenderGraph,
     gpu::{GpuBackendKind, GpuRenderer, GpuStatus, probe_gpu_status},
+    scheduler::{Completion, DEFAULT_TILE_EDGE, RenderScheduler, SchedulerStatus, Viewport},
 };
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use tauri::State;
 use tauri::ipc::Response;
 
 #[derive(Debug, Serialize)]
@@ -70,7 +75,7 @@ fn advise_image(stats: AnalysisStats) -> Vec<Suggestion> {
     advise(stats)
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeEditSettings {
     exposure: f32,
@@ -322,6 +327,16 @@ struct NativePreviewRequest {
     settings: NativeEditSettings,
 }
 
+/// Process-wide M13 scheduler state. It holds only derived preview/cache bytes and request
+/// identities; the immutable source image remains on disk and full export never reads this cache.
+struct NativePreviewScheduler(Mutex<RenderScheduler>);
+
+impl Default for NativePreviewScheduler {
+    fn default() -> Self {
+        Self(Mutex::new(RenderScheduler::default()))
+    }
+}
+
 const fn default_prefer_gpu() -> bool {
     true
 }
@@ -416,11 +431,75 @@ fn preview_frame(
     Ok(frame)
 }
 
+fn preview_source_identity(path: &Path) -> Result<String, String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("native preview metadata failed: {error}"))?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    Ok(format!("{}:{}:{modified}", path.display(), metadata.len()))
+}
+
+fn source_dimensions(decoded: &DecodedSourceImage) -> (u32, u32) {
+    match decoded {
+        DecodedSourceImage::Rendered(image) => (image.width, image.height),
+        DecodedSourceImage::Raw(image) => (image.width, image.height),
+    }
+}
+
+/// Explicit M13 diagnostics for progressive preview scheduling. The UI can expose cache and
+/// stale-frame statistics without receiving pixels through JSON.
 #[tauri::command]
-fn native_preview(request: NativePreviewRequest) -> Result<Response, String> {
+fn native_preview_scheduler_status(
+    scheduler: State<'_, NativePreviewScheduler>,
+) -> Result<SchedulerStatus, String> {
+    scheduler
+        .0
+        .lock()
+        .map_err(|_| "native preview scheduler lock was poisoned".to_owned())
+        .map(|scheduler| scheduler.status())
+}
+
+#[tauri::command]
+fn native_preview(
+    scheduler: State<'_, NativePreviewScheduler>,
+    request: NativePreviewRequest,
+) -> Result<Response, String> {
+    let graph_identity = serde_json::to_string(&request.settings)
+        .map_err(|error| format!("native preview graph identity serialization failed: {error}"))?;
     let settings = request.settings.validated()?;
-    let decoded = decode_source_preview(&request.source_path, request.max_edge.clamp(256, 4096))
+    let requested_edge = request.max_edge.clamp(256, 4096);
+    let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
+    let decoded = decode_source_preview(&request.source_path, level.max_edge())
         .map_err(|error| format!("native preview decode failed: {error}"))?;
+    let (source_width, source_height) = source_dimensions(&decoded);
+    let source_identity = preview_source_identity(&request.source_path)?;
+    let job = scheduler
+        .0
+        .lock()
+        .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
+        .schedule_preview(
+            source_identity,
+            graph_identity,
+            source_width,
+            source_height,
+            requested_edge,
+            Viewport::full(source_width, source_height),
+            DEFAULT_TILE_EDGE,
+            RenderGraph::default().maximum_halo(),
+        );
+    let frame_tile = job.full_frame_tile();
+    if let Some(frame) = scheduler
+        .0
+        .lock()
+        .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
+        .cached_tile(&frame_tile.identity)
+    {
+        return Ok(Response::new(frame));
+    }
     let (rendered, backend_flags) = if request.prefer_gpu {
         match GpuRenderer::try_new() {
             Ok(renderer) => {
@@ -454,13 +533,17 @@ fn native_preview(request: NativePreviewRequest) -> Result<Response, String> {
     let profile_id = rendered.color.camera_profile_id.as_deref().unwrap_or("");
     let jpeg = encode_jpeg_rgb8(&rendered.data, rendered.width, rendered.height, 91, None)
         .map_err(|error| format!("native preview encode failed: {error}"))?;
-    Ok(Response::new(preview_frame(
-        rendered.width,
-        rendered.height,
-        flags,
-        profile_id,
-        jpeg,
-    )?))
+    let frame = preview_frame(rendered.width, rendered.height, flags, profile_id, jpeg)?;
+    let estimated_vram_bytes = rendered.width as usize * rendered.height as usize * 8;
+    let completion = scheduler
+        .0
+        .lock()
+        .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
+        .complete_tile(&frame_tile, frame.clone(), estimated_vram_bytes);
+    if completion == Completion::Stale {
+        return Err("native preview was superseded by a newer render request".into());
+    }
+    Ok(Response::new(frame))
 }
 
 fn same_file(left: &Path, right: &Path) -> bool {
@@ -520,6 +603,7 @@ fn native_export_jpeg(request: NativeExportRequest) -> Result<NativeExportResult
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(NativePreviewScheduler::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             engine_status,
@@ -527,6 +611,7 @@ pub fn run() {
             gpu_preview_status,
             advise_image,
             native_preview,
+            native_preview_scheduler_status,
             native_export_jpeg,
             native_sample_color,
             native_optics_status

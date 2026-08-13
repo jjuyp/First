@@ -6,7 +6,7 @@
 2. **Level 2 / milestone:** `npm run test:milestone -- <target>` adds the Native shared graph, render invalidation, format, warning-denied Clippy, lint and production frontend build.
 3. **Level 3 / full:** `npm run test:full` runs JSON/Golden validation, format, full workspace Clippy/tests, all Vitest, lint, production build and Tauri packaging-configuration/artifact validation. Use only for batch/release/final acceptance. It remains authoritative if a narrower gate differs.
 
-Targets are `color`, `tone`, `curve`, `raw`, `detail`, `optics`, `geometry`, `masks`, `portrait`, `ai`, and `web`. Each invocation writes a machine-readable report under ignored `.starroom-reports/`.
+Targets are `color`, `tone`, `curve`, `raw`, `detail`, `optics`, `geometry`, `gpu`, `tiles`, `masks`, `portrait`, `ai`, and `web`. Each invocation writes a machine-readable report under ignored `.starroom-reports/`.
 
 ## Golden selection
 
