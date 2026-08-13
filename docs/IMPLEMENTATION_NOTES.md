@@ -1,4 +1,11 @@
 # Implementation Notes
+## 2026-08-13 M13 preview pyramid / scheduler candidate
+
+- `starroom-render::scheduler` is Starroom-owned orchestration, not replacement image math: it selects fixed 512/1024/2048/4096 preview levels, scales image-space viewports, builds halo-aware tiles from the existing graph declaration and orders visible viewport work before its neighborhood and the remaining image.
+- Every scheduled tile carries source-version identity, serialized graph state identity, pyramid level, output region and generation. A new request supersedes the prior generation; completion of old work is rejected rather than silently drawn. The bounded LRU accounts for RAM-derived frames and RGBA16Float-equivalent VRAM reservations independently.
+- Tauri Native Preview now picks the requested pyramid level before decode, schedules the Native shared graph and only reuses a matching encoded frame. The full-resolution export command still decodes the immutable source and never reads preview cache pixels. A status command exposes cache/stale counters without transferring pixels through JSON.
+- Regressions cover 24/45/60/100 MP deterministic plans, tile halo coverage, visible-first priority, generation cancellation, graph-key isolation and RAM/VRAM LRU eviction. The target has no new third-party dependency; pinned wgpu remains the resource backend. Windows CI acceptance is pending after a Clippy repair to the M12 GPU buffer-length expression.
+
 ## 2026-08-12 M12 GPU acceptance
 
 - `starroom-render::gpu` integrates official wgpu 30.0.0 as a Windows DX12-first adapter. `GpuRenderer` owns instance, adapter/device/queue, shader module, pipeline/bind-group layout, buffers and explicit RGBA16Float/R16Float resource allocation. The only migrated production node is scene-linear Exposure; the CPU Tone/Curve/Mixer/Grading/Detail sequence stays the reference implementation rather than introducing a second colour-science path.

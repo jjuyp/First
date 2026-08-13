@@ -15,6 +15,13 @@
 - [x] Added linear Rec.2020 D65 RGBA16Float / R16Float resource contracts, WGSL exposure compute dispatch, buffer lifecycle, shader validation, device/unsupported/OOM/loss typed fallback and UI-visible backend/fallback status.
 - [x] Added strict CPU/GPU HDR/skin/neon/shadow parity corpus, shared Native Preview graph integration, GPU CI gate and relevant Golden selection. Push run `31620924649` passed all Web, GPU, RAW and dependent gates.
 
+## M13 Tile / Preview Pyramid / Render Scheduler (2026-08-13 candidate)
+
+- [x] Added a Native `starroom-render::scheduler` with fixed 512/1024/2048/4096 pyramid levels, deterministic 24/45/60/100 MP tile plans, graph-declared halos and visible/nearby/remaining viewport priority.
+- [x] Added generation-based supersession, stale-output rejection, source/version + graph + level + region cache identities, and bounded RAM/VRAM LRU accounting. The Tauri preview request now selects its native pyramid level, schedules it and reuses only an exact cached derived frame; Export still reopens the full immutable source.
+- [x] Added `test:tiles`, scheduler regressions and a plan-only benchmark report. No image/color foundation was replaced and GPU unavailability remains the existing explicit CPU-reference status.
+- [ ] Complete Windows Level 3 acceptance after repairing the prior M12 Clippy regression; do not advance to M14 before it is green.
+
 ## Product principle — Open-source Foundation First
 
 Before expanding advanced Starroom-specific features, baseline image quality must stand on mature open-source foundations wherever a proven implementation already exists.

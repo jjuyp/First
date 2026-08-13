@@ -333,8 +333,8 @@ impl GpuRenderer {
         {
             return Err(GpuError::InvalidPixels);
         }
-        let byte_len = (pixels.len() * std::mem::size_of::<[f32; 4]>()) as u64;
-        if byte_len > u64::from(self.device.limits().max_storage_buffer_binding_size) {
+        let byte_len = std::mem::size_of_val(pixels) as u64;
+        if byte_len > self.device.limits().max_storage_buffer_binding_size {
             return Err(GpuError::Unsupported(
                 "exposure buffer exceeds adapter storage binding limit".into(),
             ));
