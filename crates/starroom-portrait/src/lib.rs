@@ -427,16 +427,7 @@ impl PortraitOnnxProvider {
                 "RGBA buffer length does not match source dimensions".into(),
             ));
         }
-        let input = resize_rgba_rgb_chw(
-            width,
-            height,
-            rgba,
-            320,
-            320,
-            [0.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0],
-            false,
-        )?;
+        let input = resize_rgba_rgb_chw(width, height, rgba, ModelInputFormat::yunet())?;
         let tensor = Array4::from_shape_vec((1, 3, 320, 320), input)
             .map_err(|e| PortraitError::DetectionFailed(e.to_string()))?;
         let output = self
@@ -484,16 +475,7 @@ impl PortraitOnnxProvider {
         source_identity: &str,
     ) -> Result<PortraitParseResult, PortraitError> {
         let crop = aligned_crop_rgba(width, height, rgba, face.crop, 512)?;
-        let input = resize_rgba_rgb_chw(
-            512,
-            512,
-            &crop,
-            512,
-            512,
-            [0.485, 0.456, 0.406],
-            [0.229, 0.224, 0.225],
-            true,
-        )?;
+        let input = resize_rgba_rgb_chw(512, 512, &crop, ModelInputFormat::bisenet())?;
         let tensor = Array4::from_shape_vec((1, 3, 512, 512), input)
             .map_err(|e| PortraitError::ParsingFailed(e.to_string()))?;
         let output = self
@@ -532,35 +514,63 @@ struct DetectionCandidate {
     landmarks: [Landmark; 5],
 }
 
+#[derive(Clone, Copy)]
+struct ModelInputFormat {
+    target_width: u32,
+    target_height: u32,
+    mean: [f32; 3],
+    std: [f32; 3],
+    divide_255: bool,
+}
+
+impl ModelInputFormat {
+    const fn yunet() -> Self {
+        Self {
+            target_width: 320,
+            target_height: 320,
+            mean: [0.0, 0.0, 0.0],
+            std: [1.0, 1.0, 1.0],
+            divide_255: false,
+        }
+    }
+
+    const fn bisenet() -> Self {
+        Self {
+            target_width: 512,
+            target_height: 512,
+            mean: [0.485, 0.456, 0.406],
+            std: [0.229, 0.224, 0.225],
+            divide_255: true,
+        }
+    }
+}
+
 fn resize_rgba_rgb_chw(
     width: u32,
     height: u32,
     rgba: &[u8],
-    target_w: u32,
-    target_h: u32,
-    mean: [f32; 3],
-    std: [f32; 3],
-    divide_255: bool,
+    format: ModelInputFormat,
 ) -> Result<Vec<f32>, PortraitError> {
     if width == 0 || height == 0 || rgba.len() != width as usize * height as usize * 4 {
         return Err(PortraitError::InvalidTransform(
             "invalid image for model pre-processing".into(),
         ));
     }
-    let mut out = vec![0.0; (target_w * target_h * 3) as usize];
-    for y in 0..target_h {
-        for x in 0..target_w {
-            let sx = ((x as f32 + 0.5) * width as f32 / target_w as f32 - 0.5)
+    let mut out = vec![0.0; (format.target_width * format.target_height * 3) as usize];
+    for y in 0..format.target_height {
+        for x in 0..format.target_width {
+            let sx = ((x as f32 + 0.5) * width as f32 / format.target_width as f32 - 0.5)
                 .round()
                 .clamp(0.0, width.saturating_sub(1) as f32) as usize;
-            let sy = ((y as f32 + 0.5) * height as f32 / target_h as f32 - 0.5)
+            let sy = ((y as f32 + 0.5) * height as f32 / format.target_height as f32 - 0.5)
                 .round()
                 .clamp(0.0, height.saturating_sub(1) as f32) as usize;
             let base = (sy * width as usize + sx) * 4;
             for c in 0..3 {
-                let raw = rgba[base + c] as f32 / if divide_255 { 255.0 } else { 1.0 };
-                out[(c * target_h as usize + y as usize) * target_w as usize + x as usize] =
-                    (raw - mean[c]) / std[c];
+                let raw = rgba[base + c] as f32 / if format.divide_255 { 255.0 } else { 1.0 };
+                out[(c * format.target_height as usize + y as usize)
+                    * format.target_width as usize
+                    + x as usize] = (raw - format.mean[c]) / format.std[c];
             }
         }
     }
