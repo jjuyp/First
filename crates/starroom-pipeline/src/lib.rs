@@ -121,7 +121,7 @@ pub enum LayerBlendMode {
     Normal,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LayerAdjustments {
     #[serde(default)]
@@ -134,18 +134,6 @@ pub struct LayerAdjustments {
     pub color_mixer: ColorMixer,
     #[serde(default)]
     pub grading: GradingParameters,
-}
-
-impl Default for LayerAdjustments {
-    fn default() -> Self {
-        Self {
-            tone: ToneParameters::default(),
-            relative_color: RelativeColorParameters::default(),
-            curves: ToneCurveSet::default(),
-            color_mixer: ColorMixer::default(),
-            grading: GradingParameters::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1033,14 +1021,30 @@ mod tests {
             blend_mode: LayerBlendMode::Normal,
             adjustments: LayerAdjustments::default(),
         };
-        assert!(
-            matches!(apply_layers(LinearRgb { r: .2, g: .2, b: .2 }, &[invalid.clone()]), Err(PipelineError::InvalidLayer { .. }))
-        );
+        assert!(matches!(
+            apply_layers(
+                LinearRgb {
+                    r: 0.2,
+                    g: 0.2,
+                    b: 0.2
+                },
+                &[invalid.clone()]
+            ),
+            Err(PipelineError::InvalidLayer { .. })
+        ));
         invalid.opacity = 1.0;
         invalid.adjustments.tone.exposure_ev = f32::NAN;
-        assert!(
-            matches!(apply_layers(LinearRgb { r: .2, g: .2, b: .2 }, &[invalid]), Err(PipelineError::InvalidLayer { .. }))
-        );
+        assert!(matches!(
+            apply_layers(
+                LinearRgb {
+                    r: 0.2,
+                    g: 0.2,
+                    b: 0.2
+                },
+                &[invalid]
+            ),
+            Err(PipelineError::InvalidLayer { .. })
+        ));
     }
 
     #[test]
