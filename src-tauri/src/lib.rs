@@ -575,22 +575,6 @@ fn source_rgba_for_portrait(path: &Path) -> Result<(u32, u32, Vec<u8>, String), 
     Ok((rendered.width, rendered.height, rgba, identity))
 }
 
-fn project_region(region: PortraitRegion) -> PortraitMaskRegion {
-    match region {
-        PortraitRegion::Face => PortraitMaskRegion::Face,
-        PortraitRegion::Skin => PortraitMaskRegion::Skin,
-        PortraitRegion::Eyes => PortraitMaskRegion::Eyes,
-        PortraitRegion::LeftEye => PortraitMaskRegion::LeftEye,
-        PortraitRegion::RightEye => PortraitMaskRegion::RightEye,
-        PortraitRegion::Brows => PortraitMaskRegion::Brows,
-        PortraitRegion::LeftBrow => PortraitMaskRegion::LeftBrow,
-        PortraitRegion::RightBrow => PortraitMaskRegion::RightBrow,
-        PortraitRegion::Lips => PortraitMaskRegion::Lips,
-        PortraitRegion::Mouth => PortraitMaskRegion::Mouth,
-        PortraitRegion::Hair => PortraitMaskRegion::Hair,
-    }
-}
-
 fn collect_portrait_mask_references(
     tree: &MaskTree,
     values: &mut Vec<(String, String, PortraitMaskRegion)>,
