@@ -2,8 +2,8 @@
 
 ## Current Milestone
 
-M15 - Native mask tree and layer compositing. Replace the pre-M15 visual radial-mask interaction
-with a typed, high-precision Rust mask evaluator connected to M14 layers.
+M15 accepted - Native mask tree and layer compositing. The typed, high-precision Rust evaluator
+is connected to M14 layers; do not begin M16 without a new explicit task.
 
 ## Goal
 
@@ -53,5 +53,5 @@ native CPU reference for parity. Color/luminance sampling remains Rust-side.
 
 ## Stop conditions
 
-After M15 local and GitHub acceptance, stop. Do not begin M16, merge `main`, force-push or make
-PR #2 ready.
+M15 passed GitHub Windows Level 3 Full Acceptance run `31713812877`. Stop here: do not begin
+M16, merge `main`, force-push or make PR #2 ready.

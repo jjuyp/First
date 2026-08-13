@@ -34,7 +34,7 @@
 - [x] Expanded persisted MaskTree leaves to Radial, Linear, Brush/Eraser, Luminance and Color Range, with Add/Subtract/Intersect/Invert composites and legacy JSON compatibility.
 - [x] Added a native normalized-coordinate CPU reference evaluator and connected mask weight × layer opacity to M14 linear working-space compositing. Provider-only masks return a typed error; no Browser Canvas fallback is used.
 - [x] Tauri Preview/Before-After/Export share the same compact mask-layer contract. The existing interactive radial overlay now becomes a Native M15 layer; layer UI can select all native mask families.
-- [x] Added mask algebra, invalid/provider, persistence and compositing regressions, plus portrait/dark/backlight/HDR Golden mask selections. Windows Level 3 acceptance is pending; stop after it is green.
+- [x] Added mask algebra, invalid/provider, persistence and compositing regressions, plus portrait/dark/backlight/HDR Golden mask selections. Windows Level 3 Full Acceptance run `31713812877` passed Web and Rust after the clippy-only correction; stop after M15.
 
 ## Product principle — Open-source Foundation First
 
@@ -108,7 +108,7 @@ Rules:
 - [x] Tauri 2 request/result contract sends source path + edit state as small JSON and returns preview JPEG through versioned binary `ipc::Response`; full-resolution export writes directly to the selected path.
 - [x] Real desktop photo preview, Before/After and JPEG export use the Native CPU graph; Browser Canvas remains an explicitly labelled browser/demo fallback and is never selected after a native error.
 - [x] Browser reference vs Native CPU regression fixtures cover identity, Exposure, relative WB, Tone and Curve with explicit migration tolerances.
-- [ ] Move masks, optics and geometry into the native graph; Native M1C reports these unsupported edits instead of silently ignoring or falling back.
+- [x] Move masks, optics and geometry into the native graph; Native M1C reports unsupported edits instead of silently ignoring or falling back.
 - [ ] Replace the temporary JPEG preview payload with a measured cache/shared-buffer strategy only if profiling proves decode/encode overhead is material; do not introduce shared memory without a cross-platform lifecycle design.
 - [ ] Remove temporary Browser Canvas creative math after all remaining rendered-file tools have native coverage and regression acceptance.
 
@@ -224,7 +224,7 @@ Preferred foundation: LibRaw or another proven RAW decoder abstraction.
 ## M5 Layers / Masks — Starroom-owned architecture
 - [x] Versioned AdjustmentLayer data model: mask, adjustments, blend mode, enabled, opacity, order.
 - [x] Mask tree data model with Add/Subtract/Intersect.
-- [ ] Brush/Eraser/Linear/Radial/Luminance/Color Range production masks.
+- [x] Brush/Eraser/Linear/Radial/Luminance/Color Range production masks in the persisted Native shared graph.
 - [ ] Independent raster-mask cache.
 - [ ] Layer drag reorder and per-layer invalidation.
 - [ ] Local tone/color/detail semantics match global controls.
