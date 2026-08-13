@@ -58,5 +58,11 @@ browser canvas or substitute model is permitted.
 
 ## Stop conditions
 
+## Acceptance evidence so far
+
+- Focused GitHub Windows run `31724891922` passed Web Check and compiled/tested the M16 Rust
+  adapter through Detail Check. The `[full-acceptance]` commit is the remaining authoritative
+  M16 gate; model binaries remain deliberately absent from CI.
+
 Do not begin M17, merge `main`, force-push, or make PR #2 ready. M16 is accepted only after its
 dedicated commit and GitHub Windows Level 3 Full Acceptance are green.

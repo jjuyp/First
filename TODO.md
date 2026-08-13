@@ -1,6 +1,6 @@
 # Complete Internal Build Plan
 
-## M16 Portrait Detection / Semantic Mask Foundation (in progress)
+## M16 Portrait Detection / Semantic Mask Foundation (acceptance in progress)
 
 - [x] Pin local-only YuNet `face_detection_yunet_2026may.onnx` and BiSeNet **ResNet18** ONNX identities, SHA-256 verification and explicit source/license policy in `MODEL_PROVENANCE.md`.
 - [x] Implement Rust `ort` ModelRegistry/ModelSession with CPU and DirectML-requested provider paths, typed unavailable/init/hash/output errors and no cloud/browser fallback.
@@ -8,7 +8,7 @@
 - [x] Implement BiSeNet 512 RGB/mean/std/CHW inference contract, soft-logit probabilities, semantic Face/Skin/Eyes/Brows/Lips/Mouth/Hair mapping and skin exclusions.
 - [x] Extend M15 `MaskTree` with compact serialized `portraitSemantic` leaves and resolve cached source R16Float-compatible rasters only in the Native shared Preview/Export graph.
 - [x] Add local Native portrait UI state, All Faces/individual face selection, detection status/error state and MaskTree leaf creation; do not add M17 retouch controls.
-- [ ] Complete mock/semantic/serialization/cache regressions, run the local frontend gates, push a focused M16 development commit and use GitHub Windows compile feedback to close the acceptance gate.
+- [x] Complete mock/semantic/serialization/cache regressions, run the local frontend gates and pass focused GitHub Windows compile feedback (run `31724891922`).
 - [ ] Do not start M17 until a dedicated M16 acceptance commit and Level 3 CI are green.
 
 ## Continuous M7-M11 acceptance (2026-08-12 specification)
