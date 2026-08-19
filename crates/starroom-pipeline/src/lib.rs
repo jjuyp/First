@@ -20,12 +20,16 @@ use starroom_geometry::{
     GeometryParameters, UprightMode, analyze_upright, apply_geometry, apply_upright,
 };
 use starroom_grading::{GradingParameters, apply_grading};
+use starroom_heal::{HealingOperation, apply_operation};
 use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage, lens_metadata};
 use starroom_optics::{
     LensIdentity, LensProfileResolution, LensProfileStatus, LensfunProvider, OpticsSettings,
     apply_lens_correction,
 };
-use starroom_project::{MaskDefinition, MaskOperation, MaskTree, PortraitMaskRegion};
+use starroom_portrait::{SkinRetouchParameters, apply_skin_retouch};
+use starroom_project::{
+    GeneratedMaskSemantic, MaskDefinition, MaskOperation, MaskTree, PortraitMaskRegion,
+};
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use starroom_render::gpu::{GpuError, GpuRenderer};
 use thiserror::Error;
@@ -167,6 +171,33 @@ pub struct PortraitMaskRaster {
     pub values: Vec<f32>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratedMaskRaster {
+    pub cache_identity: String,
+    pub semantic: GeneratedMaskSemantic,
+    pub width: u32,
+    pub height: u32,
+    pub values: Vec<f32>,
+}
+
+/// Compact persistent identity for a face selected for M17 skin retouch. The actual semantic
+/// R16Float-compatible raster is resolved only from the native M16 cache.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkinRetouchFaceReference {
+    pub face_id: String,
+    pub cache_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SkinRetouchSettings {
+    #[serde(default)]
+    pub parameters: SkinRetouchParameters,
+    #[serde(default)]
+    pub faces: Vec<SkinRetouchFaceReference>,
+}
+
 impl PortraitMaskRaster {
     fn weight_at(&self, x: f32, y: f32) -> Result<f32, PipelineError> {
         if self.width == 0
@@ -175,6 +206,23 @@ impl PortraitMaskRaster {
             || self.values.iter().any(|value| !value.is_finite())
         {
             return Err(PipelineError::InvalidMask("portrait raster is malformed"));
+        }
+        let px = (x.clamp(0.0, 1.0) * self.width.saturating_sub(1) as f32).round() as usize;
+        let py = (y.clamp(0.0, 1.0) * self.height.saturating_sub(1) as f32).round() as usize;
+        Ok(self.values[py * self.width as usize + px].clamp(0.0, 1.0))
+    }
+}
+
+impl GeneratedMaskRaster {
+    fn weight_at(&self, x: f32, y: f32) -> Result<f32, PipelineError> {
+        if self.width == 0
+            || self.height == 0
+            || self.values.len() != self.width as usize * self.height as usize
+            || self.values.iter().any(|value| !value.is_finite())
+        {
+            return Err(PipelineError::InvalidMask(
+                "generated AI raster is malformed",
+            ));
         }
         let px = (x.clamp(0.0, 1.0) * self.width.saturating_sub(1) as f32).round() as usize;
         let py = (y.clamp(0.0, 1.0) * self.height.saturating_sub(1) as f32).round() as usize;
@@ -220,6 +268,14 @@ pub struct RenderSettings {
     /// serialized into sidecars or accepted from the frontend transport.
     #[serde(skip)]
     pub portrait_masks: Vec<PortraitMaskRaster>,
+    #[serde(skip)]
+    pub generated_masks: Vec<GeneratedMaskRaster>,
+    #[serde(default)]
+    pub skin_retouch: SkinRetouchSettings,
+    /// M18 operations run after colour/portrait work and before detail/output, identically for
+    /// preview and export. They contain coordinates and parameters only, never raster pixels.
+    #[serde(default)]
+    pub healing_operations: Vec<HealingOperation>,
 }
 
 impl Default for RenderSettings {
@@ -243,6 +299,9 @@ impl Default for RenderSettings {
             geometry: GeometryParameters::default(),
             layers: Vec::new(),
             portrait_masks: Vec::new(),
+            generated_masks: Vec::new(),
+            skin_retouch: SkinRetouchSettings::default(),
+            healing_operations: Vec::new(),
         }
     }
 }
@@ -517,6 +576,7 @@ fn mask_leaf_weight(
     y: f32,
     rgb: LinearRgb,
     portrait_masks: &[PortraitMaskRaster],
+    generated_masks: &[GeneratedMaskRaster],
 ) -> Result<f32, PipelineError> {
     let weight = match mask {
         MaskDefinition::None => 1.0,
@@ -688,6 +748,48 @@ fn mask_leaf_weight(
             let value = raster.weight_at(x, y)?;
             smoothstep(*threshold - *feather, *threshold + *feather + 1.0e-5, value)
         }
+        MaskDefinition::Generated {
+            provider_id,
+            model_id,
+            model_version,
+            model_hash,
+            semantic_class,
+            threshold,
+            feather,
+            invert,
+            cache_identity,
+            ..
+        } => {
+            if provider_id.trim().is_empty()
+                || model_id.trim().is_empty()
+                || model_version.trim().is_empty()
+                || model_hash.len() != 64
+                || cache_identity.trim().is_empty()
+                || ![*threshold, *feather].into_iter().all(f32::is_finite)
+                || !(0.0..=1.0).contains(threshold)
+                || *feather < 0.0
+            {
+                return Err(PipelineError::InvalidMask(
+                    "generated AI mask reference is invalid",
+                ));
+            }
+            let raster = generated_masks
+                .iter()
+                .find(|candidate| {
+                    candidate.cache_identity == *cache_identity
+                        && candidate.semantic == *semantic_class
+                })
+                .ok_or_else(|| PipelineError::MaskProviderUnavailable {
+                    provider: format!("AI mask cache: {cache_identity}"),
+                })?;
+            let probability = raster.weight_at(x, y)?;
+            let refined = smoothstep(
+                *threshold - *feather,
+                *threshold + *feather + 1.0e-5,
+                probability,
+            );
+            if *invert { 1.0 - refined } else { refined }
+        }
         MaskDefinition::Provider { provider, .. } => {
             return Err(PipelineError::MaskProviderUnavailable {
                 provider: provider.clone(),
@@ -703,6 +805,7 @@ fn mask_weight(
     y: f32,
     rgb: LinearRgb,
     portrait_masks: &[PortraitMaskRaster],
+    generated_masks: &[GeneratedMaskRaster],
 ) -> Result<f32, PipelineError> {
     if !x.is_finite()
         || !y.is_finite()
@@ -715,22 +818,37 @@ fn mask_weight(
         ));
     }
     match mask {
-        MaskTree::Leaf(leaf) => mask_leaf_weight(leaf, x, y, rgb, portrait_masks),
+        MaskTree::Leaf(leaf) => mask_leaf_weight(leaf, x, y, rgb, portrait_masks, generated_masks),
         MaskTree::Composite(composite) => {
             let mut children = composite.children.iter();
             let Some(first) = children.next() else {
                 return Ok(0.0);
             };
-            let first_weight = mask_weight(first, x, y, rgb, portrait_masks)?;
+            let first_weight = mask_weight(first, x, y, rgb, portrait_masks, generated_masks)?;
             match composite.operation {
                 MaskOperation::Add => children.try_fold(first_weight, |value, child| {
-                    Ok(value.max(mask_weight(child, x, y, rgb, portrait_masks)?))
+                    Ok(value.max(mask_weight(
+                        child,
+                        x,
+                        y,
+                        rgb,
+                        portrait_masks,
+                        generated_masks,
+                    )?))
                 }),
                 MaskOperation::Subtract => children.try_fold(first_weight, |value, child| {
-                    Ok(value * (1.0 - mask_weight(child, x, y, rgb, portrait_masks)?))
+                    Ok(value
+                        * (1.0 - mask_weight(child, x, y, rgb, portrait_masks, generated_masks)?))
                 }),
                 MaskOperation::Intersect => children.try_fold(first_weight, |value, child| {
-                    Ok(value.min(mask_weight(child, x, y, rgb, portrait_masks)?))
+                    Ok(value.min(mask_weight(
+                        child,
+                        x,
+                        y,
+                        rgb,
+                        portrait_masks,
+                        generated_masks,
+                    )?))
                 }),
                 MaskOperation::Invert => Ok(1.0 - first_weight),
             }
@@ -744,6 +862,7 @@ fn apply_layers(
     x: f32,
     y: f32,
     portrait_masks: &[PortraitMaskRaster],
+    generated_masks: &[GeneratedMaskRaster],
 ) -> Result<LinearRgb, PipelineError> {
     for layer in layers {
         if !layer.enabled {
@@ -777,7 +896,8 @@ fn apply_layers(
         );
         // M14 deliberately supports only Normal. Any future mode must earn an explicit
         // scene-linear implementation rather than quietly behaving like Normal.
-        let weight = layer.opacity * mask_weight(&layer.mask, x, y, rgb, portrait_masks)?;
+        let weight =
+            layer.opacity * mask_weight(&layer.mask, x, y, rgb, portrait_masks, generated_masks)?;
         rgb = LinearRgb {
             r: rgb.r + (adjusted.r - rgb.r) * weight,
             g: rgb.g + (adjusted.g - rgb.g) * weight,
@@ -791,6 +911,93 @@ fn apply_layers(
         }
     }
     Ok(rgb)
+}
+
+fn skin_retouch_is_identity(parameters: SkinRetouchParameters) -> bool {
+    parameters == SkinRetouchParameters::default()
+}
+
+fn apply_skin_retouch_stage(
+    data: Vec<f32>,
+    width: usize,
+    height: usize,
+    settings: &RenderSettings,
+) -> Result<Vec<f32>, PipelineError> {
+    let parameters = settings.skin_retouch.parameters;
+    if skin_retouch_is_identity(parameters) {
+        return Ok(data);
+    }
+    if settings.skin_retouch.faces.is_empty() {
+        return Err(PipelineError::MaskProviderUnavailable {
+            provider: "M17 skin retouch requires a detected portrait face".into(),
+        });
+    }
+    let image = LinearImage::new(width, height, data).map_err(|_| PipelineError::DetailBuffer)?;
+    let count = width.saturating_mul(height);
+    let mut skin = vec![0.0_f32; count];
+    let mut protected = vec![0.0_f32; count];
+    for reference in &settings.skin_retouch.faces {
+        let found = settings.portrait_masks.iter().filter(|raster| {
+            raster.cache_key == reference.cache_key && raster.face_id == reference.face_id
+        });
+        let mut matched = false;
+        for raster in found {
+            matched = true;
+            for pixel in 0..count {
+                let x = (pixel % width) as f32 / width.max(1) as f32;
+                let y = (pixel / width) as f32 / height.max(1) as f32;
+                let value = raster.weight_at(x, y)?;
+                match raster.region {
+                    PortraitMaskRegion::Skin => skin[pixel] = skin[pixel].max(value),
+                    PortraitMaskRegion::Eyes
+                    | PortraitMaskRegion::LeftEye
+                    | PortraitMaskRegion::RightEye
+                    | PortraitMaskRegion::Brows
+                    | PortraitMaskRegion::LeftBrow
+                    | PortraitMaskRegion::RightBrow
+                    | PortraitMaskRegion::Lips
+                    | PortraitMaskRegion::Mouth
+                    | PortraitMaskRegion::Hair => protected[pixel] = protected[pixel].max(value),
+                    PortraitMaskRegion::Face => {}
+                }
+            }
+        }
+        if !matched {
+            return Err(PipelineError::MaskProviderUnavailable {
+                provider: format!("M17 portrait cache: {}", reference.cache_key),
+            });
+        }
+    }
+    apply_skin_retouch(&image, parameters, &skin, &protected)
+        .map(|image| image.data)
+        .map_err(|_| PipelineError::InvalidMask("M17 skin retouch data is invalid"))
+}
+
+fn apply_healing_stage(
+    data: Vec<f32>,
+    width: usize,
+    height: usize,
+    settings: &RenderSettings,
+) -> Result<Vec<f32>, PipelineError> {
+    if settings.healing_operations.len() > 256 {
+        return Err(PipelineError::InvalidMask(
+            "M18 operation count exceeds 256",
+        ));
+    }
+    let mut image =
+        LinearImage::new(width, height, data).map_err(|_| PipelineError::DetailBuffer)?;
+    for operation in &settings.healing_operations {
+        image = apply_operation(&image, operation).map_err(|error| {
+            PipelineError::InvalidMask(match error {
+                starroom_heal::HealError::InvalidOperation => "M18 healing operation is invalid",
+                starroom_heal::HealError::MissingManualSource => "M18 manual source is missing",
+                starroom_heal::HealError::AiInpaintUnavailable => {
+                    "M18 AI inpaint is reserved and unavailable"
+                }
+            })
+        })?;
+    }
+    Ok(image.data)
 }
 
 fn apply_creative_graph(
@@ -845,13 +1052,21 @@ fn apply_creative_graph(
         rgb = apply_grading(rgb, settings.grading);
         let x = (index % width) as f32 / width.max(1) as f32;
         let y = (index / width) as f32 / height.max(1) as f32;
-        rgb = apply_layers(rgb, &settings.layers, x, y, &settings.portrait_masks)?;
+        rgb = apply_layers(
+            rgb,
+            &settings.layers,
+            x,
+            y,
+            &settings.portrait_masks,
+            &settings.generated_masks,
+        )?;
         if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
             return Err(PipelineError::InvalidDecodedBuffer);
         }
         data.extend_from_slice(&[rgb.r, rgb.g, rgb.b]);
     }
-    Ok(data)
+    let data = apply_skin_retouch_stage(data, width, height, settings)?;
+    apply_healing_stage(data, width, height, settings)
 }
 
 fn to_working_image(
@@ -1302,9 +1517,10 @@ mod tests {
             0.5,
             0.5,
             &[],
+            &[],
         )
         .expect("layers");
-        let reversed = apply_layers(initial, &[contrast_half, brighten], 0.5, 0.5, &[])
+        let reversed = apply_layers(initial, &[contrast_half, brighten], 0.5, 0.5, &[], &[])
             .expect("reversed layers");
         assert!(output.r.is_finite() && output.g.is_finite() && output.b.is_finite());
         assert!(
@@ -1335,6 +1551,7 @@ mod tests {
                 0.5,
                 0.5,
                 &[],
+                &[],
             ),
             Err(PipelineError::InvalidLayer { .. })
         ));
@@ -1350,6 +1567,7 @@ mod tests {
                 &[invalid],
                 0.5,
                 0.5,
+                &[],
                 &[],
             ),
             Err(PipelineError::InvalidLayer { .. })
@@ -1392,6 +1610,7 @@ mod tests {
                 b: 0.3,
             },
             &[],
+            &[],
         )
         .expect("mask");
         let edge = mask_weight(
@@ -1403,6 +1622,7 @@ mod tests {
                 g: 0.3,
                 b: 0.3,
             },
+            &[],
             &[],
         )
         .expect("mask");
@@ -1427,8 +1647,8 @@ mod tests {
             operation: MaskOperation::Invert,
             children: vec![luminance.clone().into()],
         });
-        let selected = mask_weight(&luminance.into(), 0.5, 0.5, rgb, &[]).expect("luma");
-        let inverse = mask_weight(&inverted, 0.5, 0.5, rgb, &[]).expect("inverse");
+        let selected = mask_weight(&luminance.into(), 0.5, 0.5, rgb, &[], &[]).expect("luma");
+        let inverse = mask_weight(&inverted, 0.5, 0.5, rgb, &[], &[]).expect("inverse");
         assert!((selected + inverse - 1.0).abs() < 1.0e-5);
         let color = MaskDefinition::ColorRange {
             reference: [0.4, 0.4, 0.4],
@@ -1436,7 +1656,7 @@ mod tests {
             feather: 0.1,
             invert: false,
         };
-        assert!(mask_weight(&color.into(), 0.5, 0.5, rgb, &[]).expect("color") > 0.99);
+        assert!(mask_weight(&color.into(), 0.5, 0.5, rgb, &[], &[]).expect("color") > 0.99);
     }
 
     #[test]
@@ -1456,6 +1676,7 @@ mod tests {
                     g: 0.2,
                     b: 0.2
                 },
+                &[],
                 &[],
             ),
             Err(PipelineError::MaskProviderUnavailable { .. })
@@ -1494,8 +1715,8 @@ mod tests {
             b: 0.2,
         };
         let center =
-            apply_layers(source, std::slice::from_ref(&layer), 0.5, 0.5, &[]).expect("center");
-        let outside = apply_layers(source, &[layer], 0.0, 0.0, &[]).expect("outside");
+            apply_layers(source, std::slice::from_ref(&layer), 0.5, 0.5, &[], &[]).expect("center");
+        let outside = apply_layers(source, &[layer], 0.0, 0.0, &[], &[]).expect("outside");
         assert!(center.r > source.r * 1.8);
         assert!((outside.r - source.r).abs() < 1.0e-6);
     }
@@ -1527,11 +1748,64 @@ mod tests {
             b: 0.2,
         };
         assert!(
-            mask_weight(&leaf, 0.0, 0.0, rgb, std::slice::from_ref(&raster)).expect("cache") > 0.99
+            mask_weight(&leaf, 0.0, 0.0, rgb, std::slice::from_ref(&raster), &[]).expect("cache")
+                > 0.99
         );
-        assert!(mask_weight(&leaf, 1.0, 0.0, rgb, &[raster]).expect("cache") < 0.01);
+        assert!(mask_weight(&leaf, 1.0, 0.0, rgb, &[raster], &[]).expect("cache") < 0.01);
         assert!(matches!(
-            mask_weight(&leaf, 0.0, 0.0, rgb, &[]),
+            mask_weight(&leaf, 0.0, 0.0, rgb, &[], &[]),
+            Err(PipelineError::MaskProviderUnavailable { .. })
+        ));
+    }
+
+    #[test]
+    fn m20_generated_soft_mask_uses_m15_boolean_algebra_and_requires_cache() {
+        let generated: MaskTree = MaskDefinition::Generated {
+            provider_id: "foreground".into(),
+            model_id: "birefnet-subject".into(),
+            model_version: "v1/pinned".into(),
+            model_hash: "c".repeat(64),
+            semantic_class: GeneratedMaskSemantic::Subject,
+            threshold: 0.5,
+            feather: 0.1,
+            invert: false,
+            cache_identity: "subject-cache".into(),
+            metadata: Default::default(),
+        }
+        .into();
+        let tree = MaskTree::Composite(starroom_project::MaskComposite {
+            operation: MaskOperation::Intersect,
+            children: vec![
+                generated.clone(),
+                MaskDefinition::Luminance {
+                    minimum: 0.1,
+                    maximum: 0.8,
+                    feather: 0.02,
+                    invert: false,
+                }
+                .into(),
+            ],
+        });
+        let raster = GeneratedMaskRaster {
+            cache_identity: "subject-cache".into(),
+            semantic: GeneratedMaskSemantic::Subject,
+            width: 2,
+            height: 1,
+            values: vec![0.9, 0.1],
+        };
+        let rgb = LinearRgb {
+            r: 0.4,
+            g: 0.4,
+            b: 0.4,
+        };
+        assert!(
+            mask_weight(&tree, 0.0, 0.0, rgb, &[], std::slice::from_ref(&raster))
+                .expect("generated")
+                > 0.9
+        );
+        assert!(mask_weight(&tree, 1.0, 0.0, rgb, &[], &[raster]).expect("generated") < 0.01);
+        assert!(matches!(
+            mask_weight(&generated, 0.0, 0.0, rgb, &[], &[]),
             Err(PipelineError::MaskProviderUnavailable { .. })
         ));
     }
@@ -2078,6 +2352,123 @@ mod tests {
         assert_eq!(preview, export);
         assert_eq!(preview.color.input, InputProfileSource::AssumedSrgb);
         assert_eq!(preview.color.output, OutputProfileSource::Srgb);
+    }
+
+    #[test]
+    fn m17_skin_retouch_uses_native_portrait_masks_and_preview_export_graph() {
+        let decoded = fixture(&[[0.18, 0.12, 0.09, 1.0], [0.88, 0.58, 0.38, 1.0]]);
+        let mut settings = RenderSettings::default();
+        settings.skin_retouch = SkinRetouchSettings {
+            parameters: SkinRetouchParameters {
+                smooth: 0.75,
+                texture: 0.70,
+                tone_evenness: 0.35,
+                hue_degrees: 4.0,
+                chroma: -0.1,
+                exposure_ev: 0.2,
+            },
+            faces: vec![SkinRetouchFaceReference {
+                face_id: "face-a".into(),
+                cache_key: "cache-a".into(),
+            }],
+        };
+        for (region, values) in [
+            (PortraitMaskRegion::Skin, vec![1.0, 1.0]),
+            (PortraitMaskRegion::Eyes, vec![0.0, 1.0]),
+            (PortraitMaskRegion::Brows, vec![0.0, 0.0]),
+            (PortraitMaskRegion::Lips, vec![0.0, 0.0]),
+            (PortraitMaskRegion::Hair, vec![0.0, 0.0]),
+            (PortraitMaskRegion::LeftEye, vec![0.0, 0.0]),
+            (PortraitMaskRegion::RightEye, vec![0.0, 0.0]),
+            (PortraitMaskRegion::LeftBrow, vec![0.0, 0.0]),
+            (PortraitMaskRegion::RightBrow, vec![0.0, 0.0]),
+            (PortraitMaskRegion::Mouth, vec![0.0, 0.0]),
+        ] {
+            settings.portrait_masks.push(PortraitMaskRaster {
+                cache_key: "cache-a".into(),
+                face_id: "face-a".into(),
+                region,
+                width: 2,
+                height: 1,
+                values,
+            });
+        }
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("M17 preview");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("M17 export");
+        assert_eq!(
+            preview, export,
+            "M17 cannot diverge between preview and export"
+        );
+        assert!(preview.data.iter().all(|value| *value <= 255));
+    }
+
+    #[test]
+    fn m17_enabled_skin_retouch_without_native_cache_is_typed_error() {
+        let decoded = fixture(&[[0.4, 0.25, 0.18, 1.0]]);
+        let settings = RenderSettings {
+            skin_retouch: SkinRetouchSettings {
+                parameters: SkinRetouchParameters {
+                    smooth: 0.5,
+                    ..Default::default()
+                },
+                faces: vec![SkinRetouchFaceReference {
+                    face_id: "face-a".into(),
+                    cache_key: "missing".into(),
+                }],
+            },
+            ..Default::default()
+        };
+        assert!(matches!(
+            render_preview_to_srgb8(&decoded, &settings),
+            Err(PipelineError::MaskProviderUnavailable { .. })
+        ));
+    }
+
+    #[test]
+    fn m18_healing_is_shared_by_preview_export_and_rejects_reserved_inpaint() {
+        let decoded = fixture(&[
+            [0.2, 0.2, 0.2, 1.0],
+            [0.9, 0.1, 0.1, 1.0],
+            [0.2, 0.2, 0.2, 1.0],
+        ]);
+        let operation = HealingOperation {
+            id: "spot".into(),
+            enabled: true,
+            mode: starroom_heal::HealMode::Heal,
+            target: starroom_heal::HealPoint { x: 0.5, y: 0.0 },
+            source: Some(starroom_heal::HealPoint { x: 0.0, y: 0.0 }),
+            radius: 1.0,
+            feather: 0.3,
+            opacity: 1.0,
+            rotation_degrees: 0.0,
+            scale: 1.0,
+            tone_adaptation: true,
+            texture_adaptation: true,
+            source_mode: starroom_heal::SourceMode::Manual,
+            metadata: std::collections::BTreeMap::new(),
+        };
+        let settings = RenderSettings {
+            healing_operations: vec![operation.clone()],
+            ..Default::default()
+        };
+        assert_eq!(
+            render_preview_to_srgb8(&decoded, &settings).expect("preview"),
+            render_export_to_srgb8(&decoded, &settings).expect("export")
+        );
+        let mut unavailable = operation;
+        unavailable.mode = starroom_heal::HealMode::AiInpaint;
+        assert!(matches!(
+            render_preview_to_srgb8(
+                &decoded,
+                &RenderSettings {
+                    healing_operations: vec![unavailable],
+                    ..Default::default()
+                }
+            ),
+            Err(PipelineError::InvalidMask(
+                "M18 AI inpaint is reserved and unavailable"
+            ))
+        ));
     }
 
     #[test]

@@ -135,4 +135,42 @@ describe('native preview contract', () => {
     expect(settings.layers[0].mask).toMatchObject({ type: 'portraitSemantic', cacheKey: 'face-123:crop', region: 'skin' })
     expect(JSON.stringify(settings)).not.toContain('values')
   })
+
+  it('serializes M17 skin controls and face cache identities without semantic pixels', () => {
+    const settings = toNativeSettings(defaultAdjustments, [], 'sourceDefault', null,
+      { master: [], red: [], green: [], blue: [] }, undefined, [], defaultMask, {
+        parameters: { smooth: .45, texture: .7, toneEvenness: .25, hueDegrees: 8, chroma: -.15, exposureEv: .3 },
+        faces: [{ faceId: 'face-123', cacheKey: 'face-123:crop' }],
+      })
+    expect(settings.skinRetouch).toEqual({
+      parameters: { smooth: .45, texture: .7, toneEvenness: .25, hueDegrees: 8, chroma: -.15, exposureEv: .3 },
+      faces: [{ faceId: 'face-123', cacheKey: 'face-123:crop' }],
+    })
+    expect(JSON.stringify(settings.skinRetouch)).not.toContain('values')
+  })
+
+  it('serializes M18 healing intent with source coordinates only', () => {
+    const settings = toNativeSettings(defaultAdjustments, [], 'sourceDefault', null,
+      { master: [], red: [], green: [], blue: [] }, undefined, [], defaultMask, undefined, [{
+        id: 'heal-1', enabled: true, mode: 'heal', target: { x: .5, y: .4 }, source: null,
+        radius: 24, feather: .55, opacity: .85, rotationDegrees: 0, scale: 1,
+        toneAdaptation: true, textureAdaptation: true, sourceMode: 'auto', metadata: { interaction: 'brush' },
+      }])
+    expect(settings.healingOperations[0]).toMatchObject({ id: 'heal-1', sourceMode: 'auto', target: { x: .5, y: .4 } })
+    expect(JSON.stringify(settings.healingOperations)).not.toContain('pixels')
+  })
+
+  it('serializes M20 GeneratedMaskNode metadata without raster pixels', () => {
+    const layers = [{ id: 'ai-sky', name: 'AI sky', enabled: true, opacity: 1, blendMode: 'normal' as const,
+      mask: { type: 'generated' as const, providerId: 'semantic-scene', modelId: 'segformer-b0-ade20k-sky',
+        modelVersion: '489d5cd81a0b59fab9b7ea758d3548ebe99677da', modelHash: 'd'.repeat(64), semanticClass: 'sky' as const,
+        threshold: .5, feather: .08, invert: false, cacheIdentity: 'source-provider-model-params',
+        metadata: { executionProvider: 'cpu' } },
+      adjustments: { tone: { exposureEv: -.2, contrast: 0, highlights: -10, shadows: 0, whites: 0, blacks: 0 } } }]
+    const settings = toNativeSettings(defaultAdjustments, [], 'sourceDefault', null,
+      { master: [], red: [], green: [], blue: [] }, undefined, layers)
+    expect(settings.layers[0].mask).toMatchObject({ type: 'generated', semanticClass: 'sky', cacheIdentity: 'source-provider-model-params' })
+    expect(JSON.stringify(settings)).not.toContain('values')
+    expect(JSON.stringify(settings)).not.toContain('pixels')
+  })
 })

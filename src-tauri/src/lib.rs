@@ -1,31 +1,42 @@
 use serde::{Deserialize, Serialize};
-use starroom_advisor::{AnalysisStats, Suggestion, advise};
+use sha2::{Digest, Sha256};
+use starroom_advisor::{
+    AdvisorResult, AnalysisStats, Suggestion, advise, advise_detailed, analyze_detailed,
+};
 use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
 use starroom_geometry::GeometryParameters;
 use starroom_grading::GradingParameters;
+use starroom_heal::HealingOperation;
 use starroom_imageio::{
     DecodedSourceImage, decode_source, decode_source_preview, encode_jpeg_rgb8,
 };
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
-    NativeAdjustmentLayer, PortraitMaskRaster, RelativeColorParameters, RenderSettings,
-    ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample, WhiteBalanceSettings,
-    render_source_export_to_srgb8, render_source_preview_to_srgb8,
+    GeneratedMaskRaster, NativeAdjustmentLayer, PortraitMaskRaster, RelativeColorParameters,
+    RenderSettings, SkinRetouchSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
+    WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_to_srgb8,
     render_source_preview_with_gpu_to_srgb8, resolve_source_lens_profile, sample_source_color_band,
 };
 use starroom_portrait::{
-    DetectedFace, PortraitError, PortraitModelRegistry, PortraitOnnxProvider, PortraitParseResult,
-    PortraitRegion,
+    AiMaskError, AiMaskModelRegistry, AiMaskOnnxProvider, AiMaskProvider, AiMaskSemantic,
+    DetectedFace, GeneratedAiMask, PortraitError, PortraitModelRegistry, PortraitOnnxProvider,
+    PortraitParseResult, PortraitRegion, cancellation_token,
 };
-use starroom_project::{MaskDefinition, MaskTree, PortraitMaskRegion};
+use starroom_project::{GeneratedMaskSemantic, MaskDefinition, MaskTree, PortraitMaskRegion};
 use starroom_render::{
     RenderGraph,
     gpu::{GpuBackendKind, GpuRenderer, GpuStatus, probe_gpu_status},
     scheduler::{Completion, DEFAULT_TILE_EDGE, RenderScheduler, SchedulerStatus, Viewport},
 };
 use std::path::{Path, PathBuf};
-use std::{collections::BTreeMap, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use tauri::State;
 use tauri::ipc::Response;
 
@@ -119,6 +130,10 @@ struct NativeEditSettings {
     geometry: GeometryParameters,
     #[serde(default)]
     layers: Vec<NativeAdjustmentLayer>,
+    #[serde(default)]
+    skin_retouch: SkinRetouchSettings,
+    #[serde(default)]
+    healing_operations: Vec<HealingOperation>,
 }
 
 impl NativeEditSettings {
@@ -140,6 +155,12 @@ impl NativeEditSettings {
             self.grading.balance,
             self.grading.blending,
             self.grading.amount,
+            self.skin_retouch.parameters.smooth,
+            self.skin_retouch.parameters.texture,
+            self.skin_retouch.parameters.tone_evenness,
+            self.skin_retouch.parameters.hue_degrees,
+            self.skin_retouch.parameters.chroma,
+            self.skin_retouch.parameters.exposure_ev,
         ]
         .into_iter()
         .all(f32::is_finite)
@@ -155,6 +176,24 @@ impl NativeEditSettings {
         }
         if self.layers.len() > 64 {
             return Err("native layer stack accepts at most 64 layers".into());
+        }
+        if self.skin_retouch.faces.len() > 16
+            || self
+                .skin_retouch
+                .faces
+                .iter()
+                .any(|face| face.face_id.trim().is_empty() || face.cache_key.trim().is_empty())
+            || self.skin_retouch.parameters.validated().is_err()
+        {
+            return Err("native skin retouch settings are outside supported ranges".into());
+        }
+        if self.healing_operations.len() > 256
+            || self
+                .healing_operations
+                .iter()
+                .any(|operation| operation.validate().is_err())
+        {
+            return Err("native healing operations are outside supported ranges or request unavailable AI inpaint".into());
         }
         let mut layer_ids = std::collections::BTreeSet::new();
         if self
@@ -332,6 +371,8 @@ impl NativeEditSettings {
             optics: self.optics,
             geometry: self.geometry,
             layers: self.layers,
+            skin_retouch: self.skin_retouch,
+            healing_operations: self.healing_operations,
             ..Default::default()
         })
     }
@@ -365,6 +406,51 @@ struct PortraitRuntimeState {
 impl Default for NativePortraitRuntime {
     fn default() -> Self {
         Self(Mutex::new(PortraitRuntimeState::default()))
+    }
+}
+
+struct NativeAiMaskRuntime {
+    provider: Mutex<Option<AiMaskOnnxProvider>>,
+    cache: Mutex<BTreeMap<String, GeneratedAiMask>>,
+    cancellations: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
+}
+
+impl Default for NativeAiMaskRuntime {
+    fn default() -> Self {
+        Self {
+            provider: Mutex::new(None),
+            cache: Mutex::new(BTreeMap::new()),
+            cancellations: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiMaskFailure {
+    code: &'static str,
+    message: String,
+}
+
+impl From<AiMaskError> for AiMaskFailure {
+    fn from(value: AiMaskError) -> Self {
+        let code = match value {
+            AiMaskError::ModelMissing { .. } => "modelMissing",
+            AiMaskError::ModelHashMismatch { .. } => "modelHashMismatch",
+            AiMaskError::RuntimeUnavailable(_) => "runtimeUnavailable",
+            AiMaskError::ProviderInitializationFailed(_) => "providerInitializationFailed",
+            AiMaskError::DirectMlUnavailable(_) => "directMlUnavailable",
+            AiMaskError::InferenceFailed(_) => "inferenceFailed",
+            AiMaskError::InvalidTensor(_) => "invalidTensor",
+            AiMaskError::InvalidOutput(_) => "invalidOutput",
+            AiMaskError::OutOfMemory => "outOfMemory",
+            AiMaskError::Cancelled => "cancelled",
+            AiMaskError::PortraitProviderRequired(_) => "portraitProviderRequired",
+        };
+        Self {
+            code,
+            message: value.to_string(),
+        }
     }
 }
 
@@ -459,6 +545,86 @@ struct NativeColorSampleRequest {
     x: f32,
     y: f32,
     settings: NativeEditSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeAdvisorRequest {
+    source_path: PathBuf,
+    max_edge: u32,
+    settings: NativeEditSettings,
+}
+
+/// M19 runs deterministic analysis locally on the same native graph that produces preview.
+/// The UI receives small statistics/suggestions only; no image pixels or cloud request cross IPC.
+#[tauri::command]
+fn advise_native_image(
+    portrait_runtime: State<'_, NativePortraitRuntime>,
+    request: NativeAdvisorRequest,
+) -> Result<AdvisorResult, String> {
+    let mut settings = request.settings.validated()?;
+    attach_portrait_masks(&mut settings, &portrait_runtime)?;
+    let decoded = decode_source_preview(&request.source_path, request.max_edge.clamp(256, 2048))
+        .map_err(|error| format!("advisor preview decode failed: {error}"))?;
+    let rendered = render_source_preview_to_srgb8(&decoded, &settings)
+        .map_err(|error| format!("advisor native graph failed: {error}"))?;
+    let samples = rendered
+        .data
+        .chunks_exact(3)
+        .map(|rgb| {
+            [
+                rgb[0] as f32 / 255.0,
+                rgb[1] as f32 / 255.0,
+                rgb[2] as f32 / 255.0,
+            ]
+        })
+        .collect::<Vec<_>>();
+    let mut analysis = analyze_detailed(&samples);
+    let skin_rasters = settings
+        .portrait_masks
+        .iter()
+        .filter(|raster| raster.region == PortraitMaskRegion::Skin)
+        .collect::<Vec<_>>();
+    if !skin_rasters.is_empty() {
+        let mut weight_sum = 0.0_f32;
+        let mut luma_sum = 0.0_f32;
+        let mut chroma_sum = 0.0_f32;
+        for (index, rgb) in samples.iter().enumerate() {
+            let x = (index % rendered.width as usize) as f32
+                / rendered.width.saturating_sub(1).max(1) as f32;
+            let y = (index / rendered.width as usize) as f32
+                / rendered.height.saturating_sub(1).max(1) as f32;
+            let weight = skin_rasters
+                .iter()
+                .map(|raster| {
+                    let px = (x * raster.width.saturating_sub(1) as f32).round() as usize;
+                    let py = (y * raster.height.saturating_sub(1) as f32).round() as usize;
+                    raster
+                        .values
+                        .get(py * raster.width as usize + px)
+                        .copied()
+                        .unwrap_or(0.0)
+                })
+                .fold(0.0_f32, f32::max)
+                .clamp(0.0, 1.0);
+            let luma = rgb[0] * 0.2627 + rgb[1] * 0.6780 + rgb[2] * 0.0593;
+            let chroma =
+                ((rgb[0] - rgb[1]).powi(2) + (rgb[1] - rgb[2]).powi(2) + (rgb[2] - rgb[0]).powi(2))
+                    .sqrt();
+            weight_sum += weight;
+            luma_sum += luma * weight;
+            chroma_sum += chroma * weight;
+        }
+        if weight_sum > 0.0 {
+            analysis.portrait_luminance_mean = luma_sum / weight_sum;
+            analysis.portrait_chroma_mean = chroma_sum / weight_sum;
+            analysis.portrait_sample_fraction = weight_sum / samples.len().max(1) as f32;
+        }
+    }
+    Ok(AdvisorResult {
+        suggestions: advise_detailed(analysis.clone()),
+        analysis,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -559,6 +725,18 @@ fn local_portrait_models() -> PortraitModelRegistry {
     PortraitModelRegistry::local_default(root)
 }
 
+fn local_ai_mask_models() -> AiMaskModelRegistry {
+    let root = std::env::var_os("STARROOM_LOCAL_MODELS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("models").join("local"));
+    AiMaskModelRegistry::local_default(root)
+}
+
+fn source_content_hash(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("source hash read failed: {error}"))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
 fn source_rgba_for_portrait(path: &Path) -> Result<(u32, u32, Vec<u8>, String), PortraitError> {
     // M16 identity is source-image space, never the M13 preview-pyramid size.
     let decoded = decode_source(path)
@@ -595,6 +773,68 @@ fn collect_portrait_mask_references(
     }
 }
 
+fn collect_generated_mask_references(
+    tree: &MaskTree,
+    values: &mut Vec<(String, GeneratedMaskSemantic)>,
+) {
+    match tree {
+        MaskTree::Leaf(MaskDefinition::Generated {
+            cache_identity,
+            semantic_class,
+            ..
+        }) => {
+            values.push((cache_identity.clone(), *semantic_class));
+        }
+        MaskTree::Leaf(_) => {}
+        MaskTree::Composite(composite) => {
+            for child in &composite.children {
+                collect_generated_mask_references(child, values);
+            }
+        }
+    }
+}
+
+fn attach_generated_masks(
+    settings: &mut RenderSettings,
+    runtime: &NativeAiMaskRuntime,
+) -> Result<(), String> {
+    let mut references = Vec::new();
+    for layer in &settings.layers {
+        collect_generated_mask_references(&layer.mask, &mut references);
+    }
+    if references.is_empty() {
+        return Ok(());
+    }
+    let cache = runtime
+        .cache
+        .lock()
+        .map_err(|_| "AI mask cache lock was poisoned".to_owned())?;
+    for (cache_identity, semantic) in references {
+        let generated = cache
+            .get(&cache_identity)
+            .ok_or_else(|| format!("AI mask cache is unavailable: {cache_identity}"))?;
+        let expected = match generated.semantic {
+            AiMaskSemantic::Subject => GeneratedMaskSemantic::Subject,
+            AiMaskSemantic::Background => GeneratedMaskSemantic::Background,
+            AiMaskSemantic::Person => GeneratedMaskSemantic::Person,
+            AiMaskSemantic::Sky => GeneratedMaskSemantic::Sky,
+            AiMaskSemantic::Skin => GeneratedMaskSemantic::Skin,
+            AiMaskSemantic::Hair => GeneratedMaskSemantic::Hair,
+        };
+        if expected != semantic {
+            return Err(format!("AI mask semantic cache mismatch: {cache_identity}"));
+        }
+        settings.generated_masks.push(GeneratedMaskRaster {
+            cache_identity,
+            semantic,
+            width: generated.mask.width,
+            height: generated.mask.height,
+            values: generated.mask.values.clone(),
+        });
+    }
+    Ok(())
+}
+
 fn attach_portrait_masks(
     settings: &mut RenderSettings,
     runtime: &NativePortraitRuntime,
@@ -602,6 +842,22 @@ fn attach_portrait_masks(
     let mut references = Vec::new();
     for layer in &settings.layers {
         collect_portrait_mask_references(&layer.mask, &mut references);
+    }
+    for face in &settings.skin_retouch.faces {
+        for region in [
+            PortraitMaskRegion::Skin,
+            PortraitMaskRegion::Eyes,
+            PortraitMaskRegion::LeftEye,
+            PortraitMaskRegion::RightEye,
+            PortraitMaskRegion::Brows,
+            PortraitMaskRegion::LeftBrow,
+            PortraitMaskRegion::RightBrow,
+            PortraitMaskRegion::Lips,
+            PortraitMaskRegion::Mouth,
+            PortraitMaskRegion::Hair,
+        ] {
+            references.push((face.cache_key.clone(), face.face_id.clone(), region));
+        }
     }
     if references.is_empty() {
         return Ok(());
@@ -743,6 +999,143 @@ fn portrait_detect(
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiMaskGenerateRequest {
+    source_path: PathBuf,
+    semantic: AiMaskSemantic,
+    request_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiMaskGenerateResponse {
+    status: &'static str,
+    provider_id: String,
+    model_id: String,
+    model_version: String,
+    model_hash: String,
+    semantic_class: AiMaskSemantic,
+    cache_identity: String,
+    execution_provider: starroom_portrait::ExecutionProvider,
+}
+
+#[tauri::command]
+fn ai_mask_generate(
+    runtime: State<'_, NativeAiMaskRuntime>,
+    request: AiMaskGenerateRequest,
+) -> Result<AiMaskGenerateResponse, AiMaskFailure> {
+    if request.request_id.trim().is_empty() {
+        return Err(AiMaskError::InvalidTensor("request id is empty".into()).into());
+    }
+    if matches!(
+        request.semantic,
+        AiMaskSemantic::Person | AiMaskSemantic::Skin | AiMaskSemantic::Hair
+    ) {
+        return Err(AiMaskError::PortraitProviderRequired(request.semantic).into());
+    }
+    let source_hash = source_content_hash(&request.source_path)
+        .map_err(|error| AiMaskFailure::from(AiMaskError::InferenceFailed(error)))?;
+    if let Ok(cache) = runtime.cache.lock() {
+        if let Some(result) = cache.values().find(|result| {
+            result.semantic == request.semantic
+                && result.cache_identity
+                    == format!(
+                        "{:x}",
+                        Sha256::digest(
+                            format!(
+                                "{source_hash}:ai-mask-v1:{:?}:{}",
+                                request.semantic, result.model_hash
+                            )
+                            .as_bytes()
+                        )
+                    )
+        }) {
+            return Ok(AiMaskGenerateResponse {
+                status: "cached",
+                provider_id: result.provider_id.clone(),
+                model_id: result.model_id.clone(),
+                model_version: result.model_version.clone(),
+                model_hash: result.model_hash.clone(),
+                semantic_class: result.semantic,
+                cache_identity: result.cache_identity.clone(),
+                execution_provider: result.execution_provider,
+            });
+        }
+    }
+    let token = cancellation_token();
+    runtime
+        .cancellations
+        .lock()
+        .map_err(|_| {
+            AiMaskFailure::from(AiMaskError::RuntimeUnavailable(
+                "cancellation lock poisoned".into(),
+            ))
+        })?
+        .insert(request.request_id.clone(), Arc::clone(&token));
+    let (width, height, rgba, _) = source_rgba_for_portrait(&request.source_path)
+        .map_err(|error| AiMaskFailure::from(AiMaskError::InferenceFailed(error.to_string())))?;
+    let generated = {
+        let mut provider_guard = runtime.provider.lock().map_err(|_| {
+            AiMaskFailure::from(AiMaskError::RuntimeUnavailable(
+                "provider lock poisoned".into(),
+            ))
+        })?;
+        if provider_guard.is_none() {
+            *provider_guard = Some(
+                AiMaskOnnxProvider::initialize(local_ai_mask_models())
+                    .map_err(AiMaskFailure::from)?,
+            );
+        }
+        provider_guard
+            .as_mut()
+            .expect("initialized above")
+            .generate(width, height, &rgba, &source_hash, request.semantic, &token)
+    };
+    runtime
+        .cancellations
+        .lock()
+        .map_err(|_| {
+            AiMaskFailure::from(AiMaskError::RuntimeUnavailable(
+                "cancellation lock poisoned".into(),
+            ))
+        })?
+        .remove(&request.request_id);
+    let result = generated.map_err(AiMaskFailure::from)?;
+    runtime
+        .cache
+        .lock()
+        .map_err(|_| {
+            AiMaskFailure::from(AiMaskError::RuntimeUnavailable(
+                "cache lock poisoned".into(),
+            ))
+        })?
+        .insert(result.cache_identity.clone(), result.clone());
+    Ok(AiMaskGenerateResponse {
+        status: "ready",
+        provider_id: result.provider_id,
+        model_id: result.model_id,
+        model_version: result.model_version,
+        model_hash: result.model_hash,
+        semantic_class: result.semantic,
+        cache_identity: result.cache_identity,
+        execution_provider: result.execution_provider,
+    })
+}
+
+#[tauri::command]
+fn ai_mask_cancel(runtime: State<'_, NativeAiMaskRuntime>, request_id: String) -> bool {
+    runtime
+        .cancellations
+        .lock()
+        .ok()
+        .and_then(|tokens| tokens.get(&request_id).cloned())
+        .is_some_and(|token| {
+            token.store(true, Ordering::Relaxed);
+            true
+        })
+}
+
 /// Explicit M13 diagnostics for progressive preview scheduling. The UI can expose cache and
 /// stale-frame statistics without receiving pixels through JSON.
 #[tauri::command]
@@ -760,12 +1153,14 @@ fn native_preview_scheduler_status(
 fn native_preview(
     scheduler: State<'_, NativePreviewScheduler>,
     portrait_runtime: State<'_, NativePortraitRuntime>,
+    ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
     request: NativePreviewRequest,
 ) -> Result<Response, String> {
     let graph_identity = serde_json::to_string(&request.settings)
         .map_err(|error| format!("native preview graph identity serialization failed: {error}"))?;
     let mut settings = request.settings.validated()?;
     attach_portrait_masks(&mut settings, &portrait_runtime)?;
+    attach_generated_masks(&mut settings, &ai_mask_runtime)?;
     let requested_edge = request.max_edge.clamp(256, 4096);
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
     let decoded = decode_source_preview(&request.source_path, level.max_edge())
@@ -854,6 +1249,7 @@ fn same_file(left: &Path, right: &Path) -> bool {
 #[tauri::command]
 fn native_export_jpeg(
     portrait_runtime: State<'_, NativePortraitRuntime>,
+    ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
     request: NativeExportRequest,
 ) -> Result<NativeExportResult, String> {
     if same_file(&request.source_path, &request.output_path) {
@@ -861,6 +1257,7 @@ fn native_export_jpeg(
     }
     let mut settings = request.settings.validated()?;
     attach_portrait_masks(&mut settings, &portrait_runtime)?;
+    attach_generated_masks(&mut settings, &ai_mask_runtime)?;
     let decoded = decode_source(&request.source_path)
         .map_err(|error| format!("native export decode failed: {error}"))?;
     let rendered = render_source_export_to_srgb8(&decoded, &settings)
@@ -904,16 +1301,20 @@ pub fn run() {
     tauri::Builder::default()
         .manage(NativePreviewScheduler::default())
         .manage(NativePortraitRuntime::default())
+        .manage(NativeAiMaskRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             engine_status,
             engine_capabilities,
             gpu_preview_status,
             advise_image,
+            advise_native_image,
             native_preview,
             native_preview_scheduler_status,
             native_export_jpeg,
             portrait_detect,
+            ai_mask_generate,
+            ai_mask_cancel,
             native_sample_color,
             native_optics_status
         ])
@@ -954,6 +1355,8 @@ mod tests {
             optics: OpticsSettings::default(),
             geometry: GeometryParameters::default(),
             layers: Vec::new(),
+            skin_retouch: SkinRetouchSettings::default(),
+            healing_operations: Vec::new(),
         }
     }
 

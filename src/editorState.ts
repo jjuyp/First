@@ -1,5 +1,5 @@
 export type Theme = 'dark' | 'gray' | 'light'
-export type Tool = 'light' | 'color' | 'curve' | 'detail' | 'masks' | 'optics' | 'geometry'
+export type Tool = 'light' | 'color' | 'curve' | 'detail' | 'masks' | 'heal' | 'optics' | 'geometry'
 
 export type AdjustmentKey =
   | 'exposure'

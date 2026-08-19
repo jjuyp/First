@@ -23,6 +23,8 @@ export interface NativePortraitLandmark { x: number; y: number; z: number }
 export interface NativePortraitFace { id: string; confidence: number; bounds: { left: number; top: number; right: number; bottom: number }; landmarks: NativePortraitLandmark[]; crop: { centerX: number; centerY: number; side: number; rotationDegrees: number } }
 export interface NativePortraitFailure { code: string; message: string }
 export interface NativePortraitDetection { status: 'ready' | 'noFace' | 'unavailable' | 'failed'; faces: Array<{ face: NativePortraitFace; cacheKey: string }>; detectorModelId: string; detectorModelVersion: string; detectorModelHash: string; parserModelId: string; parserModelVersion: string; parserModelHash: string; executionProvider: 'cpu' | 'directMl'; error: NativePortraitFailure | null }
+export type NativeAiMaskSemantic = 'subject' | 'background' | 'person' | 'sky' | 'skin' | 'hair'
+export interface NativeAiMaskResult { status: 'ready' | 'cached'; providerId: string; modelId: string; modelVersion: string; modelHash: string; semanticClass: NativeAiMaskSemantic; cacheIdentity: string; executionProvider: 'cpu' | 'directMl' }
 export type NativeMaskDefinition =
   | { type: 'none' }
   | { type: 'radial'; x: number; y: number; width: number; height: number; rotation: number; feather: number; invert: boolean }
@@ -31,9 +33,17 @@ export type NativeMaskDefinition =
   | { type: 'luminance'; minimum: number; maximum: number; feather: number; invert: boolean }
   | { type: 'colorRange'; reference: [number, number, number]; tolerance: number; feather: number; invert: boolean }
   | { type: 'portraitSemantic'; faceId: string; region: NativePortraitRegion; threshold: number; feather: number; modelId: string; modelVersion: string; modelHash: string; cacheKey: string }
+  | { type: 'generated'; providerId: string; modelId: string; modelVersion: string; modelHash: string; semanticClass: NativeAiMaskSemantic; threshold: number; feather: number; invert: boolean; cacheIdentity: string; metadata: Record<string, string> }
 export type NativeMaskTree = NativeMaskDefinition | { operation: 'add' | 'subtract' | 'intersect' | 'invert'; children: NativeMaskTree[] }
 export interface NativeLayerAdjustments { tone: { exposureEv: number; contrast: number; highlights: number; shadows: number; whites: number; blacks: number } }
 export interface NativeAdjustmentLayer { id: string; name: string; enabled: boolean; opacity: number; blendMode: 'normal'; mask: NativeMaskTree; adjustments: NativeLayerAdjustments }
+export interface NativeSkinRetouchParameters { smooth: number; texture: number; toneEvenness: number; hueDegrees: number; chroma: number; exposureEv: number }
+export interface NativeSkinRetouchFace { faceId: string; cacheKey: string }
+export interface NativeSkinRetouchSettings { parameters: NativeSkinRetouchParameters; faces: NativeSkinRetouchFace[] }
+export const defaultNativeSkinRetouch = (): NativeSkinRetouchSettings => ({ parameters: { smooth: 0, texture: .7, toneEvenness: 0, hueDegrees: 0, chroma: 0, exposureEv: 0 }, faces: [] })
+export type NativeHealingMode = 'clone' | 'heal' | 'aiInpaint'
+export type NativeHealingSourceMode = 'auto' | 'manual'
+export interface NativeHealingOperation { id: string; enabled: boolean; mode: NativeHealingMode; target: { x: number; y: number }; source: { x: number; y: number } | null; radius: number; feather: number; opacity: number; rotationDegrees: number; scale: number; toneAdaptation: boolean; textureAdaptation: boolean; sourceMode: NativeHealingSourceMode; metadata: Record<string, string> }
 
 export interface NativeEditSettings {
   exposure: number
@@ -63,6 +73,8 @@ export interface NativeEditSettings {
     cropAspectWidth: number; cropAspectHeight: number; fourPoint: null | { topLeft: { x: number; y: number }; topRight: { x: number; y: number }; bottomRight: { x: number; y: number }; bottomLeft: { x: number; y: number } };
     uprightMode: 'off' | 'auto' | 'level' | 'vertical' | 'full' }
   layers: NativeAdjustmentLayer[]
+  skinRetouch: NativeSkinRetouchSettings
+  healingOperations: NativeHealingOperation[]
 }
 
 export interface NativePreviewResult {
@@ -75,6 +87,10 @@ export interface NativePreviewResult {
   cameraProfileId: string | null
   jpeg: Uint8Array
 }
+export type NativeAdvisorCategory = 'light' | 'whiteBalance' | 'color' | 'detail' | 'portrait'
+export type NativeAdvisorConfidence = 'low' | 'medium' | 'high'
+export interface NativeAdvisorSuggestion { id: string; category: NativeAdvisorCategory; control: string; amount: number; what: string; why: string; confidence: NativeAdvisorConfidence }
+export interface NativeAdvisorResult { analysis: { luminanceMean: number; luminanceMedian: number; p01: number; p05: number; p25: number; p50: number; p75: number; p95: number; p99: number; blackClipFraction: number; whiteClipFraction: number; globalContrast: number; meanChroma: number; highChromaFraction: number; warmthBias: number; greenMagentaBias: number; portraitLuminanceMean: number; portraitChromaMean: number; portraitSampleFraction: number }; suggestions: NativeAdvisorSuggestion[] }
 
 export interface NativeExportResult {
   outputPath: string
@@ -109,7 +125,9 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
   toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] },
   opticsState: NativeOpticsState = defaultNativeOpticsState,
   layers: NativeAdjustmentLayer[] = [],
-  mask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }): NativeEditSettings {
+  mask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 },
+  skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
+  healingOperations: NativeHealingOperation[] = []): NativeEditSettings {
   const bands: NativeColorBand[] = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'magenta']
   const title = (band: string) => `${band[0].toUpperCase()}${band.slice(1)}`
   const wheel = (zone: 'Global' | 'Shadows' | 'Midtones' | 'Highlights'): NativeColorWheel => ({
@@ -186,6 +204,8 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
         adjustments: { tone: { exposureEv: adjustments.maskExposure, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } },
       }]),
     ],
+    skinRetouch: { parameters: { ...skinRetouch.parameters }, faces: skinRetouch.faces.map((face) => ({ ...face })) },
+    healingOperations: healingOperations.map((operation) => structuredClone(operation)),
   }
 }
 
@@ -241,6 +261,14 @@ export async function detectNativePortrait(sourcePath: string, faceCropScale = 1
   return invoke<NativePortraitDetection>('portrait_detect', { request: { sourcePath, faceCropScale } })
 }
 
+export async function generateNativeAiMask(sourcePath: string, semantic: Extract<NativeAiMaskSemantic, 'subject' | 'background' | 'sky'>, requestId: string): Promise<NativeAiMaskResult> {
+  return invoke<NativeAiMaskResult>('ai_mask_generate', { request: { sourcePath, semantic, requestId } })
+}
+
+export async function cancelNativeAiMask(requestId: string): Promise<boolean> {
+  return invoke<boolean>('ai_mask_cancel', { requestId })
+}
+
 export const nativeThumbnailUrl = (path: string) => convertFileSrc(path)
 
 export async function renderNativePreview(
@@ -254,10 +282,12 @@ export async function renderNativePreview(
   opticsState: NativeOpticsState = defaultNativeOpticsState,
   layers: NativeAdjustmentLayer[] = [],
   maxEdge = 1800,
+  skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
+  healingOperations: NativeHealingOperation[] = [],
 ) {
   assertNativeSupported(adjustments, mask)
   const frame = await invoke<ArrayBuffer | Uint8Array>('native_preview', {
-    request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask) },
+    request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
   })
   return parseNativePreviewFrame(frame)
 }
@@ -268,6 +298,16 @@ export async function sampleNativeColor(sourcePath: string, x: number, y: number
   return invoke<NativeColorBand | null>('native_sample_color', {
     request: { sourcePath, x, y, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState) },
   })
+}
+
+/** M19 local, explainable advisor. It invokes Rust's shared native graph and returns only
+ * descriptive statistics plus bounded parameter suggestions—never image pixels or cloud data. */
+export async function adviseNativeImage(sourcePath: string, adjustments: Adjustments, curve: ToneCurvePoint[],
+  whiteBalanceMode: NativeWhiteBalanceMode, whiteBalanceSample: NativeWhiteBalanceSample | null,
+  toneCurves: NativeToneCurves, opticsState: NativeOpticsState, layers: NativeAdjustmentLayer[] = [],
+  skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(), healingOperations: NativeHealingOperation[] = []): Promise<NativeAdvisorResult> {
+  return invoke<NativeAdvisorResult>('advise_native_image', { request: { sourcePath, maxEdge: 1024,
+    settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, { x: .5, y: .5, width: .42, height: .42, rotation: 0 }, skinRetouch, healingOperations) } })
 }
 
 export async function chooseNativeExportPath(sourceName: string) {
@@ -290,10 +330,12 @@ export async function exportNativeJpeg(
   toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] },
   opticsState: NativeOpticsState = defaultNativeOpticsState,
   layers: NativeAdjustmentLayer[] = [],
+  skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
+  healingOperations: NativeHealingOperation[] = [],
 ) {
   assertNativeSupported(adjustments, mask)
   return invoke<NativeExportResult>('native_export_jpeg', {
-    request: { sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask) },
+    request: { sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
   })
 }
 

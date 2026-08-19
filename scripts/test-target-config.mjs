@@ -85,9 +85,17 @@ export const targets = {
     golden: ['portrait', 'skin', 'mask', 'geometry'],
   },
   ai: {
-    rust: [['test', '--locked', '-p', 'starroom-advisor']],
-    web: [],
-    golden: ['ai'],
+    rust: [
+      ['test', '--locked', '-p', 'starroom-advisor'],
+      ['test', '--locked', '-p', 'starroom-portrait', 'm17_'],
+      ['test', '--locked', '-p', 'starroom-heal', 'm18_'],
+      ['test', '--locked', '-p', 'starroom-advisor', 'm19_'],
+      ['test', '--locked', '-p', 'starroom-portrait', 'm20_'],
+      ['test', '--locked', '-p', 'starroom-project', 'm20_'],
+      ['test', '--locked', '-p', 'starroom-pipeline', 'm20_'],
+    ],
+    web: ['src/nativeRender.test.ts'],
+    golden: ['ai', 'portrait', 'skin', 'mask'],
   },
   web: {
     rust: [],

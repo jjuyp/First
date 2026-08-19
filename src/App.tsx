@@ -14,10 +14,10 @@ import {
   type RadialMask, type ToneCurvePoint,
 } from './imagePipeline'
 import {
-  chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
+  adviseNativeImage, chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
   nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
-  detectNativePortrait, type NativeAdjustmentLayer, type NativeMaskDefinition, type NativePortraitDetection, type NativePortraitRegion,
+  cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -39,6 +39,8 @@ interface PhotoItem {
   opticsState: NativeOpticsState
   mask: RadialMask
   layers: NativeAdjustmentLayer[]
+  skinRetouch: NativeSkinRetouchSettings
+  healingOperations: NativeHealingOperation[]
   history: EditSnapshot[]
   future: EditSnapshot[]
 }
@@ -52,6 +54,8 @@ interface EditSnapshot {
   opticsState: NativeOpticsState
   mask: RadialMask
   layers: NativeAdjustmentLayer[]
+  skinRetouch: NativeSkinRetouchSettings
+  healingOperations: NativeHealingOperation[]
 }
 
 const defaultCurvePoints: ToneCurvePoint[] = [
@@ -68,6 +72,8 @@ const defaultCurveChannels = (): NativeToneCurves => ({ master: copyCurve(defaul
 const copyCurveChannels = (curves: NativeToneCurves): NativeToneCurves => ({ master: copyCurve(curves.master), red: copyCurve(curves.red), green: copyCurve(curves.green), blue: copyCurve(curves.blue) })
 const defaultLayer = (): NativeAdjustmentLayer => ({ id: crypto.randomUUID(), name: 'Adjustment layer', enabled: true, opacity: 1, blendMode: 'normal', mask: { type: 'none' }, adjustments: { tone: { exposureEv: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } } })
 const copyLayers = (layers: NativeAdjustmentLayer[]) => layers.map((layer) => ({ ...layer, mask: structuredClone(layer.mask), adjustments: { tone: { ...layer.adjustments.tone } } }))
+const copySkinRetouch = (value: NativeSkinRetouchSettings): NativeSkinRetouchSettings => ({ parameters: { ...value.parameters }, faces: value.faces.map((face) => ({ ...face })) })
+const copyHealingOperations = (operations: NativeHealingOperation[]) => operations.map((operation) => structuredClone(operation))
 const newMaskOfType = (type: 'none' | 'radial' | 'linear' | 'brush' | 'luminance' | 'colorRange'): NativeAdjustmentLayer['mask'] => {
   if (type === 'radial') return { type, x: .5, y: .5, width: .4, height: .4, rotation: 0, feather: .2, invert: false }
   if (type === 'linear') return { type, startX: .25, startY: .5, endX: .75, endY: .5, feather: .2, invert: false }
@@ -127,6 +133,13 @@ function LayerMaskControls({ mask, onChange }: { mask: NativeMaskDefinition; onC
     {number('Feather', mask.feather, (feather) => ({ ...mask, feather }), { min: 0, max: 1, step: .01 })}
     <small>{mask.region} · {mask.modelVersion.slice(0, 8)}</small>
   </div>
+  if (mask.type === 'generated') return <div className="mask-controls portrait-mask-controls">
+    <small>{mask.semanticClass} · {mask.metadata.executionProvider ?? mask.providerId}</small>
+    {number('Threshold', mask.threshold, (threshold) => ({ ...mask, threshold }), { min: 0, max: 1, step: .01 })}
+    {number('Feather', mask.feather, (feather) => ({ ...mask, feather }), { min: 0, max: 1, step: .01 })}
+    {invert(mask, (invert) => ({ ...mask, invert }))}
+    <small>{mask.modelVersion.slice(0, 12)} · {mask.modelHash.slice(0, 8)}</small>
+  </div>
   return null
 }
 const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
@@ -134,24 +147,28 @@ const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
   whiteBalanceSample: photo.whiteBalanceSample ? { ...photo.whiteBalanceSample } : null, mask: { ...photo.mask },
   opticsState: { ...photo.opticsState, manualIdentity: photo.opticsState.manualIdentity ? { ...photo.opticsState.manualIdentity } : null },
   layers: copyLayers(photo.layers),
+  skinRetouch: copySkinRetouch(photo.skinRetouch),
+  healingOperations: copyHealingOperations(photo.healingOperations),
 })
 const applySnapshot = (photo: PhotoItem, snapshot: EditSnapshot) => ({
   ...photo, adjustments: { ...snapshot.adjustments }, curvePoints: copyCurve(snapshot.curvePoints), curveChannels: copyCurveChannels(snapshot.curveChannels),
   whiteBalanceMode: snapshot.whiteBalanceMode, whiteBalanceSample: snapshot.whiteBalanceSample ? { ...snapshot.whiteBalanceSample } : null, mask: { ...snapshot.mask },
   opticsState: { ...snapshot.opticsState, manualIdentity: snapshot.opticsState.manualIdentity ? { ...snapshot.opticsState.manualIdentity } : null },
   layers: copyLayers(snapshot.layers),
+  skinRetouch: copySkinRetouch(snapshot.skinRetouch),
+  healingOperations: copyHealingOperations(snapshot.healingOperations),
 })
 const hasCurveEdits = (points: ToneCurvePoint[]) => points.length !== defaultCurvePoints.length
   || points.some((point, index) => Math.abs(point.x - defaultCurvePoints[index].x) > .0001 || Math.abs(point.y - defaultCurvePoints[index].y) > .0001)
 const hasMaskGeometryEdits = (mask: RadialMask) => (Object.keys(defaultMask) as Array<keyof RadialMask>)
   .some((key) => Math.abs(mask[key] - defaultMask[key]) > .0001)
 const hasPhotoEdits = (photo: PhotoItem) => hasAdjustments(photo.adjustments) || hasCurveEdits(photo.curvePoints) || hasMaskGeometryEdits(photo.mask)
-  || photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity !== null || photo.layers.length > 0
+  || photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity !== null || photo.layers.length > 0 || photo.skinRetouch.faces.length > 0 || photo.healingOperations.length > 0
 const countPhotoEdits = (photo: PhotoItem) => (Object.keys(defaultAdjustments) as AdjustmentKey[])
   .filter((key) => photo.adjustments[key] !== defaultAdjustments[key]).length
   + (hasCurveEdits(photo.curvePoints) ? 1 : 0) + (hasMaskGeometryEdits(photo.mask) ? 1 : 0)
   + (photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity ? 1 : 0)
-  + photo.layers.length
+  + photo.layers.length + (photo.skinRetouch.faces.length ? 1 : 0) + photo.healingOperations.length
 
 const demoPhoto: PhotoItem = {
   id: 'starroom-demo',
@@ -168,6 +185,8 @@ const demoPhoto: PhotoItem = {
   opticsState: { ...defaultNativeOpticsState },
   mask: { ...defaultMask },
   layers: [],
+  skinRetouch: defaultNativeSkinRetouch(),
+  healingOperations: [],
   history: [],
   future: [],
 }
@@ -178,6 +197,7 @@ const toolItems: Array<{ id: Tool; label: string; icon: typeof SunMedium }> = [
   { id: 'curve', label: 'Curve', icon: ScanLine },
   { id: 'detail', label: 'Detail', icon: Aperture },
   { id: 'masks', label: 'Masks', icon: ScanFace },
+  { id: 'heal', label: 'Heal', icon: Sparkles },
   { id: 'optics', label: 'Optics', icon: Contrast },
   { id: 'geometry', label: 'Geometry', icon: Crop },
 ]
@@ -451,9 +471,11 @@ function FourPointOverlay({ values, onBeginEdit, onAdjust }: {
   </svg>
 }
 
-function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdit, onMaskChange, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, metric = true }: {
+function PreviewCanvas({ photo, before, zoom, maskActive = false, healActive = false, brushActive = false, onBeginMaskEdit, onMaskChange, onHealingStroke, onBrushStroke, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, metric = true }: {
   photo: PhotoItem; before: boolean; zoom: 'fit' | '100'
   maskActive?: boolean; onBeginMaskEdit?: () => void; onMaskChange?: (mask: RadialMask) => void
+  healActive?: boolean; onHealingStroke?: (points: Array<{ x: number; y: number }>) => void
+  brushActive?: boolean; onBrushStroke?: (points: Array<{ x: number; y: number }>) => void
   onWhiteBalancePick?: (sample: NativeWhiteBalanceSample) => void
   onColorSample?: (x: number, y: number) => void
   onHistogram: (values: number[]) => void
@@ -463,6 +485,12 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [canvasBounds, setCanvasBounds] = useState({ left: 0, top: 0, width: 0, height: 0 })
+  const healingStroke = useRef<Array<{ x: number; y: number }> | null>(null)
+  const maskBrushStroke = useRef<Array<{ x: number; y: number }> | null>(null)
+  const healPoint = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    return { x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)), y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)) }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -483,7 +511,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
-            before ? [] : photo.layers)
+            before ? [] : photo.layers, 1800, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations)
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -543,7 +571,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
       window.clearTimeout(timeout)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
-    photo.mask, photo.opticsState, photo.layers, photo.renderBackend, photo.sourcePath, photo.src])
+    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src])
 
   useEffect(() => {
     const measure = () => canvasRef.current && setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -554,6 +582,9 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, onBeginMaskEdi
 
   return <>
     <canvas ref={canvasRef} className={`photo-canvas zoom-${zoom}`} aria-label={`Edited preview of ${photo.name}`}
+      onPointerDown={(event) => { if (before || event.button !== 0 || (!healActive && !brushActive)) return; const points = [healPoint(event)]; if (healActive) healingStroke.current = points; else maskBrushStroke.current = points; event.currentTarget.setPointerCapture(event.pointerId) }}
+      onPointerMove={(event) => { const points = healingStroke.current ?? maskBrushStroke.current; if (!points) return; const point = healPoint(event); const previous = points.at(-1)!; if (Math.hypot(point.x - previous.x, point.y - previous.y) >= .004) points.push(point) }}
+      onPointerUp={(event) => { const healing = healingStroke.current; const brushing = maskBrushStroke.current; healingStroke.current = null; maskBrushStroke.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); if (healing?.length) onHealingStroke?.(healing); if (brushing?.length) onBrushStroke?.(brushing) }}
       onDoubleClick={(event) => {
         if (before) return
         const bounds = event.currentTarget.getBoundingClientRect()
@@ -749,6 +780,10 @@ export function App() {
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null)
   const [portraitDetection, setPortraitDetection] = useState<NativePortraitDetection | null>(null)
   const [portraitFaceId, setPortraitFaceId] = useState<string | null>(null)
+  const [advisorResult, setAdvisorResult] = useState<NativeAdvisorResult | null>(null)
+  const [advisorPreview, setAdvisorPreview] = useState<EditSnapshot | null>(null)
+  const [aiMaskResult, setAiMaskResult] = useState<NativeAiMaskResult | null>(null)
+  const [aiMaskRequestId, setAiMaskRequestId] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -767,9 +802,15 @@ export function App() {
     setOpticsStatus(null)
     setPortraitDetection(null)
     setPortraitFaceId(null)
+    setAdvisorResult(null)
+    setAdvisorPreview(null)
+    setAiMaskResult(null)
+    setAiMaskRequestId(null)
   }
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
+  const activeLayer = selected.layers.find((layer) => layer.id === selectedLayerId)
+  const activeLayerIsBrush = Boolean(activeLayer && 'type' in activeLayer.mask && activeLayer.mask.type === 'brush')
   const filteredPhotos = useMemo(() => photos.filter((photo) => {
     if (filter === 'recent') return photo.imported
     if (filter === 'five-star') return photo.rating === 5
@@ -802,7 +843,7 @@ export function App() {
       objectUrls.current.add(src)
       return { id: crypto.randomUUID(), name: file.name, src, renderBackend: 'browserFallback', imported: true, rating: 0,
         adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null,
-        opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask }, layers: [], history: [], future: [] }
+        opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask }, layers: [], skinRetouch: defaultNativeSkinRetouch(), healingOperations: [], history: [], future: [] }
     })
     setPhotos((current) => [...imported, ...current])
     selectPhoto(imported[0].id)
@@ -836,6 +877,8 @@ export function App() {
         opticsState: { ...defaultNativeOpticsState },
         mask: { ...defaultMask },
         layers: [],
+        skinRetouch: defaultNativeSkinRetouch(),
+        healingOperations: [],
         history: [],
         future: [],
       }))
@@ -1082,6 +1125,153 @@ export function App() {
     setNotice(`${layer.name} added as a Native MaskTree group`)
   }
 
+  async function generateAiMask(semantic: Extract<NativeAiMaskSemantic, 'subject' | 'background' | 'sky'>) {
+    if (!selected.sourcePath || selected.renderBackend !== 'native') {
+      setNotice('AI Mask requires a Native photo; Browser fallback is intentionally unavailable.')
+      return
+    }
+    const requestId = crypto.randomUUID()
+    setAiMaskRequestId(requestId)
+    setRenderStatus(`Generating ${semantic} mask locally…`)
+    try {
+      const result = await generateNativeAiMask(selected.sourcePath, semantic, requestId)
+      const layer = defaultLayer()
+      layer.name = `AI ${semantic}`
+      layer.mask = {
+        type: 'generated', providerId: result.providerId, modelId: result.modelId,
+        modelVersion: result.modelVersion, modelHash: result.modelHash,
+        semanticClass: result.semanticClass, threshold: .5, feather: .08, invert: false,
+        cacheIdentity: result.cacheIdentity,
+        metadata: { executionProvider: result.executionProvider, source: 'local-only', status: result.status },
+      }
+      mutateLayers((layers) => [...layers, layer])
+      setSelectedLayerId(layer.id)
+      setAiMaskResult(result)
+      setNotice(`${semantic} mask ${result.status} · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'}`)
+      setRenderStatus(`AI Mask · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : `${semantic} mask generation failed`)
+      setRenderStatus('AI Mask unavailable')
+    } finally {
+      setAiMaskRequestId(null)
+    }
+  }
+
+  async function cancelAiMask() {
+    if (!aiMaskRequestId) return
+    await cancelNativeAiMask(aiMaskRequestId)
+    setNotice('AI mask cancellation requested')
+  }
+
+  function updateSkinRetouch(mutator: (current: NativeSkinRetouchSettings) => NativeSkinRetouchSettings) {
+    updateSelected((photo) => ({ ...photo, skinRetouch: copySkinRetouch(mutator(copySkinRetouch(photo.skinRetouch))), history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    setBefore(false)
+  }
+
+  function enableSkinRetouch(faceId: string | '__all__') {
+    if (!portraitDetection?.faces.length) {
+      setNotice('Detect a portrait locally before enabling Skin retouch')
+      return
+    }
+    const faces = portraitDetection.faces
+      .filter(({ face }) => faceId === '__all__' || face.id === faceId)
+      .map(({ face, cacheKey }) => ({ faceId: face.id, cacheKey }))
+    updateSkinRetouch((current) => ({ ...current, faces }))
+    setNotice(`Skin retouch linked to ${faces.length} local portrait cache entr${faces.length === 1 ? 'y' : 'ies'}`)
+  }
+
+  function updateHealingOperations(mutator: (current: NativeHealingOperation[]) => NativeHealingOperation[]) {
+    updateSelected((photo) => ({ ...photo, healingOperations: copyHealingOperations(mutator(copyHealingOperations(photo.healingOperations))).slice(0, 256), history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    setBefore(false)
+  }
+
+  async function runAdvisor() {
+    if (selected.renderBackend !== 'native' || !selected.sourcePath) {
+      setNotice('Advisor requires a Native image; Browser fallback is intentionally unavailable.')
+      return
+    }
+    try {
+      const result = await adviseNativeImage(selected.sourcePath, selected.adjustments, selected.curvePoints, selected.whiteBalanceMode, selected.whiteBalanceSample,
+        selected.curveChannels, selected.opticsState, selected.layers, selected.skinRetouch, selected.healingOperations)
+      setAdvisorResult(result)
+      setNotice(`${result.suggestions.length} local, explainable suggestion${result.suggestions.length === 1 ? '' : 's'} ready`)
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Native advisor failed') }
+  }
+
+  function applyAdvisorSuggestions(suggestions: NativeAdvisorSuggestion[]) {
+    const allowed = new Set<AdjustmentKey>(['exposure', 'shadows', 'highlights', 'contrast', 'temperature', 'tint'])
+    updateSelected((photo) => {
+      const adjustments = { ...photo.adjustments }
+      for (const suggestion of suggestions) {
+        if (!allowed.has(suggestion.control as AdjustmentKey)) continue
+        const key = suggestion.control as AdjustmentKey
+        const min = key === 'exposure' ? -5 : -100
+        const max = key === 'exposure' ? 5 : 100
+        adjustments[key] = Math.max(min, Math.min(max, adjustments[key] + suggestion.amount))
+      }
+      return { ...photo, adjustments, history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }
+    })
+    setBefore(false)
+  }
+
+  function previewAdvisorSuggestion(suggestion: NativeAdvisorSuggestion) {
+    if (!advisorPreview) setAdvisorPreview(takeSnapshot(selected))
+    const allowed = new Set<AdjustmentKey>(['exposure', 'shadows', 'highlights', 'contrast', 'temperature', 'tint'])
+    if (!allowed.has(suggestion.control as AdjustmentKey)) return
+    const key = suggestion.control as AdjustmentKey
+    const min = key === 'exposure' ? -5 : -100
+    const max = key === 'exposure' ? 5 : 100
+    updateSelected((photo) => ({ ...photo, adjustments: { ...photo.adjustments, [key]: Math.max(min, Math.min(max, photo.adjustments[key] + suggestion.amount)) } }))
+    setBefore(false)
+  }
+
+  function cancelAdvisorPreview() {
+    if (!advisorPreview) return
+    updateSelected((photo) => applySnapshot(photo, advisorPreview))
+    setAdvisorPreview(null)
+  }
+
+  function acceptAdvisorPreview() {
+    if (!advisorPreview) return
+    updateSelected((photo) => ({ ...photo, history: [...photo.history, advisorPreview].slice(-100), future: [] }))
+    setAdvisorPreview(null)
+  }
+
+  function addHealingStroke(points: Array<{ x: number; y: number }>) {
+    const expanded = points.flatMap((point, index) => {
+      const previous = points[index - 1]
+      if (!previous) return [point]
+      const steps = Math.max(1, Math.ceil(Math.hypot(point.x - previous.x, point.y - previous.y) / .015))
+      return Array.from({ length: steps }, (_, step) => ({ x: previous.x + (point.x - previous.x) * (step + 1) / steps, y: previous.y + (point.y - previous.y) * (step + 1) / steps }))
+    })
+    updateHealingOperations((current) => [...current, ...expanded.map((target) => ({
+      id: crypto.randomUUID(), enabled: true, mode: 'heal' as const, target, source: null, radius: 24, feather: .55, opacity: .85,
+      rotationDegrees: 0, scale: 1, toneAdaptation: true, textureAdaptation: true, sourceMode: 'auto' as const,
+      metadata: { interaction: 'M18 brush', coordinateSpace: 'source-normalized' },
+    }))])
+    setNotice(`Added ${expanded.length} Native heal operation${expanded.length === 1 ? '' : 's'}`)
+  }
+
+  function addMaskBrushStroke(points: Array<{ x: number; y: number }>) {
+    if (!selectedLayerId) return
+    updateLayer(selectedLayerId, (layer) => {
+      if (!('type' in layer.mask) || layer.mask.type !== 'brush') return layer
+      const spacing = Math.max(.002, layer.mask.radius * .18)
+      const interpolated = points.flatMap((point, index) => {
+        const previous = points[index - 1]
+        if (!previous) return [{ ...point, pressure: 1 }]
+        const steps = Math.max(1, Math.ceil(Math.hypot(point.x - previous.x, point.y - previous.y) / spacing))
+        return Array.from({ length: steps }, (_, step) => ({
+          x: previous.x + (point.x - previous.x) * (step + 1) / steps,
+          y: previous.y + (point.y - previous.y) * (step + 1) / steps,
+          pressure: 1,
+        }))
+      })
+      return { ...layer, mask: { ...layer.mask, points: [...layer.mask.points, ...interpolated].slice(-8192) } }
+    })
+    setNotice('Freehand mask stroke added in source-normalized image space')
+  }
+
   function resetAdjustment(key: AdjustmentKey) {
     adjust(key, defaultAdjustments[key])
   }
@@ -1110,7 +1300,7 @@ export function App() {
     if (!hasPhotoEdits(selected)) return
     updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null,
       opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask },
-      layers: [],
+      layers: [], skinRetouch: defaultNativeSkinRetouch(), healingOperations: [],
       history: [...photo.history, takeSnapshot(photo)], future: [] }))
   }
 
@@ -1125,7 +1315,7 @@ export function App() {
           return
         }
         const result = await exportNativeJpeg(selected.sourcePath, outputPath, selected.adjustments, selected.curvePoints, selected.mask,
-          selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState, selected.layers)
+          selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState, selected.layers, selected.skinRetouch, selected.healingOperations)
         setNotice(`Native JPEG exported · ${result.width} × ${result.height} · ${result.inputProfile}`)
         setRenderStatus(`Native CPU · ${result.workingSpace}`)
         return
@@ -1188,7 +1378,7 @@ export function App() {
           {view === 'compare' ? <div className="compare-stage">
             <div className="compare-pane"><PreviewCanvas photo={selected} before zoom={zoom} metric={false} onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} /><span>Original</span></div>
             <div className="compare-pane"><PreviewCanvas photo={selected} before={false} zoom={zoom} onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} /><span>Edited</span></div>
-          </div> : <div className={`photo-stage ${before ? 'show-before' : ''} zoom-stage-${zoom} ${zoomScale > 1 ? 'is-zoomed' : ''} ${tool === 'masks' ? 'mask-mode' : ''}`}
+          </div> : <div className={`photo-stage ${before ? 'show-before' : ''} zoom-stage-${zoom} ${zoomScale > 1 ? 'is-zoomed' : ''} ${(tool === 'masks' || tool === 'heal') ? 'mask-mode' : ''}`}
             onWheel={(event) => {
               const next = Math.max(.25, Math.min(6, zoomScale * Math.exp(-event.deltaY * .0015)))
               setZoom('fit')
@@ -1196,7 +1386,7 @@ export function App() {
               if (next <= 1) setPan({ x: 0, y: 0 })
             }}
             onPointerDown={(event) => {
-              if (tool === 'masks' || zoomScale <= 1 || event.button !== 0) return
+              if (tool === 'masks' || tool === 'heal' || zoomScale <= 1 || event.button !== 0) return
               panStart.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y }
               event.currentTarget.setPointerCapture(event.pointerId)
             }}
@@ -1206,8 +1396,10 @@ export function App() {
             }}
             onPointerUp={(event) => { panStart.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}>
             <div className="photo-frame" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoomScale})` }}>
-              <PreviewCanvas photo={selected} before={before} zoom={zoom} maskActive={tool === 'masks' && !before}
+              <PreviewCanvas photo={selected} before={before} zoom={zoom} maskActive={tool === 'masks' && !before && !activeLayerIsBrush}
                 onBeginMaskEdit={beginInteractiveEdit} onMaskChange={updateMask}
+                healActive={tool === 'heal' && !before && selected.renderBackend === 'native'} onHealingStroke={addHealingStroke}
+                brushActive={tool === 'masks' && !before && activeLayerIsBrush} onBrushStroke={addMaskBrushStroke}
                 onWhiteBalancePick={(sample) => updateWhiteBalance('neutralPicker', sample)}
                 onColorSample={tool === 'color' && mixerPicking ? pickMixerBand : undefined}
                 onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} />
@@ -1259,6 +1451,60 @@ export function App() {
             {portraitFaceId === '__all__' && <div className="portrait-regions">{(['face', 'skin', 'eyes', 'brows', 'lips', 'hair'] as NativePortraitRegion[]).map((region) =>
               <button key={region} onClick={() => addAllPortraitMasks(region)}>{region}</button>)}</div>}
           </div>}
+          <div className="skin-retouch-panel" aria-label="AI Mask">
+            <div className="layer-stack-head"><strong>AI Mask</strong>{aiMaskRequestId && <button onClick={cancelAiMask}>Cancel</button>}</div>
+            <small>Local ONNX only · editable M15 MaskTree leaf · no pixels cross IPC</small>
+            <div className="portrait-regions">
+              {(['subject', 'background', 'sky'] as const).map((semantic) => <button key={semantic} disabled={selected.renderBackend !== 'native' || aiMaskRequestId !== null} onClick={() => generateAiMask(semantic)}>{semantic}</button>)}
+              <button disabled={!portraitDetection?.faces.length} onClick={() => addAllPortraitMasks('face')}>person</button>
+              <button disabled={!portraitDetection?.faces.length} onClick={() => addAllPortraitMasks('skin')}>skin</button>
+              <button disabled={!portraitDetection?.faces.length} onClick={() => addAllPortraitMasks('hair')}>hair</button>
+            </div>
+            {aiMaskRequestId && <small>Generating locally… cancellation remains available.</small>}
+            {aiMaskResult && <small>{aiMaskResult.semanticClass} · {aiMaskResult.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'} · {aiMaskResult.status}</small>}
+          </div>
+          <div className="skin-retouch-panel" aria-label="Skin retouch">
+            <div className="layer-stack-head"><strong>Skin retouch</strong><button onClick={() => enableSkinRetouch(portraitFaceId === '__all__' ? '__all__' : portraitFaceId ?? '__all__')} disabled={!portraitDetection?.faces.length}>Use selected face</button></div>
+            {selected.skinRetouch.faces.length === 0
+              ? <small>Choose a locally detected face. Skin is automatically protected from eyes, brows, lips and hair.</small>
+              : <small>{selected.skinRetouch.faces.length} cached face{selected.skinRetouch.faces.length === 1 ? '' : 's'} · Native shared graph</small>}
+            <div className="mask-controls">
+              {([
+                ['Smooth', 'smooth', 0, 100, 1], ['Texture preserve', 'texture', 0, 100, 1], ['Tone evenness', 'toneEvenness', 0, 100, 1],
+                ['Skin hue', 'hueDegrees', -30, 30, 1], ['Skin chroma', 'chroma', -50, 50, 1], ['Face exposure', 'exposureEv', -2, 2, .05],
+              ] as const).map(([label, key, min, max, step]) => {
+                const raw = selected.skinRetouch.parameters[key]
+                const value = key === 'texture' || key === 'smooth' || key === 'toneEvenness' ? Math.round(raw * 100) : key === 'chroma' ? Math.round(raw * 100) : raw
+                return <label key={key}>{label}<input aria-label={`Skin ${label}`} type="number" min={min} max={max} step={step} value={value}
+                  disabled={selected.skinRetouch.faces.length === 0}
+                  onChange={(event) => { const next = Number(event.target.value); if (!Number.isFinite(next)) return; updateSkinRetouch((current) => ({ ...current, parameters: { ...current.parameters, [key]: key === 'texture' || key === 'smooth' || key === 'toneEvenness' || key === 'chroma' ? next / 100 : next } })) }} /></label>
+              })}
+            </div>
+          </div>
+          <div className="skin-retouch-panel" aria-label="Healing brush">
+            <div className="layer-stack-head"><strong>Healing brush</strong><button onClick={() => setTool('heal')} disabled={selected.renderBackend !== 'native'}>Brush</button></div>
+            <small>Drag on the Native preview to create zoom-independent, feathered heal strokes. Auto Source is deterministic; AI inpaint is intentionally unavailable.</small>
+            {selected.healingOperations.length > 0 && (() => {
+              const operation = selected.healingOperations.at(-1)!
+              const patch = (changes: Partial<NativeHealingOperation>) => updateHealingOperations((current) => current.map((value, index) => index === current.length - 1 ? { ...value, ...changes } : value))
+              return <div className="mask-controls">
+                <label>Mode<select aria-label="Healing mode" value={operation.mode} onChange={(event) => patch({ mode: event.target.value as NativeHealingOperation['mode'] })}><option value="heal">Heal</option><option value="clone">Clone</option></select></label>
+                <label>Source<select aria-label="Healing source mode" value={operation.sourceMode} onChange={(event) => patch({ sourceMode: event.target.value as NativeHealingOperation['sourceMode'], source: event.target.value === 'manual' ? operation.source ?? { x: .5, y: .5 } : null })}><option value="auto">Auto</option><option value="manual">Manual</option></select></label>
+                {([['Radius', 'radius', .5, 512, .5], ['Feather', 'feather', 0, 1, .01], ['Opacity', 'opacity', 0, 1, .01], ['Angle', 'rotationDegrees', -180, 180, 1], ['Scale', 'scale', .1, 4, .01]] as const).map(([label, key, min, max, step]) => <label key={key}>{label}<input aria-label={`Healing ${label}`} type="number" value={operation[key]} min={min} max={max} step={step} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) patch({ [key]: Math.max(min, Math.min(max, value)) }) }} /></label>)}
+                {operation.sourceMode === 'manual' && <><label>Source X<input aria-label="Healing source X" type="number" min="0" max="1" step=".01" value={operation.source?.x ?? .5} onChange={(event) => patch({ source: { x: Math.max(0, Math.min(1, Number(event.target.value) || 0)), y: operation.source?.y ?? .5 } })} /></label><label>Source Y<input aria-label="Healing source Y" type="number" min="0" max="1" step=".01" value={operation.source?.y ?? .5} onChange={(event) => patch({ source: { x: operation.source?.x ?? .5, y: Math.max(0, Math.min(1, Number(event.target.value) || 0)) } })} /></label></>}
+                <label><input type="checkbox" checked={operation.toneAdaptation} onChange={(event) => patch({ toneAdaptation: event.target.checked })} /> Tone adapt</label><label><input type="checkbox" checked={operation.textureAdaptation} onChange={(event) => patch({ textureAdaptation: event.target.checked })} /> Texture adapt</label>
+                <button onClick={() => updateHealingOperations((current) => current.slice(0, -1))}>Remove last</button><small>{selected.healingOperations.length} operation{selected.healingOperations.length === 1 ? '' : 's'}</small>
+              </div>
+            })()}
+          </div>
+          <div className="skin-retouch-panel" aria-label="Local edit advisor">
+            <div className="layer-stack-head"><strong>Local advisor</strong><button onClick={runAdvisor} disabled={selected.renderBackend !== 'native'}>Analyze</button></div>
+            <small>Deterministic local statistics and explicit rules. No cloud, GPT, or ML confidence score.</small>
+            {advisorResult && <div className="advisor-results"><small>p01 {advisorResult.analysis.p01.toFixed(3)} · p50 {advisorResult.analysis.p50.toFixed(3)} · p99 {advisorResult.analysis.p99.toFixed(3)}</small>
+              {advisorPreview && <div className="portrait-regions"><button onClick={acceptAdvisorPreview}>Apply preview</button><button onClick={cancelAdvisorPreview}>Cancel preview</button></div>}
+              <button disabled={!advisorResult.suggestions.length} onClick={() => { applyAdvisorSuggestions(advisorResult.suggestions); setAdvisorResult(null) }}>Apply all safe</button><button onClick={() => setAdvisorResult(null)}>Dismiss</button>
+              {advisorResult.suggestions.map((suggestion) => <div key={suggestion.id} className="portrait-face"><strong>{suggestion.what}</strong><small>{suggestion.why} · {suggestion.confidence}</small><span>{suggestion.control} {suggestion.amount > 0 ? '+' : ''}{suggestion.amount.toFixed(suggestion.control === 'exposure' ? 2 : 0)}</span><button onClick={() => previewAdvisorSuggestion(suggestion)}>Preview</button><button onClick={() => { applyAdvisorSuggestions([suggestion]); setAdvisorResult((current) => current ? { ...current, suggestions: current.suggestions.filter((item) => item.id !== suggestion.id) } : current) }}>Apply</button><button onClick={() => setAdvisorResult((current) => current ? { ...current, suggestions: current.suggestions.filter((item) => item.id !== suggestion.id) } : current)}>Ignore</button></div>)}</div>}
+          </div>
         </section>
         <section className="layer-stack" aria-label="Adjustment layers">
           <div className="layer-stack-head"><strong>Layers</strong><button onClick={addLayer}>+ Add</button></div>

@@ -9,11 +9,18 @@ use ort::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use starroom_color::{
+    LinearRgb, oklab_to_oklch, oklab_to_rec2020, oklch_to_oklab, rec2020_to_oklab,
+};
 use starroom_detail::{LinearImage, gaussian_blur};
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use thiserror::Error;
 
@@ -543,6 +550,26 @@ impl ModelInputFormat {
             divide_255: true,
         }
     }
+
+    const fn birefnet() -> Self {
+        Self {
+            target_width: 1024,
+            target_height: 1024,
+            mean: [0.485, 0.456, 0.406],
+            std: [0.229, 0.224, 0.225],
+            divide_255: true,
+        }
+    }
+
+    const fn segformer() -> Self {
+        Self {
+            target_width: 512,
+            target_height: 512,
+            mean: [0.485, 0.456, 0.406],
+            std: [0.229, 0.224, 0.225],
+            divide_255: true,
+        }
+    }
 }
 
 fn resize_rgba_rgb_chw(
@@ -1035,6 +1062,145 @@ pub struct FrequencyLayers {
     pub high: LinearImage,
 }
 
+/// M17's non-destructive skin retouch controls. All fields live in the native shared graph;
+/// callers supply only soft semantic masks, never pixels over the UI boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkinRetouchParameters {
+    /// 0..1 high-frequency attenuation, deliberately capped below full texture removal.
+    pub smooth: f32,
+    /// 0..1 retained natural texture, default 0.70.
+    pub texture: f32,
+    /// 0..1 low-frequency skin-tone equalisation.
+    pub tone_evenness: f32,
+    /// -30..30 degree OKLCh hue adjustment, applied inside protected skin only.
+    pub hue_degrees: f32,
+    /// -0.5..0.5 relative OKLCh chroma adjustment.
+    pub chroma: f32,
+    /// -2..2 scene-linear exposure EV.
+    pub exposure_ev: f32,
+}
+
+impl Default for SkinRetouchParameters {
+    fn default() -> Self {
+        Self {
+            smooth: 0.0,
+            texture: 0.70,
+            tone_evenness: 0.0,
+            hue_degrees: 0.0,
+            chroma: 0.0,
+            exposure_ev: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Error, Clone, PartialEq)]
+pub enum SkinRetouchError {
+    #[error("skin retouch controls are outside supported finite ranges")]
+    InvalidParameters,
+    #[error("skin/protection masks do not match the input image")]
+    InvalidMask,
+}
+
+impl SkinRetouchParameters {
+    pub fn validated(self) -> Result<Self, SkinRetouchError> {
+        if ![
+            self.smooth,
+            self.texture,
+            self.tone_evenness,
+            self.hue_degrees,
+            self.chroma,
+            self.exposure_ev,
+        ]
+        .into_iter()
+        .all(f32::is_finite)
+            || !(0.0..=1.0).contains(&self.smooth)
+            || !(0.0..=1.0).contains(&self.texture)
+            || !(0.0..=1.0).contains(&self.tone_evenness)
+            || !(-30.0..=30.0).contains(&self.hue_degrees)
+            || !(-0.5..=0.5).contains(&self.chroma)
+            || !(-2.0..=2.0).contains(&self.exposure_ev)
+        {
+            return Err(SkinRetouchError::InvalidParameters);
+        }
+        Ok(self)
+    }
+}
+
+/// Frequency-aware, edge-protected skin retouch. `skin_mask` is the semantic skin probability;
+/// `protected_mask` is the union of eyes/brows/lips/hair (and any provider-specific protected
+/// regions). No stage clamps scene-linear values, so HDR headroom remains intact.
+pub fn apply_skin_retouch(
+    image: &LinearImage,
+    parameters: SkinRetouchParameters,
+    skin_mask: &[f32],
+    protected_mask: &[f32],
+) -> Result<LinearImage, SkinRetouchError> {
+    let parameters = parameters.validated()?;
+    let count = image.width.saturating_mul(image.height);
+    if skin_mask.len() != count
+        || protected_mask.len() != count
+        || skin_mask
+            .iter()
+            .chain(protected_mask)
+            .any(|value| !value.is_finite())
+    {
+        return Err(SkinRetouchError::InvalidMask);
+    }
+    if parameters == SkinRetouchParameters::default() {
+        return Ok(image.clone());
+    }
+
+    // The split radius grows gently with smoothing. High frequency is never removed completely:
+    // even at slider maximum, retain at least 25% and honour the texture preservation control.
+    let layers = split_frequency_image(
+        image,
+        FrequencySplitParams {
+            radius: 2.5 + parameters.smooth * 5.5,
+            smooth_strength: parameters.smooth,
+        },
+    );
+    let even_low = gaussian_blur(&layers.low, 5.0 + parameters.tone_evenness * 11.0);
+    let mut output = image.clone();
+    for pixel in 0..count {
+        let coverage = (skin_mask[pixel].clamp(0.0, 1.0)
+            * (1.0 - protected_mask[pixel].clamp(0.0, 1.0)))
+        .clamp(0.0, 1.0);
+        if coverage <= 0.0 {
+            continue;
+        }
+        // Texture=0 is still intentionally safe: maximum attenuation stays below 75%.
+        let attenuation = parameters.smooth * (0.75 - parameters.texture * 0.35).clamp(0.25, 0.75);
+        for channel in 0..3 {
+            let index = pixel * 3 + channel;
+            let low = layers.low.data[index];
+            let equalized_low = low + (even_low.data[index] - low) * parameters.tone_evenness;
+            let retouched = equalized_low + layers.high.data[index] * (1.0 - attenuation);
+            output.data[index] = image.data[index] + (retouched - image.data[index]) * coverage;
+        }
+        let index = pixel * 3;
+        let mut lch = oklab_to_oklch(rec2020_to_oklab(LinearRgb {
+            r: output.data[index],
+            g: output.data[index + 1],
+            b: output.data[index + 2],
+        }));
+        lch.h_deg += parameters.hue_degrees * coverage;
+        lch.c = (lch.c * (1.0 + parameters.chroma * coverage)).max(0.0);
+        let mut rgb = oklab_to_rec2020(oklch_to_oklab(lch));
+        let exposure = 2.0_f32.powf(parameters.exposure_ev * coverage);
+        rgb.r *= exposure;
+        rgb.g *= exposure;
+        rgb.b *= exposure;
+        if ![rgb.r, rgb.g, rgb.b].into_iter().all(f32::is_finite) {
+            return Err(SkinRetouchError::InvalidParameters);
+        }
+        output.data[index] = rgb.r;
+        output.data[index + 1] = rgb.g;
+        output.data[index + 2] = rgb.b;
+    }
+    Ok(output)
+}
+
 pub fn split_frequency_image(
     image: &LinearImage,
     parameters: FrequencySplitParams,
@@ -1103,6 +1269,346 @@ pub fn recombine_with_smoothing(low: &[f32], high: &[f32], strength: f32) -> Vec
         .collect()
 }
 
+pub const BIREFNET_MODEL_ID: &str = "birefnet-subject";
+pub const BIREFNET_MODEL_VERSION: &str = "v1/BiRefNet-general-bb_swin_v1_tiny-epoch_232";
+pub const BIREFNET_MODEL_SHA256: &str =
+    "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333";
+pub const SEGFORMER_MODEL_ID: &str = "segformer-b0-ade20k-sky";
+pub const SEGFORMER_MODEL_VERSION: &str = "489d5cd81a0b59fab9b7ea758d3548ebe99677da";
+pub const SEGFORMER_MODEL_SHA256: &str =
+    "56d255beface9e9f82ab68a1292b8b03881aa45161dffe914b7fb9657133dc58";
+pub const SEGFORMER_SKY_CLASS_ID: usize = 2;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub enum AiMaskSemantic {
+    Subject,
+    Background,
+    Person,
+    Sky,
+    Skin,
+    Hair,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum AiMaskError {
+    #[error("AI mask model is missing: {path}")]
+    ModelMissing { path: PathBuf },
+    #[error("AI mask model hash mismatch for {model_id}: expected {expected}, got {actual}")]
+    ModelHashMismatch {
+        model_id: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("ONNX Runtime is unavailable: {0}")]
+    RuntimeUnavailable(String),
+    #[error("AI mask provider initialization failed: {0}")]
+    ProviderInitializationFailed(String),
+    #[error("DirectML is unavailable: {0}")]
+    DirectMlUnavailable(String),
+    #[error("AI mask inference failed: {0}")]
+    InferenceFailed(String),
+    #[error("AI mask input tensor is invalid: {0}")]
+    InvalidTensor(String),
+    #[error("AI mask output is invalid: {0}")]
+    InvalidOutput(String),
+    #[error("AI mask inference ran out of memory")]
+    OutOfMemory,
+    #[error("AI mask generation was cancelled")]
+    Cancelled,
+    #[error("semantic {0:?} is provided by the M16 portrait provider")]
+    PortraitProviderRequired(AiMaskSemantic),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiMaskModelDescriptor {
+    pub id: String,
+    pub version: String,
+    pub sha256: String,
+    pub path: PathBuf,
+}
+
+impl AiMaskModelDescriptor {
+    fn verify(&self) -> Result<(), AiMaskError> {
+        if !self.path.is_file() {
+            return Err(AiMaskError::ModelMissing {
+                path: self.path.clone(),
+            });
+        }
+        let bytes = fs::read(&self.path)
+            .map_err(|error| AiMaskError::RuntimeUnavailable(error.to_string()))?;
+        let actual = format!("{:x}", Sha256::digest(bytes));
+        if actual != self.sha256 {
+            return Err(AiMaskError::ModelHashMismatch {
+                model_id: self.id.clone(),
+                expected: self.sha256.clone(),
+                actual,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiMaskModelRegistry {
+    pub foreground: AiMaskModelDescriptor,
+    pub scene: AiMaskModelDescriptor,
+    pub execution_provider: ExecutionProvider,
+}
+
+impl AiMaskModelRegistry {
+    pub fn local_default(root: impl AsRef<Path>) -> Self {
+        let root = root.as_ref();
+        Self {
+            foreground: AiMaskModelDescriptor {
+                id: BIREFNET_MODEL_ID.into(),
+                version: BIREFNET_MODEL_VERSION.into(),
+                sha256: BIREFNET_MODEL_SHA256.into(),
+                path: root.join("BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx"),
+            },
+            scene: AiMaskModelDescriptor {
+                id: SEGFORMER_MODEL_ID.into(),
+                version: SEGFORMER_MODEL_VERSION.into(),
+                sha256: SEGFORMER_MODEL_SHA256.into(),
+                path: root.join("segformer-b0-ade20k-489d5cd.onnx"),
+            },
+            execution_provider: ExecutionProvider::DirectMl,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedAiMask {
+    pub semantic: AiMaskSemantic,
+    pub provider_id: String,
+    pub model_id: String,
+    pub model_version: String,
+    pub model_hash: String,
+    pub cache_identity: String,
+    pub execution_provider: ExecutionProvider,
+    pub mask: SoftMask,
+}
+
+pub trait AiMaskProvider {
+    fn generate(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        source_hash: &str,
+        semantic: AiMaskSemantic,
+        cancellation: &AtomicBool,
+    ) -> Result<GeneratedAiMask, AiMaskError>;
+}
+
+pub struct AiMaskOnnxProvider {
+    foreground: Session,
+    scene: Session,
+    pub registry: AiMaskModelRegistry,
+    pub execution_provider: ExecutionProvider,
+}
+
+impl AiMaskOnnxProvider {
+    pub fn initialize(registry: AiMaskModelRegistry) -> Result<Self, AiMaskError> {
+        registry.foreground.verify()?;
+        registry.scene.verify()?;
+        let open = |descriptor: &AiMaskModelDescriptor, provider| {
+            let ep = match provider {
+                ExecutionProvider::Cpu => CPUExecutionProvider::default().build(),
+                ExecutionProvider::DirectMl => DirectMLExecutionProvider::default().build(),
+            };
+            Session::builder()
+                .map_err(|error| AiMaskError::ProviderInitializationFailed(error.to_string()))?
+                .with_execution_providers([ep])
+                .map_err(|error| AiMaskError::ProviderInitializationFailed(error.to_string()))?
+                .commit_from_file(&descriptor.path)
+                .map_err(|error| AiMaskError::ProviderInitializationFailed(error.to_string()))
+        };
+        let requested = registry.execution_provider;
+        let sessions = match requested {
+            ExecutionProvider::Cpu => (
+                open(&registry.foreground, requested)?,
+                open(&registry.scene, requested)?,
+                requested,
+            ),
+            ExecutionProvider::DirectMl => match (
+                open(&registry.foreground, requested),
+                open(&registry.scene, requested),
+            ) {
+                (Ok(foreground), Ok(scene)) => (foreground, scene, requested),
+                _ => (
+                    open(&registry.foreground, ExecutionProvider::Cpu)?,
+                    open(&registry.scene, ExecutionProvider::Cpu)?,
+                    ExecutionProvider::Cpu,
+                ),
+            },
+        };
+        Ok(Self {
+            foreground: sessions.0,
+            scene: sessions.1,
+            registry,
+            execution_provider: sessions.2,
+        })
+    }
+
+    fn cache_identity(
+        &self,
+        source_hash: &str,
+        semantic: AiMaskSemantic,
+        model_hash: &str,
+    ) -> String {
+        format!(
+            "{:x}",
+            Sha256::digest(
+                format!("{source_hash}:ai-mask-v1:{semantic:?}:{model_hash}").as_bytes()
+            )
+        )
+    }
+}
+
+impl AiMaskProvider for AiMaskOnnxProvider {
+    fn generate(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        source_hash: &str,
+        semantic: AiMaskSemantic,
+        cancellation: &AtomicBool,
+    ) -> Result<GeneratedAiMask, AiMaskError> {
+        if cancellation.load(Ordering::Relaxed) {
+            return Err(AiMaskError::Cancelled);
+        }
+        if matches!(
+            semantic,
+            AiMaskSemantic::Person | AiMaskSemantic::Skin | AiMaskSemantic::Hair
+        ) {
+            return Err(AiMaskError::PortraitProviderRequired(semantic));
+        }
+        let (descriptor, format, classes, class_id, invert, provider_id): (
+            &AiMaskModelDescriptor,
+            ModelInputFormat,
+            usize,
+            usize,
+            bool,
+            &str,
+        ) = match semantic {
+            AiMaskSemantic::Subject => (
+                &self.registry.foreground,
+                ModelInputFormat::birefnet(),
+                1,
+                0,
+                false,
+                "foreground",
+            ),
+            AiMaskSemantic::Background => (
+                &self.registry.foreground,
+                ModelInputFormat::birefnet(),
+                1,
+                0,
+                true,
+                "foreground",
+            ),
+            AiMaskSemantic::Sky => (
+                &self.registry.scene,
+                ModelInputFormat::segformer(),
+                150,
+                SEGFORMER_SKY_CLASS_ID,
+                false,
+                "semantic-scene",
+            ),
+            _ => unreachable!(),
+        };
+        let input = resize_rgba_rgb_chw(width, height, rgba, format)
+            .map_err(|error| AiMaskError::InvalidTensor(error.to_string()))?;
+        let tensor = Array4::from_shape_vec(
+            (
+                1,
+                3,
+                format.target_height as usize,
+                format.target_width as usize,
+            ),
+            input,
+        )
+        .map_err(|error| AiMaskError::InvalidTensor(error.to_string()))?;
+        let outputs = if provider_id == "foreground" {
+            self.foreground
+                .run(ort::inputs![TensorRef::from_array_view(&tensor).map_err(
+                    |error| AiMaskError::InvalidTensor(error.to_string())
+                )?])
+        } else {
+            self.scene
+                .run(ort::inputs![TensorRef::from_array_view(&tensor).map_err(
+                    |error| AiMaskError::InvalidTensor(error.to_string())
+                )?])
+        }
+        .map_err(|error| {
+            let text = error.to_string();
+            if text.to_ascii_lowercase().contains("memory") {
+                AiMaskError::OutOfMemory
+            } else {
+                AiMaskError::InferenceFailed(text)
+            }
+        })?;
+        if cancellation.load(Ordering::Relaxed) {
+            return Err(AiMaskError::Cancelled);
+        }
+        let (shape, data) = outputs[0]
+            .try_extract_tensor::<f32>()
+            .map_err(|error| AiMaskError::InvalidOutput(error.to_string()))?;
+        if shape.len() != 4
+            || shape[0] != 1
+            || shape[1] as usize != classes
+            || data.iter().any(|value| !value.is_finite())
+        {
+            return Err(AiMaskError::InvalidOutput(format!(
+                "expected [1,{classes},H,W], got {shape:?}"
+            )));
+        }
+        let out_h = shape[2] as usize;
+        let out_w = shape[3] as usize;
+        let pixels = out_w * out_h;
+        let mut values = Vec::with_capacity(pixels);
+        for pixel in 0..pixels {
+            let probability = if classes == 1 {
+                1.0 / (1.0 + (-data[pixel]).exp())
+            } else {
+                let max = (0..classes)
+                    .map(|class| data[class * pixels + pixel])
+                    .fold(f32::NEG_INFINITY, f32::max);
+                let sum = (0..classes)
+                    .map(|class| (data[class * pixels + pixel] - max).exp())
+                    .sum::<f32>();
+                (data[class_id * pixels + pixel] - max).exp() / sum.max(1.0e-12)
+            };
+            values.push(if invert {
+                1.0 - probability
+            } else {
+                probability
+            });
+        }
+        let mask = SoftMask::new(out_w as u32, out_h as u32, values)
+            .map_err(|error| AiMaskError::InvalidOutput(error.to_string()))?;
+        Ok(GeneratedAiMask {
+            semantic,
+            provider_id: provider_id.into(),
+            model_id: descriptor.id.clone(),
+            model_version: descriptor.version.clone(),
+            model_hash: descriptor.sha256.clone(),
+            cache_identity: self.cache_identity(source_hash, semantic, &descriptor.sha256),
+            execution_provider: self.execution_provider,
+            mask,
+        })
+    }
+}
+
+pub fn cancellation_token() -> Arc<AtomicBool> {
+    Arc::new(AtomicBool::new(false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1145,6 +1651,80 @@ mod tests {
         assert!((rebuilt.data[0] - image.data[0]).abs() < 1e-5);
         assert!((rebuilt.data[6] - image.data[6]).abs() < 1e-5);
         assert!((rebuilt.data[3] - image.data[3]).abs() > 1e-5);
+    }
+
+    #[test]
+    fn m17_skin_retouch_is_identity_at_neutral_controls() {
+        let image =
+            LinearImage::new(2, 1, vec![0.11, 0.08, 0.06, 0.72, 0.51, 0.38]).expect("fixture");
+        let output = apply_skin_retouch(
+            &image,
+            SkinRetouchParameters::default(),
+            &[1.0, 1.0],
+            &[0.0, 0.0],
+        )
+        .expect("identity");
+        assert_eq!(output, image);
+    }
+
+    #[test]
+    fn m17_skin_retouch_preserves_protected_features_and_stays_finite_at_extremes() {
+        let image = LinearImage::new(
+            5,
+            1,
+            vec![
+                0.2, 0.14, 0.1, 0.8, 0.55, 0.4, 0.15, 0.1, 0.08, 1.4, 0.9, 0.5, 0.3, 0.2, 0.16,
+            ],
+        )
+        .expect("fixture");
+        let output = apply_skin_retouch(
+            &image,
+            SkinRetouchParameters {
+                smooth: 1.0,
+                texture: 0.0,
+                tone_evenness: 1.0,
+                hue_degrees: 30.0,
+                chroma: -0.5,
+                exposure_ev: 2.0,
+            },
+            &[1.0; 5],
+            &[0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+        .expect("retouch");
+        assert_eq!(
+            &output.data[6..9],
+            &image.data[6..9],
+            "eye/lip protection must be exact"
+        );
+        assert!(output.data.iter().all(|value| value.is_finite()));
+        assert!(
+            output
+                .data
+                .iter()
+                .zip(&image.data)
+                .any(|(left, right)| (left - right).abs() > 1.0e-4)
+        );
+    }
+
+    #[test]
+    fn m17_skin_retouch_rejects_non_finite_or_wrong_masks() {
+        let image = LinearImage::new(1, 1, vec![0.2, 0.2, 0.2]).expect("fixture");
+        assert!(matches!(
+            apply_skin_retouch(
+                &image,
+                SkinRetouchParameters {
+                    smooth: f32::NAN,
+                    ..Default::default()
+                },
+                &[1.0],
+                &[0.0]
+            ),
+            Err(SkinRetouchError::InvalidParameters)
+        ));
+        assert!(matches!(
+            apply_skin_retouch(&image, SkinRetouchParameters::default(), &[], &[0.0]),
+            Err(SkinRetouchError::InvalidMask)
+        ));
     }
 
     #[test]
@@ -1270,5 +1850,28 @@ mod tests {
         ));
         let mask = SoftMask::new(1, 1, vec![f32::NAN]);
         assert!(matches!(mask, Err(PortraitError::InvalidParsingOutput(_))));
+    }
+
+    #[test]
+    fn m20_registry_is_pinned_and_missing_models_are_typed() {
+        let registry = AiMaskModelRegistry::local_default("definitely-missing-model-root");
+        assert_eq!(registry.foreground.sha256, BIREFNET_MODEL_SHA256);
+        assert_eq!(registry.scene.version, SEGFORMER_MODEL_VERSION);
+        assert_eq!(SEGFORMER_SKY_CLASS_ID, 2);
+        assert!(matches!(
+            registry.foreground.verify(),
+            Err(AiMaskError::ModelMissing { .. })
+        ));
+    }
+
+    #[test]
+    fn m20_soft_masks_preserve_probability_and_reject_invalid_values() {
+        let mask = SoftMask::new(2, 1, vec![0.15, 0.85]).expect("soft mask");
+        assert!((mask.weight_at(0.0, 0.0) - 0.15).abs() < 1.0e-6);
+        assert!((mask.weight_at(1.0, 0.0) - 0.85).abs() < 1.0e-6);
+        assert!(SoftMask::new(1, 1, vec![f32::INFINITY]).is_err());
+        let token = cancellation_token();
+        token.store(true, Ordering::Relaxed);
+        assert!(token.load(Ordering::Relaxed));
     }
 }

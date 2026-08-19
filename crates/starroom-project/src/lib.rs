@@ -41,6 +41,10 @@ pub struct Project {
     #[serde(default)]
     pub geometry: PersistedGeometry,
     #[serde(default)]
+    pub skin_retouch: PersistedSkinRetouch,
+    #[serde(default)]
+    pub healing_operations: Vec<PersistedHealingOperation>,
+    #[serde(default)]
     pub masks: Vec<MaskNode>,
     #[serde(default)]
     pub layers: Vec<AdjustmentLayer>,
@@ -271,6 +275,49 @@ pub struct PersistedGeometry {
     pub upright_mode: String,
 }
 
+/// M17 metadata-only sidecar state. Semantic rasters remain native cache data, never JSON.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedSkinRetouch {
+    pub smooth: f32,
+    pub texture: f32,
+    pub tone_evenness: f32,
+    pub hue_degrees: f32,
+    pub chroma: f32,
+    pub exposure_ev: f32,
+    #[serde(default)]
+    pub faces: Vec<PersistedPortraitFace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedPortraitFace {
+    pub face_id: String,
+    pub cache_key: String,
+}
+
+/// M18 operation persistence contains source-coordinate intent only. `aiInpaint` remains a
+/// reserved serialized mode and is not considered an implemented provider.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedHealingOperation {
+    pub id: String,
+    pub enabled: bool,
+    pub mode: String,
+    pub target: PersistedPoint,
+    pub source: Option<PersistedPoint>,
+    pub radius: f32,
+    pub feather: f32,
+    pub opacity: f32,
+    pub rotation_degrees: f32,
+    pub scale: f32,
+    pub tone_adaptation: bool,
+    pub texture_adaptation: bool,
+    pub source_mode: String,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
+}
+
 impl Default for PersistedGeometry {
     fn default() -> Self {
         Self {
@@ -368,11 +415,38 @@ pub enum MaskDefinition {
         model_hash: String,
         cache_key: String,
     },
+    /// M20 local AI result. The node stores only reproducible provider/model identity and
+    /// refinement intent; the R16Float-compatible raster remains in the native cache.
+    Generated {
+        provider_id: String,
+        model_id: String,
+        model_version: String,
+        model_hash: String,
+        semantic_class: GeneratedMaskSemantic,
+        threshold: f32,
+        feather: f32,
+        #[serde(default)]
+        invert: bool,
+        cache_identity: String,
+        #[serde(default)]
+        metadata: BTreeMap<String, String>,
+    },
     Provider {
         provider: String,
         request: String,
         fingerprint: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub enum GeneratedMaskSemantic {
+    Subject,
+    Background,
+    Person,
+    Sky,
+    Skin,
+    Hair,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -543,6 +617,34 @@ mod tests {
                 upright_mode: "level".into(),
                 ..Default::default()
             },
+            skin_retouch: PersistedSkinRetouch {
+                smooth: 0.35,
+                texture: 0.7,
+                tone_evenness: 0.2,
+                hue_degrees: 4.0,
+                chroma: -0.1,
+                exposure_ev: 0.15,
+                faces: vec![PersistedPortraitFace {
+                    face_id: "face-a".into(),
+                    cache_key: "cache-a".into(),
+                }],
+            },
+            healing_operations: vec![PersistedHealingOperation {
+                id: "heal-a".into(),
+                enabled: true,
+                mode: "heal".into(),
+                target: PersistedPoint { x: 0.5, y: 0.5 },
+                source: None,
+                radius: 24.0,
+                feather: 0.5,
+                opacity: 0.8,
+                rotation_degrees: 0.0,
+                scale: 1.0,
+                tone_adaptation: true,
+                texture_adaptation: true,
+                source_mode: "auto".into(),
+                metadata: BTreeMap::new(),
+            }],
             masks: vec![],
             layers: vec![AdjustmentLayer {
                 id: "portrait-light".into(),
@@ -577,6 +679,8 @@ mod tests {
         );
         assert_eq!(restored.white_balance.mode, "asShot");
         assert_eq!(restored.tone_curves.preset.as_deref(), Some("identity"));
+        assert_eq!(restored.skin_retouch.faces[0].cache_key, "cache-a");
+        assert_eq!(restored.healing_operations[0].mode, "heal");
         assert_eq!(restored.layers.len(), 1);
         assert_eq!(restored.layers[0].adjustments.get("exposure"), Some(&0.35));
         assert!(restored.validate_layers().is_ok());
@@ -674,6 +778,8 @@ mod tests {
             detail: PersistedDetail::default(),
             optics: PersistedOptics::default(),
             geometry: PersistedGeometry::default(),
+            skin_retouch: PersistedSkinRetouch::default(),
+            healing_operations: vec![],
             masks: vec![],
             layers: vec![layer.clone(), layer],
         };
@@ -740,5 +846,28 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&tree).expect("serialize"))
                 .expect("deserialize");
         assert_eq!(restored, tree);
+    }
+
+    #[test]
+    fn m20_generated_mask_node_round_trips_without_raster_pixels() {
+        let tree: MaskTree = MaskDefinition::Generated {
+            provider_id: "foreground".into(),
+            model_id: "birefnet-subject".into(),
+            model_version: "v1/pinned".into(),
+            model_hash: "b".repeat(64),
+            semantic_class: GeneratedMaskSemantic::Subject,
+            threshold: 0.5,
+            feather: 0.08,
+            invert: false,
+            cache_identity: "cache-subject".into(),
+            metadata: BTreeMap::from([("executionProvider".into(), "cpu".into())]),
+        }
+        .into();
+        let json = serde_json::to_string(&tree).expect("serialize");
+        assert!(!json.contains("values"));
+        assert_eq!(
+            serde_json::from_str::<MaskTree>(&json).expect("restore"),
+            tree
+        );
     }
 }
