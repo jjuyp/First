@@ -1036,7 +1036,12 @@ fn ai_mask_generate(
     }
     let source_hash = source_content_hash(&request.source_path)
         .map_err(|error| AiMaskFailure::from(AiMaskError::InferenceFailed(error)))?;
-    if let Ok(cache) = runtime.cache.lock() {
+    {
+        let cache = runtime.cache.lock().map_err(|_| {
+            AiMaskFailure::from(AiMaskError::RuntimeUnavailable(
+                "cache lock poisoned".into(),
+            ))
+        })?;
         if let Some(result) = cache.values().find(|result| {
             result.semantic == request.semantic
                 && result.cache_identity
@@ -1063,6 +1068,18 @@ fn ai_mask_generate(
             });
         }
     }
+    let (width, height, rgba, _) = source_rgba_for_portrait(&request.source_path)
+        .map_err(|error| AiMaskFailure::from(AiMaskError::InferenceFailed(error.to_string())))?;
+    let mut provider_guard = runtime.provider.lock().map_err(|_| {
+        AiMaskFailure::from(AiMaskError::RuntimeUnavailable(
+            "provider lock poisoned".into(),
+        ))
+    })?;
+    if provider_guard.is_none() {
+        *provider_guard = Some(
+            AiMaskOnnxProvider::initialize(local_ai_mask_models()).map_err(AiMaskFailure::from)?,
+        );
+    }
     let token = cancellation_token();
     runtime
         .cancellations
@@ -1073,25 +1090,11 @@ fn ai_mask_generate(
             ))
         })?
         .insert(request.request_id.clone(), Arc::clone(&token));
-    let (width, height, rgba, _) = source_rgba_for_portrait(&request.source_path)
-        .map_err(|error| AiMaskFailure::from(AiMaskError::InferenceFailed(error.to_string())))?;
-    let generated = {
-        let mut provider_guard = runtime.provider.lock().map_err(|_| {
-            AiMaskFailure::from(AiMaskError::RuntimeUnavailable(
-                "provider lock poisoned".into(),
-            ))
-        })?;
-        if provider_guard.is_none() {
-            *provider_guard = Some(
-                AiMaskOnnxProvider::initialize(local_ai_mask_models())
-                    .map_err(AiMaskFailure::from)?,
-            );
-        }
-        provider_guard
-            .as_mut()
-            .expect("initialized above")
-            .generate(width, height, &rgba, &source_hash, request.semantic, &token)
-    };
+    let generated = provider_guard
+        .as_mut()
+        .expect("initialized above")
+        .generate(width, height, &rgba, &source_hash, request.semantic, &token);
+    drop(provider_guard);
     runtime
         .cancellations
         .lock()

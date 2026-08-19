@@ -2,7 +2,7 @@
 
 ## Current Batch
 
-M17 → M18 → M19 → M20 — **In Progress**.
+M17 → M18 → M19 → M20 — **Complete / Accepted**.
 
 M16 is complete and accepted. This batch completes professional skin retouch, healing, the local
 semantic advisor and local AI masks through the existing Native shared render graph. Stop after
@@ -10,7 +10,7 @@ M20 final acceptance; do not begin M21.
 
 ## Goal
 
-Complete M17–M20 from the existing working-tree implementation without resetting valid drafts.
+M17–M20 are complete without resetting the valid implementation drafts.
 M20 extends M15 with reusable local AI masks: M16 portrait semantics, BiRefNet Subject/Background,
 and SegFormer-B0 ADE20K Sky. All preview/export paths use native cache bindings; React transports
 only compact metadata and interaction state.
@@ -42,7 +42,7 @@ supplied to CI. No cloud, telemetry, browser canvas math, substitute model or M2
 ## Acceptance criteria
 
 - M17–M20 production implementation, targeted regressions, cross-milestone scenarios and Level 3
-  acceptance all pass.
+  acceptance all pass on the final acceptance commit.
 - Preview, Before/After and Export retain one Native shared graph; unavailable providers remain
   explicit typed states rather than transparent/silent fallbacks.
 
