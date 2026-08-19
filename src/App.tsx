@@ -17,7 +17,7 @@ import {
   adviseNativeImage, chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
   nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
-  cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
+  cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -471,11 +471,12 @@ function FourPointOverlay({ values, onBeginEdit, onAdjust }: {
   </svg>
 }
 
-function PreviewCanvas({ photo, before, zoom, maskActive = false, healActive = false, brushActive = false, onBeginMaskEdit, onMaskChange, onHealingStroke, onBrushStroke, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, metric = true }: {
+function PreviewCanvas({ photo, before, zoom, maskActive = false, healActive = false, brushActive = false, maskPreview = null, onBeginMaskEdit, onMaskChange, onHealingStroke, onBrushStroke, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, metric = true }: {
   photo: PhotoItem; before: boolean; zoom: 'fit' | '100'
   maskActive?: boolean; onBeginMaskEdit?: () => void; onMaskChange?: (mask: RadialMask) => void
   healActive?: boolean; onHealingStroke?: (points: Array<{ x: number; y: number }>) => void
   brushActive?: boolean; onBrushStroke?: (points: Array<{ x: number; y: number }>) => void
+  maskPreview?: NativeMaskTree | null
   onWhiteBalancePick?: (sample: NativeWhiteBalanceSample) => void
   onColorSample?: (x: number, y: number) => void
   onHistogram: (values: number[]) => void
@@ -508,10 +509,15 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, healActive = f
         let release: (() => void) | undefined
         if (photo.renderBackend === 'native') {
           if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
+          const previewLayers = maskPreview && !before ? [
+            ...photo.layers,
+            { ...defaultLayer(), id: '__mask-preview-dim__', name: 'Mask preview outside', opacity: .72, mask: { operation: 'invert' as const, children: [structuredClone(maskPreview)] }, adjustments: { tone: { ...defaultLayer().adjustments.tone, exposureEv: -1.35 } } },
+            { ...defaultLayer(), id: '__mask-preview-inside__', name: 'Mask preview inside', opacity: .38, mask: structuredClone(maskPreview), adjustments: { tone: { ...defaultLayer().adjustments.tone, exposureEv: .55 } } },
+          ] : photo.layers
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
-            before ? [] : photo.layers, 1800, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations)
+            before ? [] : previewLayers, 1800, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations)
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -571,7 +577,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, healActive = f
       window.clearTimeout(timeout)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
-    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src])
+    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src, maskPreview])
 
   useEffect(() => {
     const measure = () => canvasRef.current && setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -784,6 +790,7 @@ export function App() {
   const [advisorPreview, setAdvisorPreview] = useState<EditSnapshot | null>(null)
   const [aiMaskResult, setAiMaskResult] = useState<NativeAiMaskResult | null>(null)
   const [aiMaskRequestId, setAiMaskRequestId] = useState<string | null>(null)
+  const [maskOverlayVisible, setMaskOverlayVisible] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -806,6 +813,7 @@ export function App() {
     setAdvisorPreview(null)
     setAiMaskResult(null)
     setAiMaskRequestId(null)
+    setMaskOverlayVisible(false)
   }
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
@@ -1147,6 +1155,7 @@ export function App() {
       mutateLayers((layers) => [...layers, layer])
       setSelectedLayerId(layer.id)
       setAiMaskResult(result)
+      setMaskOverlayVisible(true)
       setNotice(`${semantic} mask ${result.status} · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'}`)
       setRenderStatus(`AI Mask · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'}`)
     } catch (error) {
@@ -1400,6 +1409,7 @@ export function App() {
                 onBeginMaskEdit={beginInteractiveEdit} onMaskChange={updateMask}
                 healActive={tool === 'heal' && !before && selected.renderBackend === 'native'} onHealingStroke={addHealingStroke}
                 brushActive={tool === 'masks' && !before && activeLayerIsBrush} onBrushStroke={addMaskBrushStroke}
+                maskPreview={!before && maskOverlayVisible && activeLayer && 'type' in activeLayer.mask && activeLayer.mask.type === 'generated' ? activeLayer.mask : null}
                 onWhiteBalancePick={(sample) => updateWhiteBalance('neutralPicker', sample)}
                 onColorSample={tool === 'color' && mixerPicking ? pickMixerBand : undefined}
                 onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} />
@@ -1462,6 +1472,7 @@ export function App() {
             </div>
             {aiMaskRequestId && <small>Generating locally… cancellation remains available.</small>}
             {aiMaskResult && <small>{aiMaskResult.semanticClass} · {aiMaskResult.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'} · {aiMaskResult.status}</small>}
+            <label><input type="checkbox" checked={maskOverlayVisible} disabled={!activeLayer || !('type' in activeLayer.mask) || activeLayer.mask.type !== 'generated'} onChange={(event) => setMaskOverlayVisible(event.target.checked)} /> Mask overlay</label>
           </div>
           <div className="skin-retouch-panel" aria-label="Skin retouch">
             <div className="layer-stack-head"><strong>Skin retouch</strong><button onClick={() => enableSkinRetouch(portraitFaceId === '__all__' ? '__all__' : portraitFaceId ?? '__all__')} disabled={!portraitDetection?.faces.length}>Use selected face</button></div>

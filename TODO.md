@@ -1,5 +1,15 @@
 # Complete Internal Build Plan
 
+## M17-M20 Local portrait/editing batch (implementation complete; final acceptance gate)
+
+- [x] M17: run frequency-aware Skin Smooth, Texture Preserve, Tone Evenness, Skin Hue/Chroma and Face Exposure in the Native shared graph, weighted by M16 soft semantics with protected-feature exclusion and finite/identity regressions.
+- [x] M18: implement non-destructive Clone/Heal operations with auto/manual source, patch geometry, feather, opacity, rotation/scale, tone/texture adaptation and a shared image-space freehand brush input for masks and healing.
+- [x] M19: implement Native image/portrait statistics and a deterministic, bounded, explainable advisor with Preview, Apply, Ignore, Dismiss and safe Apply All; no LLM, cloud or API dependency.
+- [x] M20: integrate the fixed local BiRefNet Subject/Background and SegFormer-B0 ADE20K Sky models through the existing Rust `ort` runtime, plus M16 Person/Skin/Hair reuse, typed failure states, cancellation and native-only raster caching.
+- [x] Persist compact M17-M20 intent and model/cache identity while keeping raster pixels out of project JSON and React; Preview, Before/After and Export resolve the same Native graph.
+- [x] Keep local model weights Git-ignored and unbundled. Exact hashes, upstream revisions and non-commercial restrictions remain recorded in `MODEL_PROVENANCE.md`.
+- [ ] Final Level 3 Full Acceptance commit and both GitHub Actions check suites green; keep Draft PR #2 unmerged and stop before M21.
+
 ## M16 Portrait Detection / Semantic Mask Foundation (accepted 2026-08-14)
 
 - [x] Pin local-only YuNet `face_detection_yunet_2026may.onnx` and BiSeNet **ResNet18** ONNX identities, SHA-256 verification and explicit source/license policy in `MODEL_PROVENANCE.md`.

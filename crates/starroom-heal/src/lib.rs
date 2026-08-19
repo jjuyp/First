@@ -232,8 +232,8 @@ fn patch_statistics(image: &LinearImage, center: HealPoint, radius: f32) -> ([f3
             if ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt() > sample_radius {
                 continue;
             }
-            for channel in 0..3 {
-                mean[channel] += image.data[(y * image.width + x) * 3 + channel];
+            for (channel, value) in mean.iter_mut().enumerate() {
+                *value += image.data[(y * image.width + x) * 3 + channel];
             }
             count += 1.0;
         }

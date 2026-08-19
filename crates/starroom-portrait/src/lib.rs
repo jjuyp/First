@@ -1454,12 +1454,7 @@ impl AiMaskOnnxProvider {
         })
     }
 
-    fn cache_identity(
-        &self,
-        source_hash: &str,
-        semantic: AiMaskSemantic,
-        model_hash: &str,
-    ) -> String {
+    fn cache_identity(source_hash: &str, semantic: AiMaskSemantic, model_hash: &str) -> String {
         format!(
             "{:x}",
             Sha256::digest(
@@ -1598,7 +1593,7 @@ impl AiMaskProvider for AiMaskOnnxProvider {
             model_id: descriptor.id.clone(),
             model_version: descriptor.version.clone(),
             model_hash: descriptor.sha256.clone(),
-            cache_identity: self.cache_identity(source_hash, semantic, &descriptor.sha256),
+            cache_identity: Self::cache_identity(source_hash, semantic, &descriptor.sha256),
             execution_provider: self.execution_provider,
             mask,
         })
@@ -1862,6 +1857,45 @@ mod tests {
             registry.foreground.verify(),
             Err(AiMaskError::ModelMissing { .. })
         ));
+    }
+
+    #[test]
+    fn m20_hash_mismatch_and_cache_identity_are_deterministic() {
+        let path = std::env::temp_dir().join(format!(
+            "starroom-m20-bad-model-{}.onnx",
+            std::process::id()
+        ));
+        fs::write(&path, b"not an ONNX model").expect("write isolated test model");
+        let descriptor = AiMaskModelDescriptor {
+            id: "bad-model".into(),
+            version: "test".into(),
+            sha256: "00".repeat(32),
+            path: path.clone(),
+        };
+        assert!(matches!(
+            descriptor.verify(),
+            Err(AiMaskError::ModelHashMismatch { .. })
+        ));
+        fs::remove_file(path).expect("remove isolated test model");
+
+        let first = AiMaskOnnxProvider::cache_identity(
+            "source-hash",
+            AiMaskSemantic::Subject,
+            BIREFNET_MODEL_SHA256,
+        );
+        let repeated = AiMaskOnnxProvider::cache_identity(
+            "source-hash",
+            AiMaskSemantic::Subject,
+            BIREFNET_MODEL_SHA256,
+        );
+        let background = AiMaskOnnxProvider::cache_identity(
+            "source-hash",
+            AiMaskSemantic::Background,
+            BIREFNET_MODEL_SHA256,
+        );
+        assert_eq!(first, repeated);
+        assert_ne!(first, background);
+        assert_eq!(first.len(), 64);
     }
 
     #[test]
