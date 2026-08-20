@@ -1,6 +1,6 @@
 # Complete Internal Build Plan
 
-## M21-M23 native intelligence / look batch (targeted acceptance in progress 2026-08-20)
+## M21-M23 native intelligence / look batch (accepted 2026-08-20)
 
 - [x] M21: pin local-only NAFNet-SIDD width-32, deterministic static 512/opset20 ONNX export and exact hashes; implement Linear Rec.2020 D65 model-domain V1, 512/64 raised-cosine tiling, visible-first priority, cancellation, typed errors and distinct inference/adjustment cache keys.
 - [x] M21: place the cached residual stage after optics/geometry and before every tone/creative/detail operation; expose Amount, Detail, Color Noise and Preserve Skin through compact Tauri state; Preview and Export require the same Native residual graph with no silent substitute.
@@ -11,7 +11,7 @@
 - [x] M23: replace the placeholder with strict versioned `.srlook` v1 JSON; include only portable tone/curve/mixer/grading/detail/grain/vignette state and explicitly exclude geometry, masks, healing, faces and camera state.
 - [x] M23: add parameter-aware Amount, A/B semantic blend primitives, circular hue and sampled curve interpolation, deterministic identity-seeded grain and HDR-safe vignette in the shared Native graph, plus save/load UI.
 - [x] M23: complete strict metadata/schema-version validation, corrupted/unknown/future rejection, explicit A/B file selection and normalized weights, Grain Color, Vignette Highlight Protect, and Reference Match to Look round-trip.
-- [ ] Final Level 3 Full Acceptance on the final M23 acceptance commit; keep Draft PR #2 unmerged and stop before M24.
+- [x] Final Level 3 Full Acceptance on the final `[full-acceptance]` commit; keep Draft PR #2 unmerged and stop before M24.
 
 ## M17-M20 Local portrait/editing batch (accepted 2026-08-20)
 

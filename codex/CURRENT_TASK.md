@@ -2,7 +2,7 @@
 
 ## Current Batch
 
-M21 → M22 → M23 — **Implementation candidate; final Level 3 acceptance pending**.
+M21 → M22 → M23 — **Accepted 2026-08-20; stop before M24**.
 
 M1-M20 remain accepted. This batch adds fixed local NAFNet denoise, Native perceptual reference
 matching and portable `.srlook` workflows through the existing Native shared render graph. Stop
@@ -45,6 +45,16 @@ stages and add no browser color science, cloud, telemetry or substitute model.
   acceptance all pass on the final acceptance commit.
 - Preview, Before/After and Export retain one Native shared graph; unavailable providers remain
   explicit typed states rather than transparent/silent fallbacks.
+
+## Acceptance evidence
+
+- M21 targeted acceptance: push run `32378734268`.
+- M22 targeted acceptance: push run `32379178627`.
+- M23 targeted acceptance: push run `32379573766`.
+- The final `[full-acceptance]` commit runs warning-denied workspace Clippy, rustfmt, every Rust
+  test, all frontend tests/lint/build, JSON/schema, Golden/RAW manifests and packaging validation.
+- Cross-milestone regression binds M21 AI Denoise to M9 Detail and M16/M17 portrait retouch, and
+  binds M23 A70/B30 Style Mixer output to M14 Layer, M15 Mask and shared Preview/Export finishing.
 
 ## Targeted tests
 
