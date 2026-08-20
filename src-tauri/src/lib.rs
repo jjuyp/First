@@ -856,6 +856,99 @@ fn local_nafnet_model() -> PathBuf {
         .join("nafnet-sidd-width32-512-opset20.onnx")
 }
 
+fn infer_ai_denoise_with_fallback(
+    runtime: &NativeAiDenoiseRuntime,
+    working: &starroom_detail::LinearImage,
+    sized_identity: &str,
+    requested_provider: DenoiseExecutionProvider,
+    token: &AtomicBool,
+) -> Result<AiDenoiseResidual, String> {
+    let mut provider = runtime
+        .provider
+        .lock()
+        .map_err(|_| "AI denoise provider lock was poisoned".to_owned())?;
+    if provider
+        .as_ref()
+        .is_none_or(|active| active.execution_provider != requested_provider)
+    {
+        match NafNetOnnxProvider::initialize(local_nafnet_model(), requested_provider) {
+            Ok(active) => {
+                *provider = Some(active);
+                if let Ok(mut reason) = runtime.last_fallback_reason.lock() {
+                    *reason = None;
+                }
+            }
+            Err(error)
+                if requested_provider == DenoiseExecutionProvider::DirectMl
+                    && directml_failure_allows_cpu_fallback(&error) =>
+            {
+                let reason = error.to_string();
+                *provider = Some(
+                    NafNetOnnxProvider::initialize(
+                        local_nafnet_model(),
+                        DenoiseExecutionProvider::Cpu,
+                    )
+                    .map_err(|cpu_error| {
+                        format!(
+                            "AI denoise DirectML failed ({reason}); explicit CPU fallback also failed: {cpu_error}"
+                        )
+                    })?,
+                );
+                *runtime
+                    .last_fallback_reason
+                    .lock()
+                    .map_err(|_| "AI denoise fallback status lock was poisoned".to_owned())? =
+                    Some(reason);
+            }
+            Err(error) => return Err(format!("AI denoise provider failed: {error}")),
+        }
+    }
+    let active_provider = provider
+        .as_ref()
+        .expect("provider initialized")
+        .execution_provider;
+    let first = infer_tiled(
+        provider.as_mut().expect("provider initialized"),
+        working,
+        sized_identity,
+        token,
+        active_provider,
+    );
+    match first {
+        Ok(residual) => Ok(residual),
+        Err(error)
+            if active_provider == DenoiseExecutionProvider::DirectMl
+                && directml_failure_allows_cpu_fallback(&error) =>
+        {
+            let reason = error.to_string();
+            *provider = Some(
+                NafNetOnnxProvider::initialize(local_nafnet_model(), DenoiseExecutionProvider::Cpu)
+                    .map_err(|cpu_error| {
+                        format!(
+                            "AI denoise DirectML inference failed ({reason}); explicit CPU fallback also failed: {cpu_error}"
+                        )
+                    })?,
+            );
+            *runtime
+                .last_fallback_reason
+                .lock()
+                .map_err(|_| "AI denoise fallback status lock was poisoned".to_owned())? =
+                Some(reason);
+            infer_tiled(
+                provider.as_mut().expect("CPU fallback initialized"),
+                working,
+                sized_identity,
+                token,
+                DenoiseExecutionProvider::Cpu,
+            )
+            .map_err(|cpu_error| {
+                format!("AI denoise explicit CPU fallback inference failed: {cpu_error}")
+            })
+        }
+        Err(error) => Err(format!("AI denoise inference failed: {error}")),
+    }
+}
+
 fn attach_ai_denoise(
     decoded: &DecodedSourceImage,
     source_path: &Path,
@@ -889,96 +982,13 @@ fn attach_ai_denoise(
         .lock()
         .map_err(|_| "AI denoise cancellation lock was poisoned".to_owned())?
         .insert(request_id.to_owned(), Arc::clone(&token));
-    let result = (|| {
-        let mut provider = runtime
-            .provider
-            .lock()
-            .map_err(|_| "AI denoise provider lock was poisoned".to_owned())?;
-        if provider
-            .as_ref()
-            .is_none_or(|active| active.execution_provider != requested_provider)
-        {
-            match NafNetOnnxProvider::initialize(local_nafnet_model(), requested_provider) {
-                Ok(active) => {
-                    *provider = Some(active);
-                    if let Ok(mut reason) = runtime.last_fallback_reason.lock() {
-                        *reason = None;
-                    }
-                }
-                Err(error)
-                    if requested_provider == DenoiseExecutionProvider::DirectMl
-                        && directml_failure_allows_cpu_fallback(&error) =>
-                {
-                    let reason = error.to_string();
-                    *provider = Some(
-                        NafNetOnnxProvider::initialize(
-                            local_nafnet_model(),
-                            DenoiseExecutionProvider::Cpu,
-                        )
-                        .map_err(|cpu_error| {
-                            format!(
-                                "AI denoise DirectML failed ({reason}); explicit CPU fallback also failed: {cpu_error}"
-                            )
-                        })?,
-                    );
-                    *runtime
-                        .last_fallback_reason
-                        .lock()
-                        .map_err(|_| "AI denoise fallback status lock was poisoned".to_owned())? =
-                        Some(reason);
-                }
-                Err(error) => return Err(format!("AI denoise provider failed: {error}")),
-            }
-        }
-        let active_provider = provider
-            .as_ref()
-            .expect("provider initialized")
-            .execution_provider;
-        let first = infer_tiled(
-            provider.as_mut().expect("provider initialized"),
-            &working,
-            &sized_identity,
-            &token,
-            active_provider,
-        );
-        let residual = match first {
-            Ok(residual) => residual,
-            Err(error)
-                if active_provider == DenoiseExecutionProvider::DirectMl
-                    && directml_failure_allows_cpu_fallback(&error) =>
-            {
-                let reason = error.to_string();
-                *provider = Some(
-                    NafNetOnnxProvider::initialize(
-                        local_nafnet_model(),
-                        DenoiseExecutionProvider::Cpu,
-                    )
-                    .map_err(|cpu_error| {
-                        format!(
-                            "AI denoise DirectML inference failed ({reason}); explicit CPU fallback also failed: {cpu_error}"
-                        )
-                    })?,
-                );
-                *runtime
-                    .last_fallback_reason
-                    .lock()
-                    .map_err(|_| "AI denoise fallback status lock was poisoned".to_owned())? =
-                    Some(reason);
-                infer_tiled(
-                    provider.as_mut().expect("CPU fallback initialized"),
-                    &working,
-                    &sized_identity,
-                    &token,
-                    DenoiseExecutionProvider::Cpu,
-                )
-                .map_err(|cpu_error| {
-                    format!("AI denoise explicit CPU fallback inference failed: {cpu_error}")
-                })?
-            }
-            Err(error) => return Err(format!("AI denoise inference failed: {error}")),
-        };
-        Ok(residual)
-    })();
+    let result = infer_ai_denoise_with_fallback(
+        runtime,
+        &working,
+        &sized_identity,
+        requested_provider,
+        &token,
+    );
     runtime
         .cancellations
         .lock()

@@ -2608,6 +2608,75 @@ mod tests {
     }
 
     #[test]
+    fn m21_denoise_detail_and_m16_m17_portrait_path_share_one_export_graph() {
+        let decoded = fixture(&[
+            [0.12, 0.08, 0.06, 1.0],
+            [0.68, 0.42, 0.30, 1.0],
+            [1.8, 1.2, 0.7, 1.0],
+        ]);
+        let mut settings = RenderSettings {
+            ai_denoise: AiDenoiseParameters {
+                enabled: true,
+                amount: 0.65,
+                detail: 0.6,
+                color_noise: 0.7,
+                preserve_skin: 0.85,
+            },
+            ai_denoise_residual: Some(AiDenoiseResidual {
+                width: 3,
+                height: 1,
+                values: vec![
+                    -0.012, -0.009, -0.007, -0.006, -0.004, -0.003, -0.018, -0.012, -0.008,
+                ],
+                model_hash: "fixture-model".into(),
+                source_identity: "high-iso-portrait".into(),
+                inference_cache_key: "high-iso-portrait-cache".into(),
+                execution_provider: AiExecutionProvider::Cpu,
+            }),
+            local_detail: LocalDetailParameters {
+                texture: 0.35,
+                clarity: 0.15,
+                dehaze: 0.05,
+            },
+            skin_retouch: SkinRetouchSettings {
+                parameters: SkinRetouchParameters {
+                    smooth: 0.35,
+                    texture: 0.65,
+                    tone_evenness: 0.2,
+                    hue_degrees: 2.0,
+                    chroma: -0.05,
+                    exposure_ev: 0.1,
+                },
+                faces: vec![SkinRetouchFaceReference {
+                    face_id: "face-a".into(),
+                    cache_key: "portrait-cache".into(),
+                }],
+            },
+            ..Default::default()
+        };
+        for (region, values) in [
+            (PortraitMaskRegion::Skin, vec![0.0, 1.0, 0.0]),
+            (PortraitMaskRegion::Eyes, vec![0.0, 0.0, 0.0]),
+            (PortraitMaskRegion::Brows, vec![0.0, 0.0, 0.0]),
+            (PortraitMaskRegion::Lips, vec![0.0, 0.0, 0.0]),
+            (PortraitMaskRegion::Hair, vec![0.0, 0.0, 0.0]),
+        ] {
+            settings.portrait_masks.push(PortraitMaskRaster {
+                cache_key: "portrait-cache".into(),
+                face_id: "face-a".into(),
+                region,
+                width: 3,
+                height: 1,
+                values,
+            });
+        }
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("integrated preview");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("integrated export");
+        assert_eq!(preview, export);
+        assert!(preview.data.iter().any(|value| *value > 0));
+    }
+
+    #[test]
     fn m23_grain_vignette_are_shared_deterministic_and_not_baked_into_before() {
         let decoded = fixture(&[
             [0.3, 0.4, 0.5, 1.0],
@@ -2640,6 +2709,96 @@ mod tests {
         assert_ne!(
             preview,
             render_preview_to_srgb8(&decoded, &RenderSettings::default()).expect("before")
+        );
+    }
+
+    #[test]
+    fn m23_weighted_look_layer_mask_and_finishing_keep_preview_export_parity() {
+        let decoded = fixture(&[
+            [0.16, 0.20, 0.28, 1.0],
+            [0.55, 0.42, 0.30, 1.0],
+            [2.4, 1.6, 0.9, 1.0],
+        ]);
+        let mut look_a = starroom_look::PortableLook::default();
+        look_a.id = "look-a".into();
+        look_a.name = "Look A".into();
+        look_a.tone.exposure_ev = 0.35;
+        look_a.relative_color.temperature = 0.25;
+        look_a.grain = GrainSettings {
+            amount: 0.3,
+            size: 0.45,
+            roughness: 0.6,
+            color: 0.2,
+            seed: 23,
+        };
+        let mut look_b = starroom_look::PortableLook::default();
+        look_b.id = "look-b".into();
+        look_b.name = "Look B".into();
+        look_b.tone.contrast = 0.4;
+        look_b.relative_color.tint = -0.2;
+        look_b.vignette = VignetteSettings {
+            amount: 0.45,
+            midpoint: 0.35,
+            roundness: 0.2,
+            feather: 0.55,
+            highlight_protect: 0.8,
+        };
+        let mixed = starroom_look::mix_weighted(&look_a, &look_b, 70.0, 30.0, "A70 B30")
+            .expect("weighted Look");
+        let settings = RenderSettings {
+            tone: mixed.tone,
+            relative_color: RelativeColorParameters {
+                temperature: mixed.relative_color.temperature,
+                tint: mixed.relative_color.tint,
+                vibrance: mixed.relative_color.vibrance,
+                saturation: mixed.relative_color.saturation,
+            },
+            curves: ToneCurveSet {
+                master: mixed.curves.master,
+                red: mixed.curves.red,
+                green: mixed.curves.green,
+                blue: mixed.curves.blue,
+            },
+            color_mixer: mixed.color_mixer,
+            grading: mixed.grading,
+            denoise: mixed.denoise,
+            local_detail: mixed.local_detail,
+            sharpen: mixed.sharpen,
+            grain: mixed.grain,
+            vignette: mixed.vignette,
+            layers: vec![NativeAdjustmentLayer {
+                id: "masked-look-layer".into(),
+                name: "Masked Look Layer".into(),
+                enabled: true,
+                opacity: 0.65,
+                blend_mode: LayerBlendMode::Normal,
+                mask: MaskDefinition::Radial {
+                    x: 1.0 / 3.0,
+                    y: 0.0,
+                    width: 0.45,
+                    height: 1.0,
+                    rotation: 18.0,
+                    feather: 0.25,
+                    invert: false,
+                }
+                .into(),
+                adjustments: LayerAdjustments {
+                    tone: ToneParameters {
+                        exposure_ev: 0.3,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            }],
+            image_identity: "m23-style-mixer-layer-mask".into(),
+            ..Default::default()
+        };
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("M23 preview");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("M23 export");
+        assert_eq!(preview, export);
+        assert_ne!(
+            preview,
+            render_preview_to_srgb8(&decoded, &RenderSettings::default()).expect("identity")
         );
     }
 

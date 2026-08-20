@@ -7,8 +7,10 @@
 - [x] M21: enforce a 2 GiB conservative working-memory budget, cancel superseded preview inference, reject stale scheduler completion, and expose active DirectML/CPU plus the explicit fallback reason. CPU fallback is attempted only for classified DirectML runtime/inference failures; model/hash/output errors remain visible.
 - [x] M22: implement deterministic Native luminance quantiles, OKLab mean/covariance, eight OKLCh hue bands and shadow/midtone/highlight statistics; fit bounded monotonic tone/curve, relative WB, mixer and grading intent with skin protection and confidence.
 - [x] M22: add reference-photo selection/apply UI and compact analysis/recipe IPC. React transports parameters only and contains no reference-match color science.
+- [x] M22: expose Select/Analyze/Preview/Apply/Reset/Save-as-Look plus independent Amount/Tone/Color/Grading/Protect Skin controls; enforce exact Amount-zero identity and shared semantic curve/hue interpolation.
 - [x] M23: replace the placeholder with strict versioned `.srlook` v1 JSON; include only portable tone/curve/mixer/grading/detail/grain/vignette state and explicitly exclude geometry, masks, healing, faces and camera state.
 - [x] M23: add parameter-aware Amount, A/B semantic blend primitives, circular hue and sampled curve interpolation, deterministic identity-seeded grain and HDR-safe vignette in the shared Native graph, plus save/load UI.
+- [x] M23: complete strict metadata/schema-version validation, corrupted/unknown/future rejection, explicit A/B file selection and normalized weights, Grain Color, Vignette Highlight Protect, and Reference Match to Look round-trip.
 - [ ] Final Level 3 Full Acceptance on the final M23 acceptance commit; keep Draft PR #2 unmerged and stop before M24.
 
 ## M17-M20 Local portrait/editing batch (accepted 2026-08-20)

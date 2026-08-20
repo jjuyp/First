@@ -636,4 +636,46 @@ mod tests {
         assert!(protected.data[0] > unprotected.data[0]);
         assert!(protected.data.iter().all(|value| value.is_finite()));
     }
+
+    #[test]
+    fn m23_signed_vignette_and_full_color_grain_extremes_remain_finite() {
+        let source = LinearImage::new(
+            17,
+            13,
+            (0..17 * 13)
+                .flat_map(|index| {
+                    let value = if index % 11 == 0 {
+                        8.0
+                    } else {
+                        index as f32 / 221.0
+                    };
+                    [value, value * 0.7, value * 0.3]
+                })
+                .collect(),
+        )
+        .unwrap();
+        for amount in [-1.0, 1.0] {
+            let output = apply_finishing_effects(
+                &source,
+                GrainSettings {
+                    amount: 1.0,
+                    size: 1.0,
+                    roughness: 1.0,
+                    color: 1.0,
+                    seed: u64::MAX,
+                },
+                VignetteSettings {
+                    amount,
+                    midpoint: 0.0,
+                    roundness: if amount < 0.0 { -1.0 } else { 1.0 },
+                    feather: 0.0,
+                    highlight_protect: 1.0,
+                },
+                "m23-extreme-hdr",
+            )
+            .unwrap();
+            assert!(output.data.iter().all(|value| value.is_finite()));
+            assert!(output.data.iter().any(|value| *value > 1.0));
+        }
+    }
 }
