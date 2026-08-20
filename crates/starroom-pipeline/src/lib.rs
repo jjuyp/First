@@ -2357,20 +2357,22 @@ mod tests {
     #[test]
     fn m17_skin_retouch_uses_native_portrait_masks_and_preview_export_graph() {
         let decoded = fixture(&[[0.18, 0.12, 0.09, 1.0], [0.88, 0.58, 0.38, 1.0]]);
-        let mut settings = RenderSettings::default();
-        settings.skin_retouch = SkinRetouchSettings {
-            parameters: SkinRetouchParameters {
-                smooth: 0.75,
-                texture: 0.70,
-                tone_evenness: 0.35,
-                hue_degrees: 4.0,
-                chroma: -0.1,
-                exposure_ev: 0.2,
+        let mut settings = RenderSettings {
+            skin_retouch: SkinRetouchSettings {
+                parameters: SkinRetouchParameters {
+                    smooth: 0.75,
+                    texture: 0.70,
+                    tone_evenness: 0.35,
+                    hue_degrees: 4.0,
+                    chroma: -0.1,
+                    exposure_ev: 0.2,
+                },
+                faces: vec![SkinRetouchFaceReference {
+                    face_id: "face-a".into(),
+                    cache_key: "cache-a".into(),
+                }],
             },
-            faces: vec![SkinRetouchFaceReference {
-                face_id: "face-a".into(),
-                cache_key: "cache-a".into(),
-            }],
+            ..Default::default()
         };
         for (region, values) in [
             (PortraitMaskRegion::Skin, vec![1.0, 1.0]),
@@ -2399,7 +2401,7 @@ mod tests {
             preview, export,
             "M17 cannot diverge between preview and export"
         );
-        assert!(preview.data.iter().all(|value| *value <= 255));
+        assert_eq!(preview.data.len(), 6);
     }
 
     #[test]
