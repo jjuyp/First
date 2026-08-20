@@ -1054,13 +1054,13 @@ fn apply_reference_recipe(
     let base = settings_to_look(settings, "Reference base".into());
     let mut target_settings = settings.clone();
     target_settings.exposure = recipe.tone.exposure_ev;
-    target_settings.contrast = recipe.tone.contrast * 100.0;
-    target_settings.highlights = recipe.tone.highlights * 100.0;
-    target_settings.shadows = recipe.tone.shadows * 100.0;
-    target_settings.whites = recipe.tone.whites * 100.0;
-    target_settings.blacks = recipe.tone.blacks * 100.0;
-    target_settings.temperature = recipe.white_balance.temperature * 100.0;
-    target_settings.tint = recipe.white_balance.tint * 100.0;
+    target_settings.contrast = unit_to_percent(recipe.tone.contrast);
+    target_settings.highlights = unit_to_percent(recipe.tone.highlights);
+    target_settings.shadows = unit_to_percent(recipe.tone.shadows);
+    target_settings.whites = unit_to_percent(recipe.tone.whites);
+    target_settings.blacks = unit_to_percent(recipe.tone.blacks);
+    target_settings.temperature = unit_to_percent(recipe.white_balance.temperature);
+    target_settings.tint = unit_to_percent(recipe.white_balance.tint);
     target_settings.curve = recipe.curve.clone();
     target_settings.curves.master = recipe.curve.clone();
     target_settings.color_mixer = recipe.color_mixer;
@@ -1184,17 +1184,24 @@ fn settings_to_look(settings: &NativeEditSettings, name: String) -> PortableLook
     }
 }
 
+/// Native UI controls persist percentage values while portable Looks use normalized units.
+/// Quantizing the reverse conversion to four percentage decimals prevents representational
+/// noise such as `30.0 -> 0.3 -> 30.000002` from mutating untouched categories or undo state.
+fn unit_to_percent(value: f32) -> f32 {
+    (value * 1_000_000.0).round() / 10_000.0
+}
+
 fn apply_look(settings: &mut NativeEditSettings, look: &PortableLook) {
     settings.exposure = look.tone.exposure_ev;
-    settings.contrast = look.tone.contrast * 100.0;
-    settings.highlights = look.tone.highlights * 100.0;
-    settings.shadows = look.tone.shadows * 100.0;
-    settings.whites = look.tone.whites * 100.0;
-    settings.blacks = look.tone.blacks * 100.0;
-    settings.temperature = look.relative_color.temperature * 100.0;
-    settings.tint = look.relative_color.tint * 100.0;
-    settings.vibrance = look.relative_color.vibrance * 100.0;
-    settings.saturation = look.relative_color.saturation * 100.0;
+    settings.contrast = unit_to_percent(look.tone.contrast);
+    settings.highlights = unit_to_percent(look.tone.highlights);
+    settings.shadows = unit_to_percent(look.tone.shadows);
+    settings.whites = unit_to_percent(look.tone.whites);
+    settings.blacks = unit_to_percent(look.tone.blacks);
+    settings.temperature = unit_to_percent(look.relative_color.temperature);
+    settings.tint = unit_to_percent(look.relative_color.tint);
+    settings.vibrance = unit_to_percent(look.relative_color.vibrance);
+    settings.saturation = unit_to_percent(look.relative_color.saturation);
     settings.curve = look.curves.master.clone();
     settings.curves = ToneCurveSet {
         master: look.curves.master.clone(),
