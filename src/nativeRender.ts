@@ -66,6 +66,8 @@ export interface NativeEditSettings {
   grading: NativeGrading
   sharpenSettings: { amount: number; radius: number; detail: number; masking: number; haloProtection: number; threshold: number }
   denoiseSettings: { luminance: number; chroma: number; radius: number; detailProtection: number; highIso: number }
+  aiDenoise: { enabled: boolean; amount: number; detail: number; colorNoise: number; preserveSkin: number }
+  aiDenoiseProvider: 'directMl' | 'cpu'
   localDetail: { texture: number; clarity: number; dehaze: number }
   optics: { parameters: { enabled: boolean; distortion: boolean; tca: boolean; vignette: boolean; autoScale: boolean }; matchMode: NativeLensMatchMode; manualIdentity: NativeLensIdentity | null }
   geometry: { rotationDegrees: number; verticalKeystone: number; horizontalKeystone: number; scale: number; offsetX: number; offsetY: number;
@@ -75,6 +77,8 @@ export interface NativeEditSettings {
   layers: NativeAdjustmentLayer[]
   skinRetouch: NativeSkinRetouchSettings
   healingOperations: NativeHealingOperation[]
+  grain: { amount: number; size: number; roughness: number; seed: number }
+  vignette: { amount: number; midpoint: number; roundness: number; feather: number }
 }
 
 export interface NativePreviewResult {
@@ -100,6 +104,7 @@ export interface NativeExportResult {
   workingSpace: string
   cameraProfileHash: string | null
 }
+export interface NativeReferenceMatchResponse { settings: NativeEditSettings; recipe: { confidence: number; protectSkin: number }; sourceAnalysis: { fingerprint: string }; referenceAnalysis: { fingerprint: string } }
 
 const HEADER_BYTES = 24
 
@@ -114,7 +119,7 @@ export function assertNativeSupported(adjustments: Adjustments, mask: RadialMask
   // native radial layer below, so the browser never composites it itself.
   void mask
   const unsupported: string[] = []
-  if (adjustments.vignette !== 0 || adjustments.lensBrightness !== 0) unsupported.push('Optics')
+  if (adjustments.lensBrightness !== 0) unsupported.push('Optics')
   if (unsupported.length) {
     throw new Error(`Native M1C does not support ${unsupported.join(', ')} yet; Browser fallback was not used.`)
   }
@@ -176,6 +181,14 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
       radius: adjustments.denoiseRadius, detailProtection: adjustments.denoiseDetailProtection / 100,
       highIso: adjustments.denoiseHighIso / 100,
     },
+    aiDenoise: {
+      enabled: adjustments.aiDenoiseEnabled !== 0,
+      amount: adjustments.aiDenoiseAmount / 100,
+      detail: adjustments.aiDenoiseDetail / 100,
+      colorNoise: adjustments.aiDenoiseColorNoise / 100,
+      preserveSkin: adjustments.aiDenoisePreserveSkin / 100,
+    },
+    aiDenoiseProvider: 'directMl',
     localDetail: { texture: adjustments.texture / 100, clarity: adjustments.clarity / 100, dehaze: adjustments.dehaze / 100 },
     optics: { parameters: { enabled: adjustments.lensCorrection !== 0, distortion: adjustments.lensDistortion !== 0,
       tca: adjustments.lensTca !== 0, vignette: adjustments.lensVignette !== 0, autoScale: adjustments.lensAutoScale !== 0 },
@@ -206,6 +219,9 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
     ],
     skinRetouch: { parameters: { ...skinRetouch.parameters }, faces: skinRetouch.faces.map((face) => ({ ...face })) },
     healingOperations: healingOperations.map((operation) => structuredClone(operation)),
+    grain: { amount: adjustments.grainAmount / 100, size: adjustments.grainSize / 100, roughness: adjustments.grainRoughness / 100, seed: 0 },
+    vignette: { amount: adjustments.vignette / 100, midpoint: adjustments.vignetteMidpoint / 100,
+      roundness: adjustments.vignetteRoundness / 100, feather: adjustments.vignetteFeather / 100 },
   }
 }
 
@@ -253,6 +269,55 @@ export async function chooseNativePhotoPaths(): Promise<string[]> {
     }],
   })
   return selected ? (Array.isArray(selected) ? selected : [selected]) : []
+}
+
+export async function chooseNativeReferencePath(): Promise<string | null> {
+  const selected = await open({ title: 'Choose reference photo', multiple: false, directory: false,
+    filters: [{ name: 'Photo or camera RAW', extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff', 'nef', 'arw', 'cr2', 'cr3', 'dng', 'raf'] }] })
+  return typeof selected === 'string' ? selected : null
+}
+
+export async function chooseNativeLookPath(mode: 'open' | 'save', suggestedName = 'Starroom Look.srlook'): Promise<string | null> {
+  if (mode === 'open') {
+    const selected = await open({ title: 'Open Starroom look', multiple: false, directory: false, filters: [{ name: 'Starroom Look', extensions: ['srlook'] }] })
+    return typeof selected === 'string' ? selected : null
+  }
+  return save({ title: 'Save Starroom look', defaultPath: suggestedName, filters: [{ name: 'Starroom Look', extensions: ['srlook'] }] })
+}
+
+export async function matchNativeReference(sourcePath: string, referencePath: string, settings: NativeEditSettings, protectSkin = .7) {
+  return invoke<NativeReferenceMatchResponse>('native_reference_match', { request: { sourcePath, referencePath, maxEdge: 1600, protectSkin, settings } })
+}
+
+export async function saveNativeLook(path: string, name: string, settings: NativeEditSettings) {
+  return invoke<string>('native_look_save', { request: { path, name, settings } })
+}
+
+export async function applyNativeLook(path: string, amount: number, settings: NativeEditSettings) {
+  return invoke<NativeEditSettings>('native_look_apply', { request: { path, amount, settings } })
+}
+
+export function fromNativeSettings(base: Adjustments, settings: NativeEditSettings): { adjustments: Adjustments; curves: NativeToneCurves } {
+  const adjustments: Adjustments = {
+    ...base,
+    exposure: settings.exposure, contrast: settings.contrast, highlights: settings.highlights, shadows: settings.shadows,
+    whites: settings.whites, blacks: settings.blacks, temperature: settings.temperature, tint: settings.tint,
+    vibrance: settings.vibrance, saturation: settings.saturation,
+    aiDenoiseEnabled: settings.aiDenoise.enabled ? 1 : 0, aiDenoiseAmount: settings.aiDenoise.amount * 100,
+    aiDenoiseDetail: settings.aiDenoise.detail * 100, aiDenoiseColorNoise: settings.aiDenoise.colorNoise * 100,
+    aiDenoisePreserveSkin: settings.aiDenoise.preserveSkin * 100,
+    grainAmount: settings.grain.amount * 100, grainSize: settings.grain.size * 100, grainRoughness: settings.grain.roughness * 100,
+    vignette: settings.vignette.amount * 100, vignetteMidpoint: settings.vignette.midpoint * 100,
+    vignetteRoundness: settings.vignette.roundness * 100, vignetteFeather: settings.vignette.feather * 100,
+  }
+  const bands = ['Red', 'Orange', 'Yellow', 'Green', 'Cyan', 'Blue', 'Purple', 'Magenta'] as const
+  bands.forEach((band, index) => {
+    adjustments[`mixer${band}Hue` as keyof Adjustments] = settings.colorMixer.bands[index].hueDegrees
+    adjustments[`mixer${band}Chroma` as keyof Adjustments] = settings.colorMixer.bands[index].chroma * 100
+    adjustments[`mixer${band}Lightness` as keyof Adjustments] = settings.colorMixer.bands[index].lightness * 100
+  })
+  const withIds = (points: Array<{ x: number; y: number }>, channel: string) => points.map((point, index) => ({ ...point, id: `${channel}-${index}` }))
+  return { adjustments, curves: { master: withIds(settings.curves.master, 'master'), red: withIds(settings.curves.red, 'red'), green: withIds(settings.curves.green, 'green'), blue: withIds(settings.curves.blue, 'blue') } }
 }
 
 /** M16: all inference is local Rust/ONNX Runtime. This returns compact geometry/cache metadata,

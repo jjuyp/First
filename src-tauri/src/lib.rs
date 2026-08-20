@@ -3,6 +3,11 @@ use sha2::{Digest, Sha256};
 use starroom_advisor::{
     AdvisorResult, AnalysisStats, Suggestion, advise, advise_detailed, analyze_detailed,
 };
+use starroom_ai_denoise::{
+    AiDenoiseParameters, AiDenoiseResidual, ExecutionProvider as DenoiseExecutionProvider,
+    MODEL_ID as NAFNET_MODEL_ID, MODEL_SHA256 as NAFNET_MODEL_SHA256,
+    MODEL_VERSION as NAFNET_MODEL_VERSION, NafNetOnnxProvider, infer_tiled, inference_cache_key,
+};
 use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
 use starroom_geometry::GeometryParameters;
@@ -11,12 +16,16 @@ use starroom_heal::HealingOperation;
 use starroom_imageio::{
     DecodedSourceImage, decode_source, decode_source_preview, encode_jpeg_rgb8,
 };
+use starroom_look::{
+    GrainSettings, PortableCurves, PortableLook, PortableRelativeColor, VignetteSettings, blend,
+};
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
     GeneratedMaskRaster, NativeAdjustmentLayer, PortraitMaskRaster, RelativeColorParameters,
     RenderSettings, SkinRetouchSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
-    WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_to_srgb8,
-    render_source_preview_with_gpu_to_srgb8, resolve_source_lens_profile, sample_source_color_band,
+    WhiteBalanceSettings, prepare_source_for_ai_denoise, render_source_export_to_srgb8,
+    render_source_preview_to_srgb8, render_source_preview_with_gpu_to_srgb8,
+    resolve_source_lens_profile, sample_source_color_band,
 };
 use starroom_portrait::{
     AiMaskError, AiMaskModelRegistry, AiMaskOnnxProvider, AiMaskProvider, AiMaskSemantic,
@@ -24,6 +33,7 @@ use starroom_portrait::{
     PortraitParseResult, PortraitRegion, cancellation_token,
 };
 use starroom_project::{GeneratedMaskSemantic, MaskDefinition, MaskTree, PortraitMaskRegion};
+use starroom_reference::{ReferenceAnalysis, ReferenceMatchRecipe, analyze, match_reference};
 use starroom_render::{
     RenderGraph,
     gpu::{GpuBackendKind, GpuRenderer, GpuStatus, probe_gpu_status},
@@ -55,6 +65,9 @@ struct EngineCapabilities {
     healing_reference: bool,
     gpu_renderer: bool,
     raw_pipeline: bool,
+    ai_denoise: bool,
+    reference_match: bool,
+    portable_looks: bool,
 }
 
 #[tauri::command]
@@ -77,6 +90,31 @@ fn engine_capabilities() -> EngineCapabilities {
         healing_reference: true,
         gpu_renderer: true,
         raw_pipeline: true,
+        ai_denoise: true,
+        reference_match: true,
+        portable_looks: true,
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiDenoiseModelStatus {
+    model_id: &'static str,
+    model_version: &'static str,
+    model_hash: &'static str,
+    installed: bool,
+    path: PathBuf,
+}
+
+#[tauri::command]
+fn ai_denoise_status() -> AiDenoiseModelStatus {
+    let path = local_nafnet_model();
+    AiDenoiseModelStatus {
+        model_id: NAFNET_MODEL_ID,
+        model_version: NAFNET_MODEL_VERSION,
+        model_hash: NAFNET_MODEL_SHA256,
+        installed: path.is_file(),
+        path,
     }
 }
 
@@ -123,6 +161,10 @@ struct NativeEditSettings {
     #[serde(default)]
     denoise_settings: DenoiseParameters,
     #[serde(default)]
+    ai_denoise: AiDenoiseParameters,
+    #[serde(default = "default_denoise_execution_provider")]
+    ai_denoise_provider: DenoiseExecutionProvider,
+    #[serde(default)]
     local_detail: LocalDetailParameters,
     #[serde(default)]
     optics: OpticsSettings,
@@ -134,6 +176,14 @@ struct NativeEditSettings {
     skin_retouch: SkinRetouchSettings,
     #[serde(default)]
     healing_operations: Vec<HealingOperation>,
+    #[serde(default)]
+    grain: GrainSettings,
+    #[serde(default)]
+    vignette: VignetteSettings,
+}
+
+const fn default_denoise_execution_provider() -> DenoiseExecutionProvider {
+    DenoiseExecutionProvider::DirectMl
 }
 
 impl NativeEditSettings {
@@ -161,6 +211,17 @@ impl NativeEditSettings {
             self.skin_retouch.parameters.hue_degrees,
             self.skin_retouch.parameters.chroma,
             self.skin_retouch.parameters.exposure_ev,
+            self.ai_denoise.amount,
+            self.ai_denoise.detail,
+            self.ai_denoise.color_noise,
+            self.ai_denoise.preserve_skin,
+            self.grain.amount,
+            self.grain.size,
+            self.grain.roughness,
+            self.vignette.amount,
+            self.vignette.midpoint,
+            self.vignette.roundness,
+            self.vignette.feather,
         ]
         .into_iter()
         .all(f32::is_finite)
@@ -366,6 +427,10 @@ impl NativeEditSettings {
             color_mixer: self.color_mixer,
             grading: self.grading,
             denoise: self.denoise_settings,
+            ai_denoise: self
+                .ai_denoise
+                .validate()
+                .map_err(|error| error.to_string())?,
             local_detail: self.local_detail,
             sharpen: self.sharpen_settings,
             optics: self.optics,
@@ -373,6 +438,8 @@ impl NativeEditSettings {
             layers: self.layers,
             skin_retouch: self.skin_retouch,
             healing_operations: self.healing_operations,
+            grain: self.grain,
+            vignette: self.vignette,
             ..Default::default()
         })
     }
@@ -413,6 +480,20 @@ struct NativeAiMaskRuntime {
     provider: Mutex<Option<AiMaskOnnxProvider>>,
     cache: Mutex<BTreeMap<String, GeneratedAiMask>>,
     cancellations: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
+}
+
+struct NativeAiDenoiseRuntime {
+    provider: Mutex<Option<NafNetOnnxProvider>>,
+    cache: Mutex<BTreeMap<String, AiDenoiseResidual>>,
+}
+
+impl Default for NativeAiDenoiseRuntime {
+    fn default() -> Self {
+        Self {
+            provider: Mutex::new(None),
+            cache: Mutex::new(BTreeMap::new()),
+        }
+    }
 }
 
 impl Default for NativeAiMaskRuntime {
@@ -730,6 +811,242 @@ fn local_ai_mask_models() -> AiMaskModelRegistry {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("models").join("local"));
     AiMaskModelRegistry::local_default(root)
+}
+
+fn local_nafnet_model() -> PathBuf {
+    std::env::var_os("STARROOM_LOCAL_MODELS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("models").join("local"))
+        .join("nafnet-sidd-width32-512-opset20.onnx")
+}
+
+fn attach_ai_denoise(
+    decoded: &DecodedSourceImage,
+    source_path: &Path,
+    settings: &mut RenderSettings,
+    requested_provider: DenoiseExecutionProvider,
+    runtime: &NativeAiDenoiseRuntime,
+) -> Result<(), String> {
+    let source = preview_source_identity(source_path)?;
+    settings.image_identity = source.clone();
+    if !settings.ai_denoise.enabled {
+        return Ok(());
+    }
+    let working = prepare_source_for_ai_denoise(decoded, settings)
+        .map_err(|error| format!("AI denoise input graph failed: {error}"))?;
+    let sized_identity = format!("{source}:{}x{}", working.width, working.height);
+    let key = inference_cache_key(&sized_identity);
+    if let Some(residual) = runtime
+        .cache
+        .lock()
+        .map_err(|_| "AI denoise cache lock was poisoned".to_owned())?
+        .get(&key)
+        .cloned()
+    {
+        settings.ai_denoise_residual = Some(residual);
+        return Ok(());
+    }
+    let mut provider = runtime
+        .provider
+        .lock()
+        .map_err(|_| "AI denoise provider lock was poisoned".to_owned())?;
+    if provider
+        .as_ref()
+        .is_none_or(|active| active.execution_provider != requested_provider)
+    {
+        *provider = Some(
+            NafNetOnnxProvider::initialize(local_nafnet_model(), requested_provider)
+                .map_err(|error| format!("AI denoise provider failed: {error}"))?,
+        );
+    }
+    let residual = infer_tiled(
+        provider.as_mut().expect("provider initialized"),
+        &working,
+        &sized_identity,
+        &AtomicBool::new(false),
+        requested_provider,
+    )
+    .map_err(|error| format!("AI denoise inference failed: {error}"))?;
+    runtime
+        .cache
+        .lock()
+        .map_err(|_| "AI denoise cache lock was poisoned".to_owned())?
+        .insert(key, residual.clone());
+    settings.ai_denoise_residual = Some(residual);
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeReferenceMatchRequest {
+    source_path: PathBuf,
+    reference_path: PathBuf,
+    max_edge: u32,
+    protect_skin: f32,
+    settings: NativeEditSettings,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeReferenceMatchResponse {
+    settings: NativeEditSettings,
+    source_analysis: ReferenceAnalysis,
+    reference_analysis: ReferenceAnalysis,
+    recipe: ReferenceMatchRecipe,
+}
+
+fn apply_reference_recipe(settings: &mut NativeEditSettings, recipe: &ReferenceMatchRecipe) {
+    settings.exposure = recipe.tone.exposure_ev;
+    settings.contrast = recipe.tone.contrast * 100.0;
+    settings.highlights = recipe.tone.highlights * 100.0;
+    settings.shadows = recipe.tone.shadows * 100.0;
+    settings.whites = recipe.tone.whites * 100.0;
+    settings.blacks = recipe.tone.blacks * 100.0;
+    settings.temperature = recipe.white_balance.temperature * 100.0;
+    settings.tint = recipe.white_balance.tint * 100.0;
+    settings.curve = recipe.curve.clone();
+    settings.curves.master = recipe.curve.clone();
+    settings.color_mixer = recipe.color_mixer;
+    settings.grading = recipe.grading;
+}
+
+#[tauri::command]
+fn native_reference_match(
+    request: NativeReferenceMatchRequest,
+) -> Result<NativeReferenceMatchResponse, String> {
+    if same_file(&request.source_path, &request.reference_path) {
+        return Err("reference image must be different from the source image".into());
+    }
+    let render_settings = request.settings.clone().validated()?;
+    let edge = request.max_edge.clamp(256, 2048);
+    let source = decode_source_preview(&request.source_path, edge)
+        .map_err(|error| format!("reference source decode failed: {error}"))?;
+    let reference = decode_source_preview(&request.reference_path, edge)
+        .map_err(|error| format!("reference target decode failed: {error}"))?;
+    let source_analysis = analyze(
+        &prepare_source_for_ai_denoise(&source, &render_settings)
+            .map_err(|error| format!("reference source native graph failed: {error}"))?,
+    )
+    .map_err(|error| error.to_string())?;
+    let reference_analysis = analyze(
+        &prepare_source_for_ai_denoise(&reference, &RenderSettings::default())
+            .map_err(|error| format!("reference target native graph failed: {error}"))?,
+    )
+    .map_err(|error| error.to_string())?;
+    let recipe = match_reference(&source_analysis, &reference_analysis, request.protect_skin)
+        .map_err(|error| error.to_string())?;
+    let mut settings = request.settings;
+    apply_reference_recipe(&mut settings, &recipe);
+    settings.clone().validated()?;
+    Ok(NativeReferenceMatchResponse {
+        settings,
+        source_analysis,
+        reference_analysis,
+        recipe,
+    })
+}
+
+fn settings_to_look(settings: &NativeEditSettings, name: String) -> PortableLook {
+    PortableLook {
+        id: format!("look-{:x}", Sha256::digest(name.as_bytes())),
+        name,
+        tone: ToneParameters {
+            exposure_ev: settings.exposure,
+            contrast: settings.contrast / 100.0,
+            highlights: settings.highlights / 100.0,
+            shadows: settings.shadows / 100.0,
+            whites: settings.whites / 100.0,
+            blacks: settings.blacks / 100.0,
+        },
+        relative_color: PortableRelativeColor {
+            temperature: settings.temperature / 100.0,
+            tint: settings.tint / 100.0,
+            vibrance: settings.vibrance / 100.0,
+            saturation: settings.saturation / 100.0,
+        },
+        curves: PortableCurves {
+            master: settings.curves.master.clone(),
+            red: settings.curves.red.clone(),
+            green: settings.curves.green.clone(),
+            blue: settings.curves.blue.clone(),
+        },
+        color_mixer: settings.color_mixer,
+        grading: settings.grading,
+        denoise: settings.denoise_settings,
+        local_detail: settings.local_detail,
+        sharpen: settings.sharpen_settings,
+        grain: settings.grain,
+        vignette: settings.vignette,
+        ..Default::default()
+    }
+}
+
+fn apply_look(settings: &mut NativeEditSettings, look: &PortableLook) {
+    settings.exposure = look.tone.exposure_ev;
+    settings.contrast = look.tone.contrast * 100.0;
+    settings.highlights = look.tone.highlights * 100.0;
+    settings.shadows = look.tone.shadows * 100.0;
+    settings.whites = look.tone.whites * 100.0;
+    settings.blacks = look.tone.blacks * 100.0;
+    settings.temperature = look.relative_color.temperature * 100.0;
+    settings.tint = look.relative_color.tint * 100.0;
+    settings.vibrance = look.relative_color.vibrance * 100.0;
+    settings.saturation = look.relative_color.saturation * 100.0;
+    settings.curve = look.curves.master.clone();
+    settings.curves = ToneCurveSet {
+        master: look.curves.master.clone(),
+        red: look.curves.red.clone(),
+        green: look.curves.green.clone(),
+        blue: look.curves.blue.clone(),
+    };
+    settings.color_mixer = look.color_mixer;
+    settings.grading = look.grading;
+    settings.denoise_settings = look.denoise;
+    settings.local_detail = look.local_detail;
+    settings.sharpen_settings = look.sharpen;
+    settings.grain = look.grain;
+    settings.vignette = look.vignette;
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeLookSaveRequest {
+    path: PathBuf,
+    name: String,
+    settings: NativeEditSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeLookApplyRequest {
+    path: PathBuf,
+    amount: f32,
+    settings: NativeEditSettings,
+}
+
+#[tauri::command]
+fn native_look_save(request: NativeLookSaveRequest) -> Result<String, String> {
+    request.settings.clone().validated()?;
+    let look = settings_to_look(&request.settings, request.name);
+    let json = look.to_json().map_err(|error| error.to_string())?;
+    std::fs::write(&request.path, json).map_err(|error| format!("look save failed: {error}"))?;
+    Ok(request.path.display().to_string())
+}
+
+#[tauri::command]
+fn native_look_apply(request: NativeLookApplyRequest) -> Result<NativeEditSettings, String> {
+    if !request.amount.is_finite() || !(0.0..=1.0).contains(&request.amount) {
+        return Err("look amount must stay inside 0..1".into());
+    }
+    let json = std::fs::read_to_string(&request.path)
+        .map_err(|error| format!("look load failed: {error}"))?;
+    let target = PortableLook::from_json(&json).map_err(|error| error.to_string())?;
+    let current = settings_to_look(&request.settings, "Current".into());
+    let applied = blend(&current, &target, request.amount, target.name.clone());
+    let mut settings = request.settings;
+    apply_look(&mut settings, &applied);
+    settings.clone().validated()?;
+    Ok(settings)
 }
 
 fn source_content_hash(path: &Path) -> Result<String, String> {
@@ -1157,10 +1474,12 @@ fn native_preview(
     scheduler: State<'_, NativePreviewScheduler>,
     portrait_runtime: State<'_, NativePortraitRuntime>,
     ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
+    ai_denoise_runtime: State<'_, NativeAiDenoiseRuntime>,
     request: NativePreviewRequest,
 ) -> Result<Response, String> {
     let graph_identity = serde_json::to_string(&request.settings)
         .map_err(|error| format!("native preview graph identity serialization failed: {error}"))?;
+    let requested_denoise_provider = request.settings.ai_denoise_provider;
     let mut settings = request.settings.validated()?;
     attach_portrait_masks(&mut settings, &portrait_runtime)?;
     attach_generated_masks(&mut settings, &ai_mask_runtime)?;
@@ -1168,6 +1487,13 @@ fn native_preview(
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
     let decoded = decode_source_preview(&request.source_path, level.max_edge())
         .map_err(|error| format!("native preview decode failed: {error}"))?;
+    attach_ai_denoise(
+        &decoded,
+        &request.source_path,
+        &mut settings,
+        requested_denoise_provider,
+        &ai_denoise_runtime,
+    )?;
     let (source_width, source_height) = source_dimensions(&decoded);
     let source_identity = preview_source_identity(&request.source_path)?;
     let job = scheduler
@@ -1253,16 +1579,25 @@ fn same_file(left: &Path, right: &Path) -> bool {
 fn native_export_jpeg(
     portrait_runtime: State<'_, NativePortraitRuntime>,
     ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
+    ai_denoise_runtime: State<'_, NativeAiDenoiseRuntime>,
     request: NativeExportRequest,
 ) -> Result<NativeExportResult, String> {
     if same_file(&request.source_path, &request.output_path) {
         return Err("export destination must not overwrite the source image".into());
     }
+    let requested_denoise_provider = request.settings.ai_denoise_provider;
     let mut settings = request.settings.validated()?;
     attach_portrait_masks(&mut settings, &portrait_runtime)?;
     attach_generated_masks(&mut settings, &ai_mask_runtime)?;
     let decoded = decode_source(&request.source_path)
         .map_err(|error| format!("native export decode failed: {error}"))?;
+    attach_ai_denoise(
+        &decoded,
+        &request.source_path,
+        &mut settings,
+        requested_denoise_provider,
+        &ai_denoise_runtime,
+    )?;
     let rendered = render_source_export_to_srgb8(&decoded, &settings)
         .map_err(|error| format!("native export graph failed: {error}"))?;
     let input_profile = rendered
@@ -1305,10 +1640,12 @@ pub fn run() {
         .manage(NativePreviewScheduler::default())
         .manage(NativePortraitRuntime::default())
         .manage(NativeAiMaskRuntime::default())
+        .manage(NativeAiDenoiseRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             engine_status,
             engine_capabilities,
+            ai_denoise_status,
             gpu_preview_status,
             advise_image,
             advise_native_image,
@@ -1319,7 +1656,10 @@ pub fn run() {
             ai_mask_generate,
             ai_mask_cancel,
             native_sample_color,
-            native_optics_status
+            native_optics_status,
+            native_reference_match,
+            native_look_save,
+            native_look_apply
         ])
         .run(tauri::generate_context!())
         .expect("error while running Starroom");
@@ -1354,12 +1694,16 @@ mod tests {
                 ..Default::default()
             },
             denoise_settings: DenoiseParameters::default(),
+            ai_denoise: AiDenoiseParameters::default(),
+            ai_denoise_provider: DenoiseExecutionProvider::Cpu,
             local_detail: LocalDetailParameters::default(),
             optics: OpticsSettings::default(),
             geometry: GeometryParameters::default(),
             layers: Vec::new(),
             skin_retouch: SkinRetouchSettings::default(),
             healing_operations: Vec::new(),
+            grain: GrainSettings::default(),
+            vignette: VignetteSettings::default(),
         }
     }
 

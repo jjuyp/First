@@ -18,6 +18,9 @@ This map is the fast routing layer for Codex and path-aware CI. Cargo manifests 
 | Healing | `starroom-heal` | detail | `detail` |
 | Advisor | `starroom-advisor` | serialized suggestions only | `ai` |
 | AI runtime | future typed runtime/provider crate | model manifest, local runtime | `ai`; relevant feature gate for generated editable artifact |
+| AI Denoise | `starroom-ai-denoise` NAFNet provider/domain/tiler/residual contract | `ort`, detail image buffer, M13 priority conventions, M16 portrait skin raster | `ai`, `detail`, `tiles`; shared graph and web contract when settings/cache binding changes |
+| Reference Match | `starroom-reference` analysis/recipe API | color OKLab/OKLCh, grading, detail image buffer | `color`, `tone`, `curve`, `ai`; web contract when workflow IPC changes |
+| Portable Looks | `starroom-look` schema/blending/effects API | color curves/mixer, grading, detail | `color`, `curve`, `detail`; shared graph and web contract |
 | Image I/O | `starroom-imageio` | RAW | `raw`, `web`; shared graph when decoded-source contract changes |
 | Shared graph | `starroom-pipeline` | color, CM, grading, detail, image I/O, RAW | **all targeted gates** |
 | Render/cache graph | `starroom-render` | stage dependency declarations | **all targeted gates** |

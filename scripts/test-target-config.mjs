@@ -6,7 +6,7 @@ export const goldenTags = [
 
 export const targets = {
   color: {
-    rust: [['test', '--locked', '-p', 'starroom-color', '-p', 'starroom-color-management', '-p', 'starroom-grading']],
+    rust: [['test', '--locked', '-p', 'starroom-color', '-p', 'starroom-color-management', '-p', 'starroom-grading', '-p', 'starroom-reference', '-p', 'starroom-look']],
     web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts'],
     golden: ['color', 'camera-color'],
   },
@@ -38,7 +38,7 @@ export const targets = {
     golden: ['raw', 'camera-color'],
   },
   detail: {
-    rust: [['test', '--locked', '-p', 'starroom-detail', '-p', 'starroom-heal', '-p', 'starroom-portrait']],
+    rust: [['test', '--locked', '-p', 'starroom-detail', '-p', 'starroom-heal', '-p', 'starroom-portrait', '-p', 'starroom-ai-denoise', '-p', 'starroom-look']],
     web: ['src/imagePipeline.test.ts'],
     golden: ['detail', 'high-iso'],
   },
@@ -93,6 +93,11 @@ export const targets = {
       ['test', '--locked', '-p', 'starroom-portrait', 'm20_'],
       ['test', '--locked', '-p', 'starroom-project', 'm20_'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'm20_'],
+      ['test', '--locked', '-p', 'starroom-ai-denoise'],
+      ['test', '--locked', '-p', 'starroom-reference'],
+      ['test', '--locked', '-p', 'starroom-look'],
+      ['test', '--locked', '-p', 'starroom-pipeline', 'm21_'],
+      ['test', '--locked', '-p', 'starroom-pipeline', 'm23_'],
     ],
     web: ['src/nativeRender.test.ts'],
     golden: ['ai', 'portrait', 'skin', 'mask'],

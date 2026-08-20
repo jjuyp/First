@@ -11,13 +11,13 @@ const rustLabels = {
 
 const rules = {
   web: [/^src\//, /^src-tauri\//, /^package(?:-lock)?\.json$/, /^vite\.config\./, /^tsconfig/, /^eslint\.config\./],
-  color: [/^crates\/starroom-(?:color|color-management|grading)\//],
+  color: [/^crates\/starroom-(?:color|color-management|grading|reference|look)\//],
   raw: [/^crates\/starroom-(?:raw|imageio)\//, /^fixtures\/raw\//, /^fixtures\/colorchecker\//],
-  detail: [/^crates\/starroom-(?:detail|heal|portrait)\//],
+  detail: [/^crates\/starroom-(?:detail|heal|portrait|ai-denoise|look)\//],
   optics: [/^crates\/starroom-optics\//],
   geometry: [/^crates\/starroom-geometry\//],
   gpu: [/^crates\/starroom-render\//],
-  ai: [/^crates\/starroom-advisor\//, /^models\//],
+  ai: [/^crates\/starroom-(?:advisor|ai-denoise|reference|look)\//, /^models\//],
 }
 
 const broadRules = [

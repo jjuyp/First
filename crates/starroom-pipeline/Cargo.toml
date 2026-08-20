@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 serde.workspace = true
+starroom-ai-denoise = { path = "../starroom-ai-denoise" }
 starroom-color = { path = "../starroom-color" }
 starroom-color-management = { path = "../starroom-color-management" }
 starroom-detail = { path = "../starroom-detail" }
@@ -14,6 +15,7 @@ starroom-grading = { path = "../starroom-grading" }
 starroom-heal = { path = "../starroom-heal" }
 starroom-geometry = { path = "../starroom-geometry" }
 starroom-imageio = { path = "../starroom-imageio" }
+starroom-look = { path = "../starroom-look" }
 starroom-optics = { path = "../starroom-optics" }
 starroom-project = { path = "../starroom-project" }
 starroom-portrait = { path = "../starroom-portrait" }

@@ -1,5 +1,5 @@
 export type Theme = 'dark' | 'gray' | 'light'
-export type Tool = 'light' | 'color' | 'curve' | 'detail' | 'masks' | 'heal' | 'optics' | 'geometry'
+export type Tool = 'light' | 'color' | 'curve' | 'detail' | 'looks' | 'masks' | 'heal' | 'optics' | 'geometry'
 
 export type AdjustmentKey =
   | 'exposure'
@@ -38,6 +38,8 @@ export type AdjustmentKey =
   | 'gradeBalance' | 'gradeBlending' | 'gradeAmount'
   | 'sharpenRadius' | 'sharpenDetail' | 'sharpenMasking' | 'sharpenHaloProtection'
   | 'denoiseLuminance' | 'denoiseChroma' | 'denoiseRadius' | 'denoiseDetailProtection' | 'denoiseHighIso'
+  | 'aiDenoiseEnabled' | 'aiDenoiseAmount' | 'aiDenoiseDetail' | 'aiDenoiseColorNoise' | 'aiDenoisePreserveSkin'
+  | 'grainAmount' | 'grainSize' | 'grainRoughness' | 'vignetteMidpoint' | 'vignetteRoundness' | 'vignetteFeather'
   | 'texture' | 'dehaze'
   | 'lensCorrection' | 'lensDistortion' | 'lensTca' | 'lensVignette' | 'lensAutoScale'
   | 'geometryScale' | 'geometryOffsetX' | 'geometryOffsetY' | 'geometryVertical' | 'geometryHorizontal'
@@ -87,6 +89,8 @@ export const defaultAdjustments: Adjustments = {
   gradeBalance: 0, gradeBlending: 50, gradeAmount: 100,
   sharpenRadius: 1, sharpenDetail: 50, sharpenMasking: 0, sharpenHaloProtection: 75,
   denoiseLuminance: 0, denoiseChroma: 0, denoiseRadius: 1.25, denoiseDetailProtection: 50, denoiseHighIso: 0,
+  aiDenoiseEnabled: 0, aiDenoiseAmount: 50, aiDenoiseDetail: 50, aiDenoiseColorNoise: 50, aiDenoisePreserveSkin: 50,
+  grainAmount: 0, grainSize: 50, grainRoughness: 50, vignetteMidpoint: 50, vignetteRoundness: 0, vignetteFeather: 50,
   texture: 0, dehaze: 0,
   lensCorrection: 0, lensDistortion: 1, lensTca: 1, lensVignette: 1, lensAutoScale: 1,
   geometryScale: 100, geometryOffsetX: 0, geometryOffsetY: 0, geometryVertical: 0, geometryHorizontal: 0,

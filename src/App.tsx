@@ -18,6 +18,7 @@ import {
   nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
+  applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, saveNativeLook, toNativeSettings,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -196,6 +197,7 @@ const toolItems: Array<{ id: Tool; label: string; icon: typeof SunMedium }> = [
   { id: 'color', label: 'Color', icon: Blend },
   { id: 'curve', label: 'Curve', icon: ScanLine },
   { id: 'detail', label: 'Detail', icon: Aperture },
+  { id: 'looks', label: 'Looks', icon: Sparkles },
   { id: 'masks', label: 'Masks', icon: ScanFace },
   { id: 'heal', label: 'Heal', icon: Sparkles },
   { id: 'optics', label: 'Optics', icon: Contrast },
@@ -231,6 +233,20 @@ const sliderGroups: Partial<Record<Tool, Array<{ key: AdjustmentKey; label: stri
     { key: 'denoiseRadius', label: 'Denoise radius', min: .6, max: 4, step: .1, suffix: ' px' },
     { key: 'denoiseDetailProtection', label: 'Detail protection', min: 0, max: 100, step: 1 },
     { key: 'denoiseHighIso', label: 'High ISO', min: 0, max: 100, step: 1 },
+    { key: 'aiDenoiseEnabled', label: 'AI Denoise enabled', min: 0, max: 1, step: 1 },
+    { key: 'aiDenoiseAmount', label: 'AI Denoise amount', min: 0, max: 100, step: 1 },
+    { key: 'aiDenoiseDetail', label: 'AI Detail preserve', min: 0, max: 100, step: 1 },
+    { key: 'aiDenoiseColorNoise', label: 'AI Color noise', min: 0, max: 100, step: 1 },
+    { key: 'aiDenoisePreserveSkin', label: 'AI Preserve skin', min: 0, max: 100, step: 1 },
+  ],
+  looks: [
+    { key: 'grainAmount', label: 'Grain amount', min: 0, max: 100, step: 1 },
+    { key: 'grainSize', label: 'Grain size', min: 0, max: 100, step: 1 },
+    { key: 'grainRoughness', label: 'Grain roughness', min: 0, max: 100, step: 1 },
+    { key: 'vignette', label: 'Vignette amount', min: -100, max: 100, step: 1 },
+    { key: 'vignetteMidpoint', label: 'Vignette midpoint', min: 0, max: 100, step: 1 },
+    { key: 'vignetteRoundness', label: 'Vignette roundness', min: -100, max: 100, step: 1 },
+    { key: 'vignetteFeather', label: 'Vignette feather', min: 2, max: 100, step: 1 },
   ],
   masks: [
     { key: 'maskExposure', label: 'Center exposure', min: -3, max: 3, step: .01, suffix: ' EV' },
@@ -791,6 +807,7 @@ export function App() {
   const [aiMaskResult, setAiMaskResult] = useState<NativeAiMaskResult | null>(null)
   const [aiMaskRequestId, setAiMaskRequestId] = useState<string | null>(null)
   const [maskOverlayVisible, setMaskOverlayVisible] = useState(false)
+  const [lookAmount, setLookAmount] = usePersistedValue('starroom-look-amount', 100)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -957,6 +974,57 @@ export function App() {
     updateSelected((photo) => ({ ...photo, curvePoints: curveChannel === 'master' ? copyCurve(points) : photo.curvePoints,
       curveChannels: { ...photo.curveChannels, [curveChannel]: copyCurve(points) }, future: [] }))
     setBefore(false)
+  }
+
+  const selectedNativeSettings = () => toNativeSettings(
+    selected.adjustments, selected.curvePoints, selected.whiteBalanceMode,
+    selected.whiteBalanceSample, selected.curveChannels, selected.opticsState,
+    selected.layers, selected.mask, selected.skinRetouch, selected.healingOperations,
+  )
+
+  function applyWorkflowSettings(settings: ReturnType<typeof selectedNativeSettings>, label: string) {
+    const mapped = fromNativeSettings(selected.adjustments, settings)
+    updateSelected((photo) => ({ ...photo, adjustments: mapped.adjustments,
+      curveChannels: mapped.curves, curvePoints: copyCurve(mapped.curves.master),
+      history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    setBefore(false)
+    setNotice(label)
+  }
+
+  async function runReferenceMatch() {
+    if (!selected.sourcePath || selected.renderBackend !== 'native') return
+    try {
+      const referencePath = await chooseNativeReferencePath()
+      if (!referencePath) return
+      const result = await matchNativeReference(selected.sourcePath, referencePath, selectedNativeSettings(), .7)
+      applyWorkflowSettings(result.settings, `Reference match applied · ${Math.round(result.recipe.confidence * 100)}% confidence`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Reference match failed')
+    }
+  }
+
+  async function saveLookWorkflow() {
+    if (selected.renderBackend !== 'native') return
+    try {
+      const path = await chooseNativeLookPath('save', `${selected.name.replace(/\.[^.]+$/, '')}.srlook`)
+      if (!path) return
+      await saveNativeLook(path, selected.name.replace(/\.[^.]+$/, ''), selectedNativeSettings())
+      setNotice('Portable .srlook saved')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Look save failed')
+    }
+  }
+
+  async function loadLookWorkflow() {
+    if (selected.renderBackend !== 'native') return
+    try {
+      const path = await chooseNativeLookPath('open')
+      if (!path) return
+      const settings = await applyNativeLook(path, lookAmount / 100, selectedNativeSettings())
+      applyWorkflowSettings(settings, `Look applied at ${lookAmount}%`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Look load failed')
+    }
   }
 
   function mutateLayers(mutator: (layers: NativeAdjustmentLayer[]) => NativeAdjustmentLayer[]) {
@@ -1530,6 +1598,17 @@ export function App() {
               {'type' in layer.mask && <LayerMaskControls mask={layer.mask} onChange={(mask) => updateLayer(layer.id, (current) => ({ ...current, mask }))} />}
             </>}
           </div>)}
+        </section>
+        <section className="layer-stack" aria-label="Reference and look workflows">
+          <div className="layer-stack-head"><strong>Reference / Looks</strong><small>Native</small></div>
+          <small>Perceptual reference analysis and .srlook interpolation run in Rust; no creative image math runs in React.</small>
+          <div className="portrait-regions">
+            <button disabled={selected.renderBackend !== 'native'} onClick={runReferenceMatch}>Match reference…</button>
+            <button disabled={selected.renderBackend !== 'native'} onClick={saveLookWorkflow}>Save .srlook…</button>
+            <button disabled={selected.renderBackend !== 'native'} onClick={loadLookWorkflow}>Load .srlook…</button>
+          </div>
+          <label>Look amount <input aria-label="Look amount" type="number" min="0" max="100" step="1" value={lookAmount}
+            onChange={(event) => setLookAmount(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} />%</label>
         </section>
         <div className="tool-layout">
           <nav className="tool-rail" aria-label="Editing tools">{toolItems.map(({ id, label, icon: Icon }) => <button key={id}

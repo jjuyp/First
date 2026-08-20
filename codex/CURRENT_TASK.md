@@ -2,24 +2,24 @@
 
 ## Current Batch
 
-M17 → M18 → M19 → M20 — **Complete / Accepted**.
+M21 → M22 → M23 — **Implementation candidate; final Level 3 acceptance pending**.
 
-M16 is complete and accepted. This batch completes professional skin retouch, healing, the local
-semantic advisor and local AI masks through the existing Native shared render graph. Stop after
-M20 final acceptance; do not begin M21.
+M1-M20 remain accepted. This batch adds fixed local NAFNet denoise, Native perceptual reference
+matching and portable `.srlook` workflows through the existing Native shared render graph. Stop
+after M23 final acceptance; do not begin M24.
 
 ## Goal
 
-M17–M20 are complete without resetting the valid implementation drafts.
-M20 extends M15 with reusable local AI masks: M16 portrait semantics, BiRefNet Subject/Background,
-and SegFormer-B0 ADE20K Sky. All preview/export paths use native cache bindings; React transports
-only compact metadata and interaction state.
+Complete M21 local NAFNet-SIDD denoise, M22 perceptual/statistical Reference Match and M23
+portable Look Engine without resetting prior native pipelines. All Preview/Before-After/Export
+paths keep native cache bindings and one shared graph; React transports only compact intent.
 
 ## Relevant modules
 
-- `crates/starroom-portrait` fixed-model registry, ONNX sessions, YuNet/BiSeNet and M20 adapters
-- `crates/starroom-project` serializable `PortraitSemantic` MaskTree grammar
-- `crates/starroom-pipeline` native semantic-raster resolution and layer compositing
+- `crates/starroom-ai-denoise` fixed NAFNet registry, domain, tiling and residual adjustment
+- `crates/starroom-reference` Native analysis and existing-parameter match recipe
+- `crates/starroom-look` `.srlook` schema, semantic blending, grain and vignette
+- `crates/starroom-pipeline` shared precreative residual and finishing stages
 - `src-tauri/src/lib.rs` local cache and compact native IPC
 - `src/nativeRender.ts`, `src/App.tsx` interaction/state presentation only
 
@@ -35,25 +35,26 @@ only compact metadata and interaction state.
 
 ## Open-source decision
 
-Reuse `ort 2.0.0-rc.10` as the single local ONNX Runtime adapter. Model decisions and pins are
-already recorded in `MODEL_PROVENANCE.md`; weights are local-only, Git-ignored, never packaged or
-supplied to CI. No cloud, telemetry, browser canvas math, substitute model or M21 work is allowed.
+Reuse `ort 2.0.0-rc.10` for the pinned NAFNet-SIDD width-32 ONNX. The checkpoint and export remain
+local-only, Git-ignored, unbundled and absent from CI. M22/M23 reuse existing Native adjustment
+stages and add no browser color science, cloud, telemetry or substitute model.
 
 ## Acceptance criteria
 
-- M17–M20 production implementation, targeted regressions, cross-milestone scenarios and Level 3
+- M21–M23 production implementation, targeted regressions, cross-milestone scenarios and Level 3
   acceptance all pass on the final acceptance commit.
 - Preview, Before/After and Export retain one Native shared graph; unavailable providers remain
   explicit typed states rather than transparent/silent fallbacks.
 
 ## Targeted tests
 
-- `npm.cmd run test:portrait`
-- `npm.cmd run test:masks`
+- `npm.cmd run test:ai`
+- `npm.cmd run test:detail`
+- `npm.cmd run test:color`
 - Native preview/export contract and shared graph Level 2, then Level 3 acceptance
 
 ## Stop conditions
 
-Do not merge `main`, force-push, make PR #2 ready, or begin M21. Only an unrecoverable repository
+Do not merge `main`, force-push, make PR #2 ready, or begin M24. Only an unrecoverable repository
 risk, model-artifact corruption that cannot be reproduced, licensing decision not already covered,
 or architecture contradiction may stop this batch.

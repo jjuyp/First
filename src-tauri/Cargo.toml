@@ -32,3 +32,6 @@ starroom-grading = { path = "../crates/starroom-grading" }
 starroom-color-management = { path = "../crates/starroom-color-management" }
 starroom-portrait = { path = "../crates/starroom-portrait" }
 starroom-heal = { path = "../crates/starroom-heal" }
+starroom-ai-denoise = { path = "../crates/starroom-ai-denoise" }
+starroom-reference = { path = "../crates/starroom-reference" }
+starroom-look = { path = "../crates/starroom-look" }

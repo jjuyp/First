@@ -3,6 +3,7 @@
 //! match this pipeline within documented tolerances before replacing the CPU reference.
 
 use serde::{Deserialize, Serialize};
+use starroom_ai_denoise::{AiDenoiseError, AiDenoiseParameters, AiDenoiseResidual, apply_residual};
 use starroom_color::{
     ColorBand, ColorMixer, CurvePoint, LinearRgb, ToneParameters, apply_color_mixer, apply_tone,
     compress_to_unit_gamut, map_monotone_curve, oklab_to_oklch, oklab_to_rec2020, oklch_to_oklab,
@@ -22,6 +23,7 @@ use starroom_geometry::{
 use starroom_grading::{GradingParameters, apply_grading};
 use starroom_heal::{HealingOperation, apply_operation};
 use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage, lens_metadata};
+use starroom_look::{GrainSettings, LookError, VignetteSettings, apply_finishing_effects};
 use starroom_optics::{
     LensIdentity, LensProfileResolution, LensProfileStatus, LensfunProvider, OpticsSettings,
     apply_lens_correction,
@@ -253,6 +255,12 @@ pub struct RenderSettings {
     pub color_mixer: ColorMixer,
     pub grading: GradingParameters,
     pub denoise: DenoiseParameters,
+    /// M21 NAFNet adjustment controls. Native code resolves the matching residual cache entry.
+    #[serde(default)]
+    pub ai_denoise: AiDenoiseParameters,
+    /// Native-only model residual. Never serialized or transported as JSON pixels.
+    #[serde(skip)]
+    pub ai_denoise_residual: Option<AiDenoiseResidual>,
     #[serde(default)]
     pub local_detail: LocalDetailParameters,
     pub sharpen: SharpenParameters,
@@ -276,6 +284,14 @@ pub struct RenderSettings {
     /// preview and export. They contain coordinates and parameters only, never raster pixels.
     #[serde(default)]
     pub healing_operations: Vec<HealingOperation>,
+    /// M23 portable finishing effects, evaluated in the shared graph.
+    #[serde(default)]
+    pub grain: GrainSettings,
+    #[serde(default)]
+    pub vignette: VignetteSettings,
+    /// Native source identity makes grain stable across preview/export without exposing pixels.
+    #[serde(skip)]
+    pub image_identity: String,
 }
 
 impl Default for RenderSettings {
@@ -290,6 +306,8 @@ impl Default for RenderSettings {
             color_mixer: ColorMixer::default(),
             grading: GradingParameters::default(),
             denoise: DenoiseParameters::default(),
+            ai_denoise: AiDenoiseParameters::default(),
+            ai_denoise_residual: None,
             local_detail: LocalDetailParameters::default(),
             sharpen: SharpenParameters {
                 amount: 0.0,
@@ -302,6 +320,9 @@ impl Default for RenderSettings {
             generated_masks: Vec::new(),
             skin_retouch: SkinRetouchSettings::default(),
             healing_operations: Vec::new(),
+            grain: GrainSettings::default(),
+            vignette: VignetteSettings::default(),
+            image_identity: String::new(),
         }
     }
 }
@@ -335,6 +356,10 @@ pub enum PipelineError {
     MaskProviderUnavailable { provider: String },
     #[error("GPU acceleration failed: {0}")]
     Gpu(#[from] GpuError),
+    #[error("AI denoise failed: {0}")]
+    AiDenoise(#[from] AiDenoiseError),
+    #[error("look finishing effect failed: {0}")]
+    Look(#[from] LookError),
     #[error(transparent)]
     ColorManagement(#[from] ColorManagementError),
 }
@@ -1172,6 +1197,22 @@ fn render_working_graph(
     output_icc: Option<&[u8]>,
     gpu: Option<&GpuRenderer>,
 ) -> Result<RenderedRgb8, PipelineError> {
+    let geometry_image = apply_precreative_geometry(working, settings, optics_resolution)?;
+    render_prepared_working_graph(
+        geometry_image,
+        input_source,
+        camera_profile,
+        settings,
+        output_icc,
+        gpu,
+    )
+}
+
+fn apply_precreative_geometry(
+    working: LinearImage,
+    settings: &RenderSettings,
+    optics_resolution: Option<&LensProfileResolution>,
+) -> Result<LinearImage, PipelineError> {
     let optically_corrected = if settings.optics.parameters.enabled {
         let resolution = optics_resolution.ok_or(PipelineError::OpticsProfile(
             LensProfileStatus::MissingMetadata,
@@ -1210,9 +1251,46 @@ fn render_working_graph(
         geometry_parameters,
     )
     .map_err(|_| PipelineError::Geometry)?;
-    let width = geometrically_corrected.width as u32;
-    let height = geometrically_corrected.height as u32;
-    let pixels: Vec<[f32; 3]> = geometrically_corrected
+    LinearImage::new(
+        geometrically_corrected.width,
+        geometrically_corrected.height,
+        geometrically_corrected.data,
+    )
+    .map_err(|_| PipelineError::DetailBuffer)
+}
+
+fn render_prepared_working_graph(
+    geometry_image: LinearImage,
+    input_source: InputProfileSource,
+    camera_profile: Option<&CameraProfileDescriptor>,
+    settings: &RenderSettings,
+    output_icc: Option<&[u8]>,
+    gpu: Option<&GpuRenderer>,
+) -> Result<RenderedRgb8, PipelineError> {
+    // M21 is intentionally before tone/curve/mixer/grading. Inference and control adjustment
+    // caches are separate; an enabled request without its native residual is a typed failure.
+    let model_adjusted = if settings.ai_denoise.enabled {
+        let residual = settings
+            .ai_denoise_residual
+            .as_ref()
+            .ok_or(AiDenoiseError::ResidualMismatch)?;
+        let skin = settings.portrait_masks.iter().find(|mask| {
+            mask.region == PortraitMaskRegion::Skin
+                && mask.width as usize == geometry_image.width
+                && mask.height as usize == geometry_image.height
+        });
+        apply_residual(
+            &geometry_image,
+            residual,
+            settings.ai_denoise,
+            skin.map(|mask| mask.values.as_slice()),
+        )?
+    } else {
+        geometry_image
+    };
+    let width = model_adjusted.width as u32;
+    let height = model_adjusted.height as u32;
+    let pixels: Vec<[f32; 3]> = model_adjusted
         .data
         .chunks_exact(3)
         .map(|pixel| [pixel[0], pixel[1], pixel[2]])
@@ -1222,8 +1300,8 @@ fn render_working_graph(
         geometrically_corrected.height,
         apply_creative_graph(
             pixels,
-            geometrically_corrected.width,
-            geometrically_corrected.height,
+            model_adjusted.width,
+            model_adjusted.height,
             settings,
             gpu,
         )?,
@@ -1232,6 +1310,12 @@ fn render_working_graph(
     let denoised = denoise(&creative, settings.denoise);
     let locally_adjusted = local_detail(&denoised, settings.local_detail);
     let detailed = sharpen(&locally_adjusted, settings.sharpen);
+    let detailed = apply_finishing_effects(
+        &detailed,
+        settings.grain,
+        settings.vignette,
+        &settings.image_identity,
+    )?;
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
     for pixel in detailed.data.chunks_exact(3) {
         let working_rgb = compress_to_unit_gamut(LinearRgb {
@@ -1265,6 +1349,24 @@ fn render_working_graph(
             camera_profile_hash: camera_profile.map(|profile| profile.hash.clone()),
         },
     })
+}
+
+/// Returns the exact Linear Rec.2020 D65 image presented to M21, after source colour, optics,
+/// orientation/crop and geometry, but before NAFNet and every tone/creative/detail stage.
+pub fn prepare_source_for_ai_denoise(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+) -> Result<LinearImage, PipelineError> {
+    let optics_resolution = if settings.optics.parameters.enabled {
+        Some(resolve_source_lens_profile(decoded, &settings.optics)?)
+    } else {
+        None
+    };
+    let working = match decoded {
+        DecodedSourceImage::Rendered(image) => to_working_image(image, settings)?.0,
+        DecodedSourceImage::Raw(image) => to_working_raw(image, settings)?,
+    };
+    apply_precreative_geometry(working, settings, optics_resolution.as_ref())
 }
 
 fn render_shared_graph(
@@ -1455,6 +1557,7 @@ pub fn render_to_srgb8(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use starroom_ai_denoise::ExecutionProvider as AiExecutionProvider;
     use starroom_color::{BandAdjustment, ColorBand};
     use starroom_grading::ColorWheel;
     use starroom_imageio::RenderedFormat;
@@ -2471,6 +2574,71 @@ mod tests {
                 "M18 AI inpaint is reserved and unavailable"
             ))
         ));
+    }
+
+    #[test]
+    fn m21_ai_denoise_stage_is_required_and_shared_by_preview_export() {
+        let decoded = fixture(&[[0.18, 0.20, 0.22, 1.0], [0.8, 0.7, 0.6, 1.0]]);
+        let mut settings = RenderSettings {
+            ai_denoise: AiDenoiseParameters {
+                enabled: true,
+                amount: 0.7,
+                detail: 0.4,
+                color_noise: 0.8,
+                preserve_skin: 0.5,
+            },
+            ..Default::default()
+        };
+        assert!(matches!(
+            render_preview_to_srgb8(&decoded, &settings),
+            Err(PipelineError::AiDenoise(AiDenoiseError::ResidualMismatch))
+        ));
+        settings.ai_denoise_residual = Some(AiDenoiseResidual {
+            width: 2,
+            height: 1,
+            values: vec![-0.01, -0.008, -0.006, -0.02, -0.01, -0.005],
+            model_hash: "fixture-model".into(),
+            source_identity: "fixture".into(),
+            inference_cache_key: "fixture-cache".into(),
+            execution_provider: AiExecutionProvider::Cpu,
+        });
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("M21 preview");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("M21 export");
+        assert_eq!(preview, export);
+    }
+
+    #[test]
+    fn m23_grain_vignette_are_shared_deterministic_and_not_baked_into_before() {
+        let decoded = fixture(&[
+            [0.3, 0.4, 0.5, 1.0],
+            [0.5, 0.6, 0.7, 1.0],
+            [2.0, 1.5, 1.0, 1.0],
+        ]);
+        let settings = RenderSettings {
+            grain: GrainSettings {
+                amount: 0.4,
+                size: 0.5,
+                roughness: 0.2,
+                seed: 77,
+            },
+            vignette: VignetteSettings {
+                amount: 0.5,
+                midpoint: 0.35,
+                roundness: 0.2,
+                feather: 0.5,
+            },
+            image_identity: "same-source".into(),
+            ..Default::default()
+        };
+        let preview = render_preview_to_srgb8(&decoded, &settings).expect("M23 preview");
+        let repeat = render_preview_to_srgb8(&decoded, &settings).expect("repeat");
+        let export = render_export_to_srgb8(&decoded, &settings).expect("M23 export");
+        assert_eq!(preview, repeat);
+        assert_eq!(preview, export);
+        assert_ne!(
+            preview,
+            render_preview_to_srgb8(&decoded, &RenderSettings::default()).expect("before")
+        );
     }
 
     #[test]
