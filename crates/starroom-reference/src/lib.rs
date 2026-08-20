@@ -143,8 +143,8 @@ pub fn analyze(image: &LinearImage) -> Result<ReferenceAnalysis, ReferenceError>
         } else {
             1
         };
-        for c in 0..3 {
-            zones[z].0[c] += s[c];
+        for (channel, sample) in zones[z].0.iter_mut().zip(s.iter()) {
+            *channel += *sample;
         }
         zones[z].1 += 1.0;
     }
