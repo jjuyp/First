@@ -2719,29 +2719,45 @@ mod tests {
             [0.55, 0.42, 0.30, 1.0],
             [2.4, 1.6, 0.9, 1.0],
         ]);
-        let mut look_a = starroom_look::PortableLook::default();
-        look_a.id = "look-a".into();
-        look_a.name = "Look A".into();
-        look_a.tone.exposure_ev = 0.35;
-        look_a.relative_color.temperature = 0.25;
-        look_a.grain = GrainSettings {
-            amount: 0.3,
-            size: 0.45,
-            roughness: 0.6,
-            color: 0.2,
-            seed: 23,
+        let look_a = starroom_look::PortableLook {
+            id: "look-a".into(),
+            name: "Look A".into(),
+            tone: ToneParameters {
+                exposure_ev: 0.35,
+                ..Default::default()
+            },
+            relative_color: starroom_look::PortableRelativeColor {
+                temperature: 0.25,
+                ..Default::default()
+            },
+            grain: GrainSettings {
+                amount: 0.3,
+                size: 0.45,
+                roughness: 0.6,
+                color: 0.2,
+                seed: 23,
+            },
+            ..Default::default()
         };
-        let mut look_b = starroom_look::PortableLook::default();
-        look_b.id = "look-b".into();
-        look_b.name = "Look B".into();
-        look_b.tone.contrast = 0.4;
-        look_b.relative_color.tint = -0.2;
-        look_b.vignette = VignetteSettings {
-            amount: 0.45,
-            midpoint: 0.35,
-            roundness: 0.2,
-            feather: 0.55,
-            highlight_protect: 0.8,
+        let look_b = starroom_look::PortableLook {
+            id: "look-b".into(),
+            name: "Look B".into(),
+            tone: ToneParameters {
+                contrast: 0.4,
+                ..Default::default()
+            },
+            relative_color: starroom_look::PortableRelativeColor {
+                tint: -0.2,
+                ..Default::default()
+            },
+            vignette: VignetteSettings {
+                amount: 0.45,
+                midpoint: 0.35,
+                roundness: 0.2,
+                feather: 0.55,
+                highlight_protect: 0.8,
+            },
+            ..Default::default()
         };
         let mixed = starroom_look::mix_weighted(&look_a, &look_b, 70.0, 30.0, "A70 B30")
             .expect("weighted Look");
