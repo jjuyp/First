@@ -300,6 +300,22 @@ mod tests {
         let a = analyze(&gradient([1.0, 1.0, 1.0])).unwrap();
         let m = match_reference(&a, &a, 0.0).unwrap();
         assert!(m.tone.exposure_ev.abs() < 1e-6);
+        assert!(m.tone.contrast.abs() < 1e-6);
+        assert!(m.tone.highlights.abs() < 1e-6);
+        assert!(m.tone.shadows.abs() < 1e-6);
+        assert!(m.tone.whites.abs() < 1e-6);
+        assert!(m.tone.blacks.abs() < 1e-6);
+        assert_eq!(m.white_balance, RelativeWhiteBalance::default());
+        assert!(
+            m.color_mixer
+                .bands
+                .iter()
+                .all(|band| *band == BandAdjustment::default())
+        );
+        assert_eq!(m.grading.shadows.chroma, 0.0);
+        assert_eq!(m.grading.midtones.chroma, 0.0);
+        assert_eq!(m.grading.highlights.chroma, 0.0);
+        assert_eq!(m.grading.global.chroma, 0.0);
         assert!(m.curve.windows(2).all(|w| w[0].y <= w[1].y));
     }
     #[test]
