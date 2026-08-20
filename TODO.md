@@ -1,9 +1,10 @@
 # Complete Internal Build Plan
 
-## M21-M23 native intelligence / look batch (implementation candidate 2026-08-20)
+## M21-M23 native intelligence / look batch (targeted acceptance in progress 2026-08-20)
 
 - [x] M21: pin local-only NAFNet-SIDD width-32, deterministic static 512/opset20 ONNX export and exact hashes; implement Linear Rec.2020 D65 model-domain V1, 512/64 raised-cosine tiling, visible-first priority, cancellation, typed errors and distinct inference/adjustment cache keys.
 - [x] M21: place the cached residual stage after optics/geometry and before every tone/creative/detail operation; expose Amount, Detail, Color Noise and Preserve Skin through compact Tauri state; Preview and Export require the same Native residual graph with no silent substitute.
+- [x] M21: enforce a 2 GiB conservative working-memory budget, cancel superseded preview inference, reject stale scheduler completion, and expose active DirectML/CPU plus the explicit fallback reason. CPU fallback is attempted only for classified DirectML runtime/inference failures; model/hash/output errors remain visible.
 - [x] M22: implement deterministic Native luminance quantiles, OKLab mean/covariance, eight OKLCh hue bands and shadow/midtone/highlight statistics; fit bounded monotonic tone/curve, relative WB, mixer and grading intent with skin protection and confidence.
 - [x] M22: add reference-photo selection/apply UI and compact analysis/recipe IPC. React transports parameters only and contains no reference-match color science.
 - [x] M23: replace the placeholder with strict versioned `.srlook` v1 JSON; include only portable tone/curve/mixer/grading/detail/grain/vignette state and explicitly exclude geometry, masks, healing, faces and camera state.

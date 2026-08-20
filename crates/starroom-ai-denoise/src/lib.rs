@@ -724,6 +724,31 @@ mod tests {
         assert!(b.data[3] > a.data[3]);
     }
     #[test]
+    fn m21_amount_zero_is_exact_source_parity_without_adjustment_recompute() {
+        let source = image(8, 6);
+        let residual = AiDenoiseResidual {
+            width: source.width,
+            height: source.height,
+            values: vec![0.75; source.data.len()],
+            model_hash: MODEL_SHA256.into(),
+            source_identity: "amount-zero".into(),
+            inference_cache_key: inference_cache_key("amount-zero"),
+            execution_provider: ExecutionProvider::Cpu,
+        };
+        let output = apply_residual(
+            &source,
+            &residual,
+            AiDenoiseParameters {
+                enabled: true,
+                amount: 0.0,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(output, source);
+    }
+    #[test]
     fn noisy_flat_color_hdr_and_overlap_outputs_remain_finite_without_seams() {
         for mut source in [
             LinearImage::new(520, 24, vec![0.18; 520 * 24 * 3]).unwrap(),
