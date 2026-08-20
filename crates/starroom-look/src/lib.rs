@@ -5,12 +5,22 @@ use sha2::{Digest, Sha256};
 use starroom_color::{BandAdjustment, ColorMixer, CurvePoint, ToneParameters, map_monotone_curve};
 use starroom_detail::{DenoiseParameters, LinearImage, LocalDetailParameters, SharpenParameters};
 use starroom_grading::{ColorWheel, GradingParameters};
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 pub const LOOK_SCHEMA: &str = "https://starroom.app/schemas/look/v1";
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LookMetadata {
+    pub author: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub extensions: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PortableRelativeColor {
     pub temperature: f32,
     pub tint: f32,
@@ -18,7 +28,7 @@ pub struct PortableRelativeColor {
     pub saturation: f32,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PortableCurves {
     pub master: Vec<CurvePoint>,
     pub red: Vec<CurvePoint>,
@@ -26,11 +36,13 @@ pub struct PortableCurves {
     pub blue: Vec<CurvePoint>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GrainSettings {
     pub amount: f32,
     pub size: f32,
     pub roughness: f32,
+    /// 0 is monochrome grain, 1 is independent RGB grain.
+    pub color: f32,
     pub seed: u64,
 }
 impl Default for GrainSettings {
@@ -39,25 +51,29 @@ impl Default for GrainSettings {
             amount: 0.0,
             size: 0.5,
             roughness: 0.5,
+            color: 0.0,
             seed: 0,
         }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VignetteSettings {
     pub amount: f32,
     pub midpoint: f32,
     pub roundness: f32,
     pub feather: f32,
+    /// Reduces edge exposure change on scene-linear highlights, 0..1.
+    pub highlight_protect: f32,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PortableLook {
     pub schema: String,
-    pub version: u32,
+    pub schema_version: u32,
     pub id: String,
     pub name: String,
+    pub metadata: LookMetadata,
     pub tone: ToneParameters,
     pub relative_color: PortableRelativeColor,
     pub curves: PortableCurves,
@@ -73,9 +89,10 @@ impl Default for PortableLook {
     fn default() -> Self {
         Self {
             schema: LOOK_SCHEMA.into(),
-            version: 1,
+            schema_version: 1,
             id: "neutral".into(),
             name: "Neutral".into(),
+            metadata: Default::default(),
             tone: Default::default(),
             relative_color: Default::default(),
             curves: Default::default(),
@@ -113,30 +130,145 @@ impl PortableLook {
         serde_json::to_string_pretty(self).map_err(|e| LookError::InvalidJson(e.to_string()))
     }
     pub fn validate(&self) -> Result<(), LookError> {
-        if self.schema != LOOK_SCHEMA || self.version != 1 {
+        if self.schema != LOOK_SCHEMA || self.schema_version != 1 {
             return Err(LookError::UnsupportedSchema);
+        }
+        if self.id.trim().is_empty()
+            || self.name.trim().is_empty()
+            || self.name.chars().count() > 160
+            || self.metadata.author.chars().count() > 160
+            || self.metadata.description.chars().count() > 2_000
+            || self.metadata.tags.len() > 64
+            || self
+                .metadata
+                .tags
+                .iter()
+                .any(|tag| tag.chars().count() > 80)
+            || self
+                .metadata
+                .extensions
+                .iter()
+                .any(|(key, value)| key.chars().count() > 80 || value.chars().count() > 500)
+        {
+            return Err(LookError::InvalidValues);
         }
         let values = [
             self.tone.exposure_ev,
             self.tone.contrast,
+            self.tone.highlights,
+            self.tone.shadows,
+            self.tone.whites,
+            self.tone.blacks,
             self.relative_color.temperature,
             self.relative_color.tint,
+            self.relative_color.vibrance,
+            self.relative_color.saturation,
             self.grain.amount,
             self.grain.size,
             self.grain.roughness,
+            self.grain.color,
             self.vignette.amount,
             self.vignette.midpoint,
             self.vignette.roundness,
             self.vignette.feather,
+            self.vignette.highlight_protect,
+            self.color_mixer.band_width_degrees,
+            self.grading.balance,
+            self.grading.blending,
+            self.grading.amount,
+            self.denoise.luminance,
+            self.denoise.chroma,
+            self.denoise.radius,
+            self.denoise.detail_protection,
+            self.denoise.high_iso,
+            self.local_detail.texture,
+            self.local_detail.clarity,
+            self.local_detail.dehaze,
+            self.sharpen.amount,
+            self.sharpen.radius,
+            self.sharpen.detail,
+            self.sharpen.masking,
+            self.sharpen.halo_protection,
+            self.sharpen.threshold,
         ];
         if values.iter().any(|v| !v.is_finite())
-            || self.grain.amount.abs() > 1.0
+            || !signed(self.tone.contrast)
+            || !signed(self.tone.highlights)
+            || !signed(self.tone.shadows)
+            || !signed(self.tone.whites)
+            || !signed(self.tone.blacks)
+            || !signed(self.relative_color.temperature)
+            || !signed(self.relative_color.tint)
+            || !signed(self.relative_color.vibrance)
+            || !signed(self.relative_color.saturation)
+            || !unit(self.grain.amount)
+            || !(0.1..=1.0).contains(&self.grain.size)
+            || !unit(self.grain.roughness)
+            || !unit(self.grain.color)
             || self.vignette.amount.abs() > 1.0
+            || !unit(self.vignette.midpoint)
+            || !signed(self.vignette.roundness)
+            || !unit(self.vignette.feather)
+            || !unit(self.vignette.highlight_protect)
+            || !(1.0..=180.0).contains(&self.color_mixer.band_width_degrees)
+            || !self.color_mixer.bands.iter().all(|band| {
+                band.hue_degrees.is_finite()
+                    && (-180.0..=180.0).contains(&band.hue_degrees)
+                    && signed(band.chroma)
+                    && signed(band.lightness)
+            })
+            || !valid_wheel(self.grading.shadows)
+            || !valid_wheel(self.grading.midtones)
+            || !valid_wheel(self.grading.highlights)
+            || !valid_wheel(self.grading.global)
+            || !signed(self.grading.balance)
+            || !unit(self.grading.blending)
+            || !unit(self.grading.amount)
+            || !unit(self.denoise.luminance)
+            || !unit(self.denoise.chroma)
+            || !(0.25..=24.0).contains(&self.denoise.radius)
+            || !unit(self.denoise.detail_protection)
+            || !unit(self.denoise.high_iso)
+            || !signed(self.local_detail.texture)
+            || !signed(self.local_detail.clarity)
+            || !signed(self.local_detail.dehaze)
+            || !unit(self.sharpen.amount)
+            || !(0.25..=24.0).contains(&self.sharpen.radius)
+            || !unit(self.sharpen.detail)
+            || !unit(self.sharpen.masking)
+            || !unit(self.sharpen.halo_protection)
+            || !unit(self.sharpen.threshold)
+            || !valid_curve(&self.curves.master)
+            || !valid_curve(&self.curves.red)
+            || !valid_curve(&self.curves.green)
+            || !valid_curve(&self.curves.blue)
         {
             return Err(LookError::InvalidValues);
         }
         Ok(())
     }
+}
+fn unit(value: f32) -> bool {
+    (0.0..=1.0).contains(&value)
+}
+fn signed(value: f32) -> bool {
+    (-1.0..=1.0).contains(&value)
+}
+fn valid_wheel(wheel: ColorWheel) -> bool {
+    wheel.hue_degrees.is_finite()
+        && wheel.chroma.is_finite()
+        && wheel.lightness.is_finite()
+        && signed(wheel.chroma)
+        && signed(wheel.lightness)
+}
+fn valid_curve(points: &[CurvePoint]) -> bool {
+    points.len() <= 256
+        && points.iter().all(|point| {
+            point.x.is_finite() && point.y.is_finite() && unit(point.x) && unit(point.y)
+        })
+        && points
+            .windows(2)
+            .all(|pair| pair[0].x < pair[1].x && pair[0].y <= pair[1].y)
 }
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -176,6 +308,12 @@ pub fn blend(
     name: impl Into<String>,
 ) -> PortableLook {
     let t = amount.clamp(0.0, 1.0);
+    if t <= f32::EPSILON {
+        return a.clone();
+    }
+    if t >= 1.0 - f32::EPSILON {
+        return b.clone();
+    }
     let l = |x, y| lerp(x, y, t);
     let tone = ToneParameters {
         exposure_ev: l(a.tone.exposure_ev, b.tone.exposure_ev),
@@ -225,9 +363,14 @@ pub fn blend(
     );
     PortableLook {
         schema: LOOK_SCHEMA.into(),
-        version: 1,
+        schema_version: 1,
         id,
         name,
+        metadata: if t < 0.5 {
+            a.metadata.clone()
+        } else {
+            b.metadata.clone()
+        },
         tone,
         relative_color: PortableRelativeColor {
             temperature: l(a.relative_color.temperature, b.relative_color.temperature),
@@ -267,6 +410,7 @@ pub fn blend(
             amount: l(a.grain.amount, b.grain.amount),
             size: l(a.grain.size, b.grain.size),
             roughness: l(a.grain.roughness, b.grain.roughness),
+            color: l(a.grain.color, b.grain.color),
             seed: if t < 0.5 { a.grain.seed } else { b.grain.seed },
         },
         vignette: VignetteSettings {
@@ -274,8 +418,27 @@ pub fn blend(
             midpoint: l(a.vignette.midpoint, b.vignette.midpoint),
             roundness: l(a.vignette.roundness, b.vignette.roundness),
             feather: l(a.vignette.feather, b.vignette.feather),
+            highlight_protect: l(a.vignette.highlight_protect, b.vignette.highlight_protect),
         },
     }
+}
+
+pub fn mix_weighted(
+    a: &PortableLook,
+    b: &PortableLook,
+    weight_a: f32,
+    weight_b: f32,
+    name: impl Into<String>,
+) -> Result<PortableLook, LookError> {
+    if !weight_a.is_finite()
+        || !weight_b.is_finite()
+        || weight_a < 0.0
+        || weight_b < 0.0
+        || weight_a + weight_b <= f32::EPSILON
+    {
+        return Err(LookError::InvalidValues);
+    }
+    Ok(blend(a, b, weight_b / (weight_a + weight_b), name))
 }
 
 fn random_unit(seed: u64, x: u64, y: u64, c: u64) -> f32 {
@@ -316,17 +479,28 @@ pub fn apply_finishing_effects(
                 / (vignette.feather.abs().max(0.02)))
             .clamp(0.0, 1.0);
             let smooth = edge * edge * (3.0 - 2.0 * edge);
-            let vig_ev = -vignette.amount.clamp(-1.0, 1.0) * 2.0 * smooth;
-            let scale = 2.0f32.powf(vig_ev);
             let luminance =
                 (0.2627 * data[i] + 0.6780 * data[i + 1] + 0.0593 * data[i + 2]).max(0.0);
+            let highlight_weight = ((luminance - 0.55) / 1.45).clamp(0.0, 1.0);
+            let protected = 1.0
+                - vignette.highlight_protect.clamp(0.0, 1.0)
+                    * highlight_weight
+                    * highlight_weight
+                    * (3.0 - 2.0 * highlight_weight);
+            let vig_ev = -vignette.amount.clamp(-1.0, 1.0) * 2.0 * smooth * protected;
+            let scale = 2.0f32.powf(vig_ev);
             let grain_gain = grain.amount.clamp(0.0, 1.0)
-                * (0.003 + 0.025 * grain.size.clamp(0.0, 1.0))
+                * (0.003 + 0.025 * grain.size.clamp(0.1, 1.0))
                 * (0.35 + 0.65 * luminance.sqrt());
-            let mono = (random_unit(seed, x as u64, y as u64, 0) - 0.5) * 2.0;
+            let cell = 1 + (grain.size.clamp(0.1, 1.0) * 4.0).round() as u64;
+            let coarse_x = x as u64 / cell;
+            let coarse_y = y as u64 / cell;
+            let coarse = (random_unit(seed, coarse_x, coarse_y, 0) - 0.5) * 2.0;
+            let fine = (random_unit(seed, x as u64, y as u64, 0) - 0.5) * 2.0;
+            let mono = lerp(coarse, fine, grain.roughness.clamp(0.0, 1.0));
             for c in 0..3 {
                 let colored = (random_unit(seed, x as u64, y as u64, c as u64 + 1) - 0.5) * 2.0;
-                let noise = lerp(mono, colored, grain.roughness.clamp(0.0, 1.0));
+                let noise = lerp(mono, colored, grain.color.clamp(0.0, 1.0));
                 data[i + c] = data[i + c] * scale + noise * grain_gain;
             }
         }
@@ -345,7 +519,7 @@ mod tests {
         let a = PortableLook::default();
         assert_eq!(a, PortableLook::from_json(&a.to_json().unwrap()).unwrap());
         let mut b = a;
-        b.version = 2;
+        b.schema_version = 2;
         assert_eq!(b.validate(), Err(LookError::UnsupportedSchema));
     }
     #[test]
@@ -362,6 +536,20 @@ mod tests {
         assert!(
             blend(&c, &b, 0.5, "x").grading.global.hue_degrees.abs() < 1e-4
                 || blend(&c, &b, 0.5, "x").grading.global.hue_degrees > 359.9
+        );
+    }
+    #[test]
+    fn style_mixer_normalizes_seventy_thirty_weights() {
+        let mut a = PortableLook::default();
+        a.tone.exposure_ev = 0.0;
+        let mut b = a.clone();
+        b.id = "b".into();
+        b.tone.exposure_ev = 1.0;
+        let mixed = mix_weighted(&a, &b, 70.0, 30.0, "70/30").unwrap();
+        assert!((mixed.tone.exposure_ev - 0.3).abs() < 1e-6);
+        assert_eq!(
+            mix_weighted(&a, &b, 0.0, 0.0, "invalid"),
+            Err(LookError::InvalidValues)
         );
     }
     #[test]
@@ -385,6 +573,7 @@ mod tests {
             amount: 0.7,
             size: 0.5,
             roughness: 0.2,
+            color: 0.3,
             seed: 42,
         };
         let v = VignetteSettings {
@@ -392,11 +581,59 @@ mod tests {
             midpoint: 0.4,
             roundness: 0.0,
             feather: 0.5,
+            highlight_protect: 0.8,
         };
         let x = apply_finishing_effects(&a, g, v, "id").unwrap();
         let y = apply_finishing_effects(&a, g, v, "id").unwrap();
         assert_eq!(x, y);
         assert!(x.data.iter().all(|v| v.is_finite()));
         assert!(x.data[0] > 1.0);
+    }
+
+    #[test]
+    fn unknown_or_non_portable_fields_and_invalid_controls_are_rejected() {
+        let json = PortableLook::default().to_json().unwrap();
+        let forbidden = json.replacen("{", "{\"crop\":{},", 1);
+        assert!(matches!(
+            PortableLook::from_json(&forbidden),
+            Err(LookError::InvalidJson(_))
+        ));
+        assert!(matches!(
+            PortableLook::from_json("{not-json"),
+            Err(LookError::InvalidJson(_))
+        ));
+        let mut look = PortableLook::default();
+        look.grain.color = 1.1;
+        assert_eq!(look.validate(), Err(LookError::InvalidValues));
+        look.grain.color = 0.0;
+        look.curves.master = vec![CurvePoint { x: 0.5, y: 0.8 }, CurvePoint { x: 0.4, y: 0.2 }];
+        assert_eq!(look.validate(), Err(LookError::InvalidValues));
+    }
+
+    #[test]
+    fn highlight_protect_reduces_vignette_at_hdr_edges() {
+        let mut source = LinearImage::new(9, 9, vec![0.25; 9 * 9 * 3]).unwrap();
+        source.data[0..3].fill(4.0);
+        let vignette = VignetteSettings {
+            amount: 1.0,
+            midpoint: 0.2,
+            roundness: 0.0,
+            feather: 0.4,
+            highlight_protect: 0.0,
+        };
+        let unprotected =
+            apply_finishing_effects(&source, GrainSettings::default(), vignette, "id").unwrap();
+        let protected = apply_finishing_effects(
+            &source,
+            GrainSettings::default(),
+            VignetteSettings {
+                highlight_protect: 1.0,
+                ..vignette
+            },
+            "id",
+        )
+        .unwrap();
+        assert!(protected.data[0] > unprotected.data[0]);
+        assert!(protected.data.iter().all(|value| value.is_finite()));
     }
 }

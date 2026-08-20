@@ -67,11 +67,12 @@ describe('native preview contract', () => {
   it('transports M21 residual controls and M23 finishing effects without pixels', () => {
     const settings = toNativeSettings({ ...defaultAdjustments, aiDenoiseEnabled: 1, aiDenoiseAmount: 72,
       aiDenoiseDetail: 64, aiDenoiseColorNoise: 38, aiDenoisePreserveSkin: 81,
-      grainAmount: 22, grainSize: 45, grainRoughness: 67, vignette: 30 }, [], 'sourceDefault')
+      grainAmount: 22, grainSize: 45, grainRoughness: 67, grainColor: 28,
+      vignette: 30, vignetteHighlightProtect: 74 }, [], 'sourceDefault')
     expect(settings.aiDenoise).toEqual({ enabled: true, amount: .72, detail: .64, colorNoise: .38, preserveSkin: .81 })
     expect(settings).not.toHaveProperty('aiDenoiseResidual')
-    expect(settings.grain).toMatchObject({ amount: .22, size: .45, roughness: .67 })
-    expect(settings.vignette.amount).toBe(.3)
+    expect(settings.grain).toMatchObject({ amount: .22, size: .45, roughness: .67, color: .28 })
+    expect(settings.vignette).toMatchObject({ amount: .3, highlightProtect: .74 })
   })
 
   it('serializes all four curve channels as a compact native contract', () => {

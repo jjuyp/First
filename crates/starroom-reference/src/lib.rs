@@ -122,7 +122,7 @@ pub fn analyze(image: &LinearImage) -> Result<ReferenceAnalysis, ReferenceError>
         }
     }
     let mut sums = [[0.0; 4]; 8];
-    let mut zones = [([0.0; 3], 0.0); 3];
+    let mut zones = [([0.0_f32; 3], 0.0_f32); 3];
     for s in &samples {
         let lch = oklab_to_oklch(starroom_color::Oklab {
             l: s[0],
@@ -200,18 +200,23 @@ pub fn match_reference(
         blacks: ((r[0] - s[0]) / source_span * 0.5).clamp(-1.0, 1.0),
         whites: ((r[6] - s[6]) / source_span * 0.5).clamp(-1.0, 1.0),
     };
-    let mut curve = Vec::with_capacity(7);
+    let mut curve = vec![CurvePoint {
+        x: 0.0,
+        y: r[0].clamp(0.0, 1.0),
+    }];
     for i in 0..7 {
-        curve.push(CurvePoint {
+        let point = CurvePoint {
             x: s[i].clamp(0.0, 1.0),
-            y: r[i].clamp(0.0, 1.0),
-        });
+            y: r[i].clamp(0.0, 1.0).max(curve.last().unwrap().y),
+        };
+        if point.x > curve.last().unwrap().x + 1e-4 && point.x < 1.0 - 1e-4 {
+            curve.push(point);
+        }
     }
-    curve.sort_by(|a, b| a.x.total_cmp(&b.x));
-    for i in 1..curve.len() {
-        curve[i].x = curve[i].x.max(curve[i - 1].x + 1e-4).min(1.0);
-        curve[i].y = curve[i].y.max(curve[i - 1].y);
-    }
+    curve.push(CurvePoint {
+        x: 1.0,
+        y: r[6].clamp(0.0, 1.0).max(curve.last().unwrap().y),
+    });
     let protection = protect_skin.clamp(0.0, 1.0);
     let color_scale = 1.0 - 0.65 * protection;
     let white_balance = RelativeWhiteBalance {
@@ -313,5 +318,48 @@ mod tests {
                 .iter()
                 .all(|x| x.hue_degrees.abs() <= 30.0)
         );
+    }
+
+    #[test]
+    fn portrait_landscape_key_contrast_neon_and_monochrome_matches_remain_finite() {
+        let cases = [
+            ([0.72, 0.48, 0.36], [0.55, 0.72, 1.1]),
+            ([0.35, 0.75, 0.28], [1.0, 0.35, 0.75]),
+            ([0.12, 0.12, 0.12], [1.4, 1.4, 1.4]),
+            ([1.0, 0.05, 1.4], [0.05, 1.2, 1.3]),
+            ([0.6, 0.6, 0.6], [0.9, 0.9, 0.9]),
+        ];
+        for (source_tint, reference_tint) in cases {
+            let source = analyze(&gradient(source_tint)).unwrap();
+            let reference = analyze(&gradient(reference_tint)).unwrap();
+            let recipe = match_reference(&source, &reference, 0.8).unwrap();
+            assert!(recipe.tone.exposure_ev.is_finite());
+            assert!(
+                recipe
+                    .curve
+                    .windows(2)
+                    .all(|points| points[0].y <= points[1].y)
+            );
+            assert!(recipe.color_mixer.bands.iter().all(|band| {
+                band.hue_degrees.is_finite()
+                    && band.chroma.is_finite()
+                    && band.lightness.is_finite()
+            }));
+        }
+    }
+
+    #[test]
+    fn extreme_reference_is_bounded_without_nan_or_inf() {
+        let source = analyze(&gradient([0.001, 0.002, 0.001])).unwrap();
+        let reference = analyze(&gradient([12.0, 0.2, 5.0])).unwrap();
+        let recipe = match_reference(&source, &reference, 0.0).unwrap();
+        assert!((-4.0..=4.0).contains(&recipe.tone.exposure_ev));
+        assert!(
+            recipe
+                .curve
+                .iter()
+                .all(|point| point.x.is_finite() && point.y.is_finite())
+        );
+        assert!((0.0..=1.0).contains(&recipe.confidence));
     }
 }

@@ -15,10 +15,10 @@ import {
 } from './imagePipeline'
 import {
   adviseNativeImage, chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
-  nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
+  nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeEditSettings, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
-  applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, saveNativeLook, toNativeSettings,
+  applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -241,12 +241,14 @@ const sliderGroups: Partial<Record<Tool, Array<{ key: AdjustmentKey; label: stri
   ],
   looks: [
     { key: 'grainAmount', label: 'Grain amount', min: 0, max: 100, step: 1 },
-    { key: 'grainSize', label: 'Grain size', min: 0, max: 100, step: 1 },
+    { key: 'grainSize', label: 'Grain size', min: 10, max: 100, step: 1 },
     { key: 'grainRoughness', label: 'Grain roughness', min: 0, max: 100, step: 1 },
+    { key: 'grainColor', label: 'Grain color', min: 0, max: 100, step: 1 },
     { key: 'vignette', label: 'Vignette amount', min: -100, max: 100, step: 1 },
     { key: 'vignetteMidpoint', label: 'Vignette midpoint', min: 0, max: 100, step: 1 },
     { key: 'vignetteRoundness', label: 'Vignette roundness', min: -100, max: 100, step: 1 },
     { key: 'vignetteFeather', label: 'Vignette feather', min: 2, max: 100, step: 1 },
+    { key: 'vignetteHighlightProtect', label: 'Highlight protect', min: 0, max: 100, step: 1 },
   ],
   masks: [
     { key: 'maskExposure', label: 'Center exposure', min: -3, max: 3, step: .01, suffix: ' EV' },
@@ -808,6 +810,14 @@ export function App() {
   const [aiMaskRequestId, setAiMaskRequestId] = useState<string | null>(null)
   const [maskOverlayVisible, setMaskOverlayVisible] = useState(false)
   const [lookAmount, setLookAmount] = usePersistedValue('starroom-look-amount', 100)
+  const [referencePath, setReferencePath] = useState<string | null>(null)
+  const [referenceResult, setReferenceResult] = useState<NativeReferenceMatchResponse | null>(null)
+  const [referenceBase, setReferenceBase] = useState<NativeEditSettings | null>(null)
+  const [referenceControls, setReferenceControls] = useState({ amount: 70, tone: 100, color: 100, grading: 100, protectSkin: 80 })
+  const [lookAPath, setLookAPath] = useState<string | null>(null)
+  const [lookBPath, setLookBPath] = useState<string | null>(null)
+  const [lookAWeight, setLookAWeight] = useState(70)
+  const [lookBWeight, setLookBWeight] = useState(30)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -821,6 +831,8 @@ export function App() {
   function selectPhoto(id: string) {
     setSelectedId(id)
     setZoom('fit')
+    setReferenceResult(null)
+    setReferenceBase(null)
     setZoomScale(1)
     setPan({ x: 0, y: 0 })
     setOpticsStatus(null)
@@ -991,15 +1003,65 @@ export function App() {
     setNotice(label)
   }
 
-  async function runReferenceMatch() {
+  async function selectReference() {
+    const path = await chooseNativeReferencePath()
+    if (!path) return
+    setReferencePath(path)
+    setReferenceResult(null)
+    setReferenceBase(null)
+    setNotice('Reference selected · Analyze to build a Native recipe')
+  }
+
+  async function analyzeReference() {
     if (!selected.sourcePath || selected.renderBackend !== 'native') return
     try {
-      const referencePath = await chooseNativeReferencePath()
-      if (!referencePath) return
-      const result = await matchNativeReference(selected.sourcePath, referencePath, selectedNativeSettings(), .7)
-      applyWorkflowSettings(result.settings, `Reference match applied · ${Math.round(result.recipe.confidence * 100)}% confidence`)
+      let path = referencePath
+      if (!path) {
+        path = await chooseNativeReferencePath()
+        if (!path) return
+        setReferencePath(path)
+      }
+      const base = selectedNativeSettings()
+      const result = await matchNativeReference(selected.sourcePath, path, base, {
+        amount: referenceControls.amount / 100,
+        tone: referenceControls.tone / 100,
+        color: referenceControls.color / 100,
+        grading: referenceControls.grading / 100,
+        protectSkin: referenceControls.protectSkin / 100,
+      })
+      setReferenceBase(base)
+      setReferenceResult(result)
+      setNotice(`Reference analyzed · ${Math.round(result.recipe.confidence * 100)}% confidence`)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Reference match failed')
+    }
+  }
+
+  function previewReference() {
+    if (!referenceResult) return
+    applyWorkflowSettings(referenceResult.settings, 'Reference preview applied through the Native graph')
+  }
+
+  function applyReference() {
+    if (!referenceResult) return
+    applyWorkflowSettings(referenceResult.settings, `Reference match applied · ${Math.round(referenceResult.recipe.confidence * 100)}% confidence`)
+  }
+
+  function resetReference() {
+    if (referenceBase) applyWorkflowSettings(referenceBase, 'Reference preview reset')
+    setReferenceResult(null)
+    setReferenceBase(null)
+  }
+
+  async function saveReferenceAsLook() {
+    if (!referenceResult || selected.renderBackend !== 'native') return
+    try {
+      const path = await chooseNativeLookPath('save', 'reference-match.srlook')
+      if (!path) return
+      await saveNativeLook(path, 'Reference Match', referenceResult.settings)
+      setNotice('Reference recipe saved as portable .srlook')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Reference look save failed')
     }
   }
 
@@ -1024,6 +1086,30 @@ export function App() {
       applyWorkflowSettings(settings, `Look applied at ${lookAmount}%`)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Look load failed')
+    }
+  }
+
+  async function selectMixerLook(side: 'a' | 'b') {
+    const path = await chooseNativeLookPath('open')
+    if (!path) return
+    if (side === 'a') setLookAPath(path)
+    else setLookBPath(path)
+  }
+
+  async function applyStyleMixer() {
+    if (!lookAPath || !lookBPath || selected.renderBackend !== 'native') return
+    try {
+      const settings = await mixNativeLooks(
+        lookAPath,
+        lookBPath,
+        lookAWeight,
+        lookBWeight,
+        lookAmount / 100,
+        selectedNativeSettings(),
+      )
+      applyWorkflowSettings(settings, `Style mix applied · A ${lookAWeight} / B ${lookBWeight}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Style mix failed')
     }
   }
 
@@ -1603,12 +1689,32 @@ export function App() {
           <div className="layer-stack-head"><strong>Reference / Looks</strong><small>Native</small></div>
           <small>Perceptual reference analysis and .srlook interpolation run in Rust; no creative image math runs in React.</small>
           <div className="portrait-regions">
-            <button disabled={selected.renderBackend !== 'native'} onClick={runReferenceMatch}>Match reference…</button>
+            <button disabled={selected.renderBackend !== 'native'} onClick={selectReference}>Select reference…</button>
+            <button disabled={selected.renderBackend !== 'native'} onClick={analyzeReference}>Analyze</button>
+            <button disabled={!referenceResult} onClick={previewReference}>Preview</button>
+            <button disabled={!referenceResult} onClick={applyReference}>Apply</button>
+            <button disabled={!referenceBase} onClick={resetReference}>Reset</button>
+            <button disabled={!referenceResult} onClick={saveReferenceAsLook}>Save match as Look…</button>
             <button disabled={selected.renderBackend !== 'native'} onClick={saveLookWorkflow}>Save .srlook…</button>
             <button disabled={selected.renderBackend !== 'native'} onClick={loadLookWorkflow}>Load .srlook…</button>
           </div>
+          <small>{referencePath ? `Reference: ${referencePath.split(/[\\/]/).pop()}` : 'No reference selected'}</small>
+          {(Object.entries(referenceControls) as Array<[keyof typeof referenceControls, number]>).map(([key, value]) =>
+            <label key={key}>{key === 'protectSkin' ? 'Protect skin' : key[0].toUpperCase() + key.slice(1)}
+              <input aria-label={`Reference ${key}`} type="number" min="0" max="100" step="1" value={value}
+                onChange={(event) => { setReferenceControls((controls) => ({ ...controls, [key]: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })); setReferenceResult(null) }} />%</label>)}
           <label>Look amount <input aria-label="Look amount" type="number" min="0" max="100" step="1" value={lookAmount}
             onChange={(event) => setLookAmount(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} />%</label>
+          <div className="portrait-regions">
+            <button onClick={() => selectMixerLook('a')}>Look A…</button>
+            <button onClick={() => selectMixerLook('b')}>Look B…</button>
+            <button disabled={!lookAPath || !lookBPath || lookAWeight + lookBWeight === 0} onClick={applyStyleMixer}>Apply A/B mix</button>
+          </div>
+          <small>A: {lookAPath?.split(/[\\/]/).pop() ?? 'not selected'} · B: {lookBPath?.split(/[\\/]/).pop() ?? 'not selected'}</small>
+          <label>Look A weight <input aria-label="Look A weight" type="number" min="0" max="100" value={lookAWeight}
+            onChange={(event) => setLookAWeight(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} />%</label>
+          <label>Look B weight <input aria-label="Look B weight" type="number" min="0" max="100" value={lookBWeight}
+            onChange={(event) => setLookBWeight(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} />%</label>
         </section>
         <div className="tool-layout">
           <nav className="tool-rail" aria-label="Editing tools">{toolItems.map(({ id, label, icon: Icon }) => <button key={id}

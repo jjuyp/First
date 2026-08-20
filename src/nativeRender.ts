@@ -77,8 +77,8 @@ export interface NativeEditSettings {
   layers: NativeAdjustmentLayer[]
   skinRetouch: NativeSkinRetouchSettings
   healingOperations: NativeHealingOperation[]
-  grain: { amount: number; size: number; roughness: number; seed: number }
-  vignette: { amount: number; midpoint: number; roundness: number; feather: number }
+  grain: { amount: number; size: number; roughness: number; color: number; seed: number }
+  vignette: { amount: number; midpoint: number; roundness: number; feather: number; highlightProtect: number }
 }
 
 export interface NativePreviewResult {
@@ -219,9 +219,11 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
     ],
     skinRetouch: { parameters: { ...skinRetouch.parameters }, faces: skinRetouch.faces.map((face) => ({ ...face })) },
     healingOperations: healingOperations.map((operation) => structuredClone(operation)),
-    grain: { amount: adjustments.grainAmount / 100, size: adjustments.grainSize / 100, roughness: adjustments.grainRoughness / 100, seed: 0 },
+    grain: { amount: adjustments.grainAmount / 100, size: adjustments.grainSize / 100,
+      roughness: adjustments.grainRoughness / 100, color: adjustments.grainColor / 100, seed: 0 },
     vignette: { amount: adjustments.vignette / 100, midpoint: adjustments.vignetteMidpoint / 100,
-      roundness: adjustments.vignetteRoundness / 100, feather: adjustments.vignetteFeather / 100 },
+      roundness: adjustments.vignetteRoundness / 100, feather: adjustments.vignetteFeather / 100,
+      highlightProtect: adjustments.vignetteHighlightProtect / 100 },
   }
 }
 
@@ -285,8 +287,13 @@ export async function chooseNativeLookPath(mode: 'open' | 'save', suggestedName 
   return save({ title: 'Save Starroom look', defaultPath: suggestedName, filters: [{ name: 'Starroom Look', extensions: ['srlook'] }] })
 }
 
-export async function matchNativeReference(sourcePath: string, referencePath: string, settings: NativeEditSettings, protectSkin = .7) {
-  return invoke<NativeReferenceMatchResponse>('native_reference_match', { request: { sourcePath, referencePath, maxEdge: 1600, protectSkin, settings } })
+export interface NativeReferenceControls { amount: number; tone: number; color: number; grading: number; protectSkin: number }
+
+export async function matchNativeReference(sourcePath: string, referencePath: string, settings: NativeEditSettings,
+  controls: NativeReferenceControls = { amount: .7, tone: 1, color: 1, grading: 1, protectSkin: .8 }) {
+  return invoke<NativeReferenceMatchResponse>('native_reference_match', {
+    request: { sourcePath, referencePath, maxEdge: 1600, ...controls, settings },
+  })
 }
 
 export async function saveNativeLook(path: string, name: string, settings: NativeEditSettings) {
@@ -295,6 +302,13 @@ export async function saveNativeLook(path: string, name: string, settings: Nativ
 
 export async function applyNativeLook(path: string, amount: number, settings: NativeEditSettings) {
   return invoke<NativeEditSettings>('native_look_apply', { request: { path, amount, settings } })
+}
+
+export async function mixNativeLooks(pathA: string, pathB: string, weightA: number, weightB: number,
+  amount: number, settings: NativeEditSettings) {
+  return invoke<NativeEditSettings>('native_look_mix', {
+    request: { pathA, pathB, weightA, weightB, amount, settings },
+  })
 }
 
 export function fromNativeSettings(base: Adjustments, settings: NativeEditSettings): { adjustments: Adjustments; curves: NativeToneCurves } {
@@ -306,9 +320,11 @@ export function fromNativeSettings(base: Adjustments, settings: NativeEditSettin
     aiDenoiseEnabled: settings.aiDenoise.enabled ? 1 : 0, aiDenoiseAmount: settings.aiDenoise.amount * 100,
     aiDenoiseDetail: settings.aiDenoise.detail * 100, aiDenoiseColorNoise: settings.aiDenoise.colorNoise * 100,
     aiDenoisePreserveSkin: settings.aiDenoise.preserveSkin * 100,
-    grainAmount: settings.grain.amount * 100, grainSize: settings.grain.size * 100, grainRoughness: settings.grain.roughness * 100,
+    grainAmount: settings.grain.amount * 100, grainSize: settings.grain.size * 100,
+    grainRoughness: settings.grain.roughness * 100, grainColor: settings.grain.color * 100,
     vignette: settings.vignette.amount * 100, vignetteMidpoint: settings.vignette.midpoint * 100,
     vignetteRoundness: settings.vignette.roundness * 100, vignetteFeather: settings.vignette.feather * 100,
+    vignetteHighlightProtect: settings.vignette.highlightProtect * 100,
   }
   const bands = ['Red', 'Orange', 'Yellow', 'Green', 'Cyan', 'Blue', 'Purple', 'Magenta'] as const
   bands.forEach((band, index) => {
@@ -334,7 +350,13 @@ export async function cancelNativeAiMask(requestId: string): Promise<boolean> {
   return invoke<boolean>('ai_mask_cancel', { requestId })
 }
 
+export async function cancelNativeAiDenoise(requestId: string): Promise<boolean> {
+  return invoke<boolean>('ai_denoise_cancel', { requestId })
+}
+
 export const nativeThumbnailUrl = (path: string) => convertFileSrc(path)
+
+let activeDenoisePreviewRequestId: string | null = null
 
 export async function renderNativePreview(
   sourcePath: string,
@@ -351,10 +373,18 @@ export async function renderNativePreview(
   healingOperations: NativeHealingOperation[] = [],
 ) {
   assertNativeSupported(adjustments, mask)
-  const frame = await invoke<ArrayBuffer | Uint8Array>('native_preview', {
-    request: { sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
-  })
-  return parseNativePreviewFrame(frame)
+  const requestId = crypto.randomUUID()
+  const superseded = activeDenoisePreviewRequestId
+  activeDenoisePreviewRequestId = requestId
+  if (superseded) void cancelNativeAiDenoise(superseded)
+  try {
+    const frame = await invoke<ArrayBuffer | Uint8Array>('native_preview', {
+      request: { requestId, sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
+    })
+    return parseNativePreviewFrame(frame)
+  } finally {
+    if (activeDenoisePreviewRequestId === requestId) activeDenoisePreviewRequestId = null
+  }
 }
 
 export async function sampleNativeColor(sourcePath: string, x: number, y: number, adjustments: Adjustments,
@@ -400,7 +430,7 @@ export async function exportNativeJpeg(
 ) {
   assertNativeSupported(adjustments, mask)
   return invoke<NativeExportResult>('native_export_jpeg', {
-    request: { sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
+    request: { requestId: crypto.randomUUID(), sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
   })
 }
 

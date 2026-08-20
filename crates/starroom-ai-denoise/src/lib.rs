@@ -22,6 +22,9 @@ pub const MODEL_SHA256: &str = "0e522d6de607958c283c834e6459a37b2fccbf5c19223a28
 pub const TILE_EDGE: usize = 512;
 pub const TILE_OVERLAP: usize = 64;
 pub const TILE_STRIDE: usize = TILE_EDGE - TILE_OVERLAP;
+/// Conservative process budget for source/domain/accumulator/residual buffers. ORT owns its
+/// tile tensor separately, so the estimate intentionally includes one extra 512 RGB tile pair.
+pub const MAX_WORKING_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,12 +110,16 @@ pub enum AiDenoiseError {
     HashMismatch { expected: String, actual: String },
     #[error("NAFNet runtime initialization failed: {0}")]
     RuntimeUnavailable(String),
+    #[error("deterministic NAFNet ONNX export is invalid: {0}")]
+    ExportInvalid(String),
     #[error("DirectML was requested but unavailable: {0}")]
     DirectMlUnavailable(String),
     #[error("NAFNet inference failed: {0}")]
     InferenceFailed(String),
     #[error("NAFNet tensor is malformed: {0}")]
     InvalidTensor(String),
+    #[error("NAFNet output is malformed: {0}")]
+    InvalidOutput(String),
     #[error("NAFNet inference exhausted available memory")]
     OutOfMemory,
     #[error("AI denoise parameters are outside finite supported ranges")]
@@ -121,6 +128,16 @@ pub enum AiDenoiseError {
     ResidualMismatch,
     #[error("AI denoise was cancelled")]
     Cancelled,
+}
+
+pub fn directml_failure_allows_cpu_fallback(error: &AiDenoiseError) -> bool {
+    matches!(
+        error,
+        AiDenoiseError::DirectMlUnavailable(_)
+            | AiDenoiseError::RuntimeUnavailable(_)
+            | AiDenoiseError::InferenceFailed(_)
+            | AiDenoiseError::OutOfMemory
+    )
 }
 
 pub fn inference_cache_key(source_identity: &str) -> String {
@@ -309,6 +326,27 @@ pub trait TileInferencer {
     fn infer_tile(&mut self, chw_512: &[f32]) -> Result<Vec<f32>, AiDenoiseError>;
 }
 
+pub fn estimated_working_bytes(width: usize, height: usize) -> Result<u64, AiDenoiseError> {
+    let pixels = (width as u64)
+        .checked_mul(height as u64)
+        .ok_or(AiDenoiseError::OutOfMemory)?;
+    let full_frame_buffers = pixels
+        .checked_mul(3 * std::mem::size_of::<f32>() as u64)
+        .and_then(|bytes| bytes.checked_mul(5))
+        .ok_or(AiDenoiseError::OutOfMemory)?;
+    let tile_buffers = (TILE_EDGE * TILE_EDGE * 3 * std::mem::size_of::<f32>() * 2) as u64;
+    full_frame_buffers
+        .checked_add(tile_buffers)
+        .ok_or(AiDenoiseError::OutOfMemory)
+}
+
+pub fn validate_memory_budget(width: usize, height: usize) -> Result<(), AiDenoiseError> {
+    if estimated_working_bytes(width, height)? > MAX_WORKING_BYTES {
+        return Err(AiDenoiseError::OutOfMemory);
+    }
+    Ok(())
+}
+
 pub fn infer_tiled<I: TileInferencer>(
     provider: &mut I,
     image: &LinearImage,
@@ -316,6 +354,7 @@ pub fn infer_tiled<I: TileInferencer>(
     cancellation: &AtomicBool,
     execution_provider: ExecutionProvider,
 ) -> Result<AiDenoiseResidual, AiDenoiseError> {
+    validate_memory_budget(image.width, image.height)?;
     let (encoded, domain) = encode_model_domain(image)?;
     let plane = image.width * image.height;
     let mut accum = vec![0.0; plane * 3];
@@ -337,7 +376,7 @@ pub fn infer_tiled<I: TileInferencer>(
         }
         let output = provider.infer_tile(&input)?;
         if output.len() != input.len() || output.iter().any(|v| !v.is_finite()) {
-            return Err(AiDenoiseError::InvalidTensor(
+            return Err(AiDenoiseError::InvalidOutput(
                 "expected finite [1,3,512,512] output".into(),
             ));
         }
@@ -462,7 +501,18 @@ impl NafNetOnnxProvider {
                 ExecutionProvider::Cpu => AiDenoiseError::RuntimeUnavailable(e.to_string()),
             })?
             .commit_from_file(path)
-            .map_err(|e| AiDenoiseError::RuntimeUnavailable(e.to_string()))?;
+            .map_err(|e| {
+                let detail = e.to_string();
+                if requested == ExecutionProvider::DirectMl {
+                    AiDenoiseError::DirectMlUnavailable(detail)
+                } else if detail.to_ascii_lowercase().contains("invalid")
+                    || detail.to_ascii_lowercase().contains("protobuf")
+                {
+                    AiDenoiseError::ExportInvalid(detail)
+                } else {
+                    AiDenoiseError::RuntimeUnavailable(detail)
+                }
+            })?;
         Ok(Self {
             session,
             execution_provider: requested,
@@ -496,7 +546,7 @@ impl TileInferencer for NafNetOnnxProvider {
             || shape[2] != TILE_EDGE as i64
             || shape[3] != TILE_EDGE as i64
         {
-            return Err(AiDenoiseError::InvalidTensor(format!(
+            return Err(AiDenoiseError::InvalidOutput(format!(
                 "unexpected output {shape:?}"
             )));
         }
@@ -625,6 +675,30 @@ mod tests {
             .validate(),
             Err(AiDenoiseError::InvalidParameters)
         ));
+        assert_eq!(
+            validate_memory_budget(usize::MAX, usize::MAX)
+                .unwrap_err()
+                .to_string(),
+            AiDenoiseError::OutOfMemory.to_string()
+        );
+    }
+    #[test]
+    fn directml_fallback_policy_is_explicit_and_never_hides_invalid_models() {
+        assert!(directml_failure_allows_cpu_fallback(
+            &AiDenoiseError::DirectMlUnavailable("device".into())
+        ));
+        assert!(directml_failure_allows_cpu_fallback(
+            &AiDenoiseError::InferenceFailed("provider".into())
+        ));
+        assert!(!directml_failure_allows_cpu_fallback(
+            &AiDenoiseError::HashMismatch {
+                expected: "a".into(),
+                actual: "b".into(),
+            }
+        ));
+        assert!(!directml_failure_allows_cpu_fallback(
+            &AiDenoiseError::InvalidOutput("shape".into())
+        ));
     }
     #[test]
     fn preserve_skin_reduces_residual() {
@@ -674,6 +748,54 @@ mod tests {
                 let right = result.values[seam * 3];
                 assert!((left - right).abs() < 0.03);
             }
+        }
+    }
+
+    #[test]
+    fn high_iso_portrait_hair_fabric_foliage_night_and_neon_vectors_are_finite() {
+        for label in [
+            "high-iso",
+            "portrait-skin",
+            "hair",
+            "fine-fabric",
+            "foliage",
+            "night",
+            "neon",
+        ] {
+            let mut source = image(48, 40);
+            for (index, value) in source.data.iter_mut().enumerate() {
+                let x = (index / 3) % source.width;
+                let y = (index / 3) / source.width;
+                let channel = index % 3;
+                let texture = match label {
+                    "hair" => ((x * 13 + y) % 17) as f32 / 100.0,
+                    "fine-fabric" => ((x + y) % 2) as f32 * 0.08,
+                    "foliage" => ((x * 7 + y * 11) % 23) as f32 / 80.0,
+                    "night" => -0.7 + ((x + y) % 5) as f32 * 0.01,
+                    "neon" => {
+                        if channel == x % 3 {
+                            2.5
+                        } else {
+                            -0.2
+                        }
+                    }
+                    "portrait-skin" => [0.32, 0.18, 0.12][channel],
+                    _ => ((index * 29 % 31) as f32 - 15.0) * 0.008,
+                };
+                *value = (*value + texture).max(-0.5);
+            }
+            let residual = infer_tiled(
+                &mut Identity,
+                &source,
+                label,
+                &AtomicBool::new(false),
+                ExecutionProvider::Cpu,
+            )
+            .unwrap();
+            assert!(
+                residual.values.iter().all(|value| value.is_finite()),
+                "{label}"
+            );
         }
     }
 }

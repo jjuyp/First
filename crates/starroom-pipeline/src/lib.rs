@@ -1296,8 +1296,8 @@ fn render_prepared_working_graph(
         .map(|pixel| [pixel[0], pixel[1], pixel[2]])
         .collect();
     let creative = LinearImage::new(
-        geometrically_corrected.width,
-        geometrically_corrected.height,
+        model_adjusted.width,
+        model_adjusted.height,
         apply_creative_graph(
             pixels,
             model_adjusted.width,
@@ -2619,6 +2619,7 @@ mod tests {
                 amount: 0.4,
                 size: 0.5,
                 roughness: 0.2,
+                color: 0.25,
                 seed: 77,
             },
             vignette: VignetteSettings {
@@ -2626,6 +2627,7 @@ mod tests {
                 midpoint: 0.35,
                 roundness: 0.2,
                 feather: 0.5,
+                highlight_protect: 0.8,
             },
             image_identity: "same-source".into(),
             ..Default::default()

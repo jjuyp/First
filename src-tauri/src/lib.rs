@@ -6,7 +6,8 @@ use starroom_advisor::{
 use starroom_ai_denoise::{
     AiDenoiseParameters, AiDenoiseResidual, ExecutionProvider as DenoiseExecutionProvider,
     MODEL_ID as NAFNET_MODEL_ID, MODEL_SHA256 as NAFNET_MODEL_SHA256,
-    MODEL_VERSION as NAFNET_MODEL_VERSION, NafNetOnnxProvider, infer_tiled, inference_cache_key,
+    MODEL_VERSION as NAFNET_MODEL_VERSION, NafNetOnnxProvider,
+    directml_failure_allows_cpu_fallback, infer_tiled, inference_cache_key,
 };
 use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
@@ -18,6 +19,7 @@ use starroom_imageio::{
 };
 use starroom_look::{
     GrainSettings, PortableCurves, PortableLook, PortableRelativeColor, VignetteSettings, blend,
+    mix_weighted,
 };
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
@@ -104,17 +106,31 @@ struct AiDenoiseModelStatus {
     model_hash: &'static str,
     installed: bool,
     path: PathBuf,
+    active_execution_provider: Option<DenoiseExecutionProvider>,
+    fallback_reason: Option<String>,
 }
 
 #[tauri::command]
-fn ai_denoise_status() -> AiDenoiseModelStatus {
+fn ai_denoise_status(runtime: State<'_, NativeAiDenoiseRuntime>) -> AiDenoiseModelStatus {
     let path = local_nafnet_model();
+    let active_execution_provider = runtime.provider.lock().ok().and_then(|provider| {
+        provider
+            .as_ref()
+            .map(|provider| provider.execution_provider)
+    });
+    let fallback_reason = runtime
+        .last_fallback_reason
+        .lock()
+        .ok()
+        .and_then(|reason| reason.clone());
     AiDenoiseModelStatus {
         model_id: NAFNET_MODEL_ID,
         model_version: NAFNET_MODEL_VERSION,
         model_hash: NAFNET_MODEL_SHA256,
         installed: path.is_file(),
         path,
+        active_execution_provider,
+        fallback_reason,
     }
 }
 
@@ -218,10 +234,12 @@ impl NativeEditSettings {
             self.grain.amount,
             self.grain.size,
             self.grain.roughness,
+            self.grain.color,
             self.vignette.amount,
             self.vignette.midpoint,
             self.vignette.roundness,
             self.vignette.feather,
+            self.vignette.highlight_protect,
         ]
         .into_iter()
         .all(f32::is_finite)
@@ -231,6 +249,18 @@ impl NativeEditSettings {
                 .all(|point| point.x.is_finite() && point.y.is_finite());
         if !finite {
             return Err("native edit settings contain NaN or Inf".into());
+        }
+        if !(0.0..=1.0).contains(&self.grain.amount)
+            || !(0.1..=1.0).contains(&self.grain.size)
+            || !(0.0..=1.0).contains(&self.grain.roughness)
+            || !(0.0..=1.0).contains(&self.grain.color)
+            || !(-1.0..=1.0).contains(&self.vignette.amount)
+            || !(0.0..=1.0).contains(&self.vignette.midpoint)
+            || !(-1.0..=1.0).contains(&self.vignette.roundness)
+            || !(0.0..=1.0).contains(&self.vignette.feather)
+            || !(0.0..=1.0).contains(&self.vignette.highlight_protect)
+        {
+            return Err("native grain/vignette settings are out of range".into());
         }
         if self.curve.len() > 32 {
             return Err("native tone curve accepts at most 32 points".into());
@@ -448,6 +478,7 @@ impl NativeEditSettings {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativePreviewRequest {
+    request_id: String,
     source_path: PathBuf,
     max_edge: u32,
     #[serde(default = "default_prefer_gpu")]
@@ -485,6 +516,8 @@ struct NativeAiMaskRuntime {
 struct NativeAiDenoiseRuntime {
     provider: Mutex<Option<NafNetOnnxProvider>>,
     cache: Mutex<BTreeMap<String, AiDenoiseResidual>>,
+    cancellations: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
+    last_fallback_reason: Mutex<Option<String>>,
 }
 
 impl Default for NativeAiDenoiseRuntime {
@@ -492,6 +525,8 @@ impl Default for NativeAiDenoiseRuntime {
         Self {
             provider: Mutex::new(None),
             cache: Mutex::new(BTreeMap::new()),
+            cancellations: Mutex::new(BTreeMap::new()),
+            last_fallback_reason: Mutex::new(None),
         }
     }
 }
@@ -613,6 +648,7 @@ const fn default_prefer_gpu() -> bool {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeExportRequest {
+    request_id: String,
     source_path: PathBuf,
     output_path: PathBuf,
     quality: u8,
@@ -825,6 +861,7 @@ fn attach_ai_denoise(
     source_path: &Path,
     settings: &mut RenderSettings,
     requested_provider: DenoiseExecutionProvider,
+    request_id: &str,
     runtime: &NativeAiDenoiseRuntime,
 ) -> Result<(), String> {
     let source = preview_source_identity(source_path)?;
@@ -846,27 +883,108 @@ fn attach_ai_denoise(
         settings.ai_denoise_residual = Some(residual);
         return Ok(());
     }
-    let mut provider = runtime
-        .provider
+    let token = Arc::new(AtomicBool::new(false));
+    runtime
+        .cancellations
         .lock()
-        .map_err(|_| "AI denoise provider lock was poisoned".to_owned())?;
-    if provider
-        .as_ref()
-        .is_none_or(|active| active.execution_provider != requested_provider)
-    {
-        *provider = Some(
-            NafNetOnnxProvider::initialize(local_nafnet_model(), requested_provider)
-                .map_err(|error| format!("AI denoise provider failed: {error}"))?,
+        .map_err(|_| "AI denoise cancellation lock was poisoned".to_owned())?
+        .insert(request_id.to_owned(), Arc::clone(&token));
+    let result = (|| {
+        let mut provider = runtime
+            .provider
+            .lock()
+            .map_err(|_| "AI denoise provider lock was poisoned".to_owned())?;
+        if provider
+            .as_ref()
+            .is_none_or(|active| active.execution_provider != requested_provider)
+        {
+            match NafNetOnnxProvider::initialize(local_nafnet_model(), requested_provider) {
+                Ok(active) => {
+                    *provider = Some(active);
+                    if let Ok(mut reason) = runtime.last_fallback_reason.lock() {
+                        *reason = None;
+                    }
+                }
+                Err(error)
+                    if requested_provider == DenoiseExecutionProvider::DirectMl
+                        && directml_failure_allows_cpu_fallback(&error) =>
+                {
+                    let reason = error.to_string();
+                    *provider = Some(
+                        NafNetOnnxProvider::initialize(
+                            local_nafnet_model(),
+                            DenoiseExecutionProvider::Cpu,
+                        )
+                        .map_err(|cpu_error| {
+                            format!(
+                                "AI denoise DirectML failed ({reason}); explicit CPU fallback also failed: {cpu_error}"
+                            )
+                        })?,
+                    );
+                    *runtime
+                        .last_fallback_reason
+                        .lock()
+                        .map_err(|_| "AI denoise fallback status lock was poisoned".to_owned())? =
+                        Some(reason);
+                }
+                Err(error) => return Err(format!("AI denoise provider failed: {error}")),
+            }
+        }
+        let active_provider = provider
+            .as_ref()
+            .expect("provider initialized")
+            .execution_provider;
+        let first = infer_tiled(
+            provider.as_mut().expect("provider initialized"),
+            &working,
+            &sized_identity,
+            &token,
+            active_provider,
         );
-    }
-    let residual = infer_tiled(
-        provider.as_mut().expect("provider initialized"),
-        &working,
-        &sized_identity,
-        &AtomicBool::new(false),
-        requested_provider,
-    )
-    .map_err(|error| format!("AI denoise inference failed: {error}"))?;
+        let residual = match first {
+            Ok(residual) => residual,
+            Err(error)
+                if active_provider == DenoiseExecutionProvider::DirectMl
+                    && directml_failure_allows_cpu_fallback(&error) =>
+            {
+                let reason = error.to_string();
+                *provider = Some(
+                    NafNetOnnxProvider::initialize(
+                        local_nafnet_model(),
+                        DenoiseExecutionProvider::Cpu,
+                    )
+                    .map_err(|cpu_error| {
+                        format!(
+                            "AI denoise DirectML inference failed ({reason}); explicit CPU fallback also failed: {cpu_error}"
+                        )
+                    })?,
+                );
+                *runtime
+                    .last_fallback_reason
+                    .lock()
+                    .map_err(|_| "AI denoise fallback status lock was poisoned".to_owned())? =
+                    Some(reason);
+                infer_tiled(
+                    provider.as_mut().expect("CPU fallback initialized"),
+                    &working,
+                    &sized_identity,
+                    &token,
+                    DenoiseExecutionProvider::Cpu,
+                )
+                .map_err(|cpu_error| {
+                    format!("AI denoise explicit CPU fallback inference failed: {cpu_error}")
+                })?
+            }
+            Err(error) => return Err(format!("AI denoise inference failed: {error}")),
+        };
+        Ok(residual)
+    })();
+    runtime
+        .cancellations
+        .lock()
+        .map_err(|_| "AI denoise cancellation lock was poisoned".to_owned())?
+        .remove(request_id);
+    let residual = result?;
     runtime
         .cache
         .lock()
@@ -876,12 +994,29 @@ fn attach_ai_denoise(
     Ok(())
 }
 
+#[tauri::command]
+fn ai_denoise_cancel(runtime: State<'_, NativeAiDenoiseRuntime>, request_id: String) -> bool {
+    runtime
+        .cancellations
+        .lock()
+        .ok()
+        .and_then(|tokens| tokens.get(&request_id).cloned())
+        .is_some_and(|token| {
+            token.store(true, Ordering::Relaxed);
+            true
+        })
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeReferenceMatchRequest {
     source_path: PathBuf,
     reference_path: PathBuf,
     max_edge: u32,
+    amount: f32,
+    tone: f32,
+    color: f32,
+    grading: f32,
     protect_skin: f32,
     settings: NativeEditSettings,
 }
@@ -895,19 +1030,58 @@ struct NativeReferenceMatchResponse {
     recipe: ReferenceMatchRecipe,
 }
 
-fn apply_reference_recipe(settings: &mut NativeEditSettings, recipe: &ReferenceMatchRecipe) {
-    settings.exposure = recipe.tone.exposure_ev;
-    settings.contrast = recipe.tone.contrast * 100.0;
-    settings.highlights = recipe.tone.highlights * 100.0;
-    settings.shadows = recipe.tone.shadows * 100.0;
-    settings.whites = recipe.tone.whites * 100.0;
-    settings.blacks = recipe.tone.blacks * 100.0;
-    settings.temperature = recipe.white_balance.temperature * 100.0;
-    settings.tint = recipe.white_balance.tint * 100.0;
-    settings.curve = recipe.curve.clone();
-    settings.curves.master = recipe.curve.clone();
-    settings.color_mixer = recipe.color_mixer;
-    settings.grading = recipe.grading;
+fn apply_reference_recipe(
+    settings: &mut NativeEditSettings,
+    recipe: &ReferenceMatchRecipe,
+    amount: f32,
+    tone: f32,
+    color: f32,
+    grading: f32,
+) {
+    if amount <= f32::EPSILON {
+        return;
+    }
+    let base = settings_to_look(settings, "Reference base".into());
+    let mut target_settings = settings.clone();
+    target_settings.exposure = recipe.tone.exposure_ev;
+    target_settings.contrast = recipe.tone.contrast * 100.0;
+    target_settings.highlights = recipe.tone.highlights * 100.0;
+    target_settings.shadows = recipe.tone.shadows * 100.0;
+    target_settings.whites = recipe.tone.whites * 100.0;
+    target_settings.blacks = recipe.tone.blacks * 100.0;
+    target_settings.temperature = recipe.white_balance.temperature * 100.0;
+    target_settings.tint = recipe.white_balance.tint * 100.0;
+    target_settings.curve = recipe.curve.clone();
+    target_settings.curves.master = recipe.curve.clone();
+    target_settings.color_mixer = recipe.color_mixer;
+    target_settings.grading = recipe.grading;
+    let target = settings_to_look(&target_settings, "Reference target".into());
+    let global = amount.clamp(0.0, 1.0);
+    let tone_mix = blend(
+        &base,
+        &target,
+        global * tone.clamp(0.0, 1.0),
+        "Reference tone",
+    );
+    let color_mix = blend(
+        &base,
+        &target,
+        global * color.clamp(0.0, 1.0),
+        "Reference color",
+    );
+    let grading_mix = blend(
+        &base,
+        &target,
+        global * grading.clamp(0.0, 1.0),
+        "Reference grading",
+    );
+    let mut combined = base;
+    combined.tone = tone_mix.tone;
+    combined.curves = tone_mix.curves;
+    combined.relative_color = color_mix.relative_color;
+    combined.color_mixer = color_mix.color_mixer;
+    combined.grading = grading_mix.grading;
+    apply_look(settings, &combined);
 }
 
 #[tauri::command]
@@ -916,6 +1090,18 @@ fn native_reference_match(
 ) -> Result<NativeReferenceMatchResponse, String> {
     if same_file(&request.source_path, &request.reference_path) {
         return Err("reference image must be different from the source image".into());
+    }
+    if ![
+        request.amount,
+        request.tone,
+        request.color,
+        request.grading,
+        request.protect_skin,
+    ]
+    .into_iter()
+    .all(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+    {
+        return Err("reference controls must be finite values in 0..1".into());
     }
     let render_settings = request.settings.clone().validated()?;
     let edge = request.max_edge.clamp(256, 2048);
@@ -936,7 +1122,14 @@ fn native_reference_match(
     let recipe = match_reference(&source_analysis, &reference_analysis, request.protect_skin)
         .map_err(|error| error.to_string())?;
     let mut settings = request.settings;
-    apply_reference_recipe(&mut settings, &recipe);
+    apply_reference_recipe(
+        &mut settings,
+        &recipe,
+        request.amount,
+        request.tone,
+        request.color,
+        request.grading,
+    );
     settings.clone().validated()?;
     Ok(NativeReferenceMatchResponse {
         settings,
@@ -1024,6 +1217,23 @@ struct NativeLookApplyRequest {
     settings: NativeEditSettings,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeLookMixRequest {
+    path_a: PathBuf,
+    path_b: PathBuf,
+    weight_a: f32,
+    weight_b: f32,
+    amount: f32,
+    settings: NativeEditSettings,
+}
+
+fn read_portable_look(path: &Path) -> Result<PortableLook, String> {
+    let json = std::fs::read_to_string(path)
+        .map_err(|error| format!("look load failed for {}: {error}", path.display()))?;
+    PortableLook::from_json(&json).map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn native_look_save(request: NativeLookSaveRequest) -> Result<String, String> {
     request.settings.clone().validated()?;
@@ -1038,9 +1248,24 @@ fn native_look_apply(request: NativeLookApplyRequest) -> Result<NativeEditSettin
     if !request.amount.is_finite() || !(0.0..=1.0).contains(&request.amount) {
         return Err("look amount must stay inside 0..1".into());
     }
-    let json = std::fs::read_to_string(&request.path)
-        .map_err(|error| format!("look load failed: {error}"))?;
-    let target = PortableLook::from_json(&json).map_err(|error| error.to_string())?;
+    let target = read_portable_look(&request.path)?;
+    let current = settings_to_look(&request.settings, "Current".into());
+    let applied = blend(&current, &target, request.amount, target.name.clone());
+    let mut settings = request.settings;
+    apply_look(&mut settings, &applied);
+    settings.clone().validated()?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn native_look_mix(request: NativeLookMixRequest) -> Result<NativeEditSettings, String> {
+    if !request.amount.is_finite() || !(0.0..=1.0).contains(&request.amount) {
+        return Err("look amount must stay inside 0..1".into());
+    }
+    let a = read_portable_look(&request.path_a)?;
+    let b = read_portable_look(&request.path_b)?;
+    let target = mix_weighted(&a, &b, request.weight_a, request.weight_b, "Style Mix")
+        .map_err(|error| error.to_string())?;
     let current = settings_to_look(&request.settings, "Current".into());
     let applied = blend(&current, &target, request.amount, target.name.clone());
     let mut settings = request.settings;
@@ -1492,6 +1717,7 @@ fn native_preview(
         &request.source_path,
         &mut settings,
         requested_denoise_provider,
+        &request.request_id,
         &ai_denoise_runtime,
     )?;
     let (source_width, source_height) = source_dimensions(&decoded);
@@ -1596,6 +1822,7 @@ fn native_export_jpeg(
         &request.source_path,
         &mut settings,
         requested_denoise_provider,
+        &request.request_id,
         &ai_denoise_runtime,
     )?;
     let rendered = render_source_export_to_srgb8(&decoded, &settings)
@@ -1655,11 +1882,13 @@ pub fn run() {
             portrait_detect,
             ai_mask_generate,
             ai_mask_cancel,
+            ai_denoise_cancel,
             native_sample_color,
             native_optics_status,
             native_reference_match,
             native_look_save,
-            native_look_apply
+            native_look_apply,
+            native_look_mix
         ])
         .run(tauri::generate_context!())
         .expect("error while running Starroom");
@@ -1767,5 +1996,66 @@ mod tests {
             },
         ];
         assert!(settings.validated().is_err());
+    }
+
+    #[test]
+    fn reference_amount_zero_is_exact_and_category_amounts_are_isolated() {
+        let recipe = ReferenceMatchRecipe {
+            tone: ToneParameters {
+                exposure_ev: 2.0,
+                contrast: 0.5,
+                ..Default::default()
+            },
+            curve: vec![CurvePoint { x: 0.0, y: 0.1 }, CurvePoint { x: 1.0, y: 1.0 }],
+            white_balance: starroom_reference::RelativeWhiteBalance {
+                temperature: 0.8,
+                tint: 0.4,
+            },
+            color_mixer: ColorMixer::default(),
+            grading: GradingParameters {
+                global: starroom_grading::ColorWheel {
+                    hue_degrees: 35.0,
+                    chroma: 0.5,
+                    lightness: 0.1,
+                },
+                ..Default::default()
+            },
+            protect_skin: 0.8,
+            confidence: 0.9,
+            source_fingerprint: "source".into(),
+            reference_fingerprint: "reference".into(),
+        };
+        let serialized = serde_json::to_string(&recipe).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ReferenceMatchRecipe>(&serialized).unwrap(),
+            recipe
+        );
+        let mut zero = settings();
+        let before = serde_json::to_string(&zero).unwrap();
+        apply_reference_recipe(&mut zero, &recipe, 0.0, 1.0, 1.0, 1.0);
+        assert_eq!(serde_json::to_string(&zero).unwrap(), before);
+
+        let mut grading_only = settings();
+        let original_exposure = grading_only.exposure;
+        let original_temperature = grading_only.temperature;
+        apply_reference_recipe(&mut grading_only, &recipe, 1.0, 0.0, 0.0, 1.0);
+        assert_eq!(grading_only.exposure, original_exposure);
+        assert_eq!(grading_only.temperature, original_temperature);
+        assert!(grading_only.grading.global.chroma > 0.0);
+    }
+
+    #[test]
+    fn reference_recipe_saved_as_look_reloads_to_the_same_portable_adjustments() {
+        let source = settings();
+        let look = settings_to_look(&source, "Reference Match".into());
+        let reloaded = PortableLook::from_json(&look.to_json().unwrap()).unwrap();
+        let mut target = settings();
+        target.exposure = -2.0;
+        apply_look(&mut target, &reloaded);
+        assert_eq!(target.exposure, source.exposure);
+        assert_eq!(target.temperature, source.temperature);
+        assert_eq!(target.curves, source.curves);
+        assert_eq!(target.grain, source.grain);
+        assert_eq!(target.vignette, source.vignette);
     }
 }
